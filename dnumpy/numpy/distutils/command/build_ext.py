@@ -317,7 +317,6 @@ class build_ext (old_build_ext):
                                               debug=self.debug,
                                               extra_postargs=extra_args,
                                               **kws)
-
         if cxx_sources:
             log.info("compiling C++ sources")
             c_objects += cxx_compiler.compile(cxx_sources,
@@ -373,7 +372,7 @@ class build_ext (old_build_ext):
                                            debug=self.debug,
                                            extra_postargs=extra_postargs,
                                            depends=ext.depends)
-
+        
         objects = c_objects + f_objects
 
         if ext.extra_objects:
@@ -383,6 +382,11 @@ class build_ext (old_build_ext):
         library_dirs = ext.library_dirs[:]
 
         linker = self.compiler.link_shared_object
+
+        #DISTNUMPY hack.
+        if(self.compiler.compiler_so[0] == 'mpicc'):
+            self.compiler.linker_so[0] = 'mpicc'
+        
         # Always use system linker when using MSVC compiler.
         if self.compiler.compiler_type=='msvc':
             # expand libraries with fcompiler libraries as we are

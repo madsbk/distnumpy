@@ -77,6 +77,9 @@ enum NPY_TYPES {    NPY_BOOL=0,
                     NPY_USERDEF=256  /* leave room for characters */
 };
 
+/* Include DISTNUMPY header */
+#include "distnumpy.h"
+
 /* basetype array priority */
 #define NPY_PRIORITY 0.0
 
@@ -502,6 +505,7 @@ typedef struct PyArrayObject {
         PyArray_Descr *descr;   /* Pointer to type structure */
         int flags;              /* Flags describing array -- see below*/
         PyObject *weakreflist;  /* For weakreferences */
+        int dnduid;             /* DISTNUMPY - UID */
 } PyArrayObject;
 
 #define NPY_AO PyArrayObject

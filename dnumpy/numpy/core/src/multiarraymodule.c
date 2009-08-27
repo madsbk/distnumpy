@@ -26,6 +26,11 @@
 
 #include "hashdescr.c"
 
+
+/* DISTNUMPY inc */
+#include "distnumpy.inc"
+
+
 static PyObject *typeDict = NULL;   /* Must be explicitly loaded */
 
 static PyArray_Descr *
