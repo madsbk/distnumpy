@@ -237,9 +237,9 @@ typedef Py_uintptr_t npy_uintp;
 /* We can only use C99 formats for npy_int_p if it is the same as intp_t, hence
  * the condition on HAVE_UNITPTR_T */
 #if (NPY_USE_C99_FORMATS) == 1 \
-	&& (defined HAVE_UINTPTR_T) \
-	&& (defined HAVE_INTTYPES_H)
-	#include <inttypes.h>
+    && (defined HAVE_UINTPTR_T) \
+    && (defined HAVE_INTTYPES_H)
+    #include <inttypes.h>
         #undef NPY_INTP_FMT
         #define NPY_INTP_FMT PRIdPTR
 #endif
@@ -587,6 +587,9 @@ typedef int (PyArray_FinalizeFunc)(PyArrayObject *, PyObject *);
 /* This flag is for the array interface */
 #define NPY_ARR_HAS_DESCR  0x0800
 
+/* DISTNUMPY - This flag is for the distributed array */
+#define DNPY_DISTRIBUTED 0x2000
+
 
 #define NPY_BEHAVED (NPY_ALIGNED | NPY_WRITEABLE)
 #define NPY_BEHAVED_NS (NPY_ALIGNED | NPY_WRITEABLE | NPY_NOTSWAPPED)
@@ -638,6 +641,8 @@ typedef int (PyArray_FinalizeFunc)(PyArrayObject *, PyObject *);
 #define PyArray_ISWRITEABLE(m) PyArray_CHKFLAGS(m, NPY_WRITEABLE)
 #define PyArray_ISALIGNED(m) PyArray_CHKFLAGS(m, NPY_ALIGNED)
 
+/* DISTNUMPY */
+#define PyArray_ISDISTRIBUTED(m) PyArray_CHKFLAGS(m, DNPY_DISTRIBUTED)
 
 #if NPY_ALLOW_THREADS
 #define NPY_BEGIN_ALLOW_THREADS Py_BEGIN_ALLOW_THREADS
@@ -693,7 +698,7 @@ typedef struct {
         _PyAIT(it)->index = 0;                                          \
         _PyAIT(it)->dataptr = _PyAIT(it)->ao->data;                     \
         memset(_PyAIT(it)->coordinates, 0,                              \
-	       (_PyAIT(it)->nd_m1+1)*sizeof(npy_intp));                 \
+           (_PyAIT(it)->nd_m1+1)*sizeof(npy_intp));                 \
 }
 
 #define _PyArray_ITER_NEXT1(it) {                                       \
@@ -741,7 +746,7 @@ typedef struct {
                 _PyArray_ITER_NEXT1(_PyAIT(it));                           \
         }                                                                  \
         else if (_PyAIT(it)->contiguous)                                   \
-	        _PyAIT(it)->dataptr += _PyAIT(it)->ao->descr->elsize;      \
+            _PyAIT(it)->dataptr += _PyAIT(it)->ao->descr->elsize;      \
         else if (_PyAIT(it)->nd_m1 == 1) {                                 \
                 _PyArray_ITER_NEXT2(_PyAIT(it));                           \
         }                                                                  \
@@ -1285,7 +1290,7 @@ typedef struct {
 */
 
 #define NPY_TITLE_KEY(key, value) ((PyTuple_GET_SIZE((value))==3) && \
-				   (PyTuple_GET_ITEM((value), 2) == (key)))
+                   (PyTuple_GET_ITEM((value), 2) == (key)))
 
 
 /* Define python version independent deprecation macro */

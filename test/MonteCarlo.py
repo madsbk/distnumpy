@@ -22,8 +22,8 @@ def random_list(dims):
 	return list	
 
 def MC_int(s, dist):
-    x = np.empty([s,s], dtype=float, isdist=dist)
-    y = np.empty([s,s], dtype=float, isdist=dist)
+    x = np.empty([s,s], dtype=float, dist=dist)
+    y = np.empty([s,s], dtype=float, dist=dist)
 
     start=time.time()
     square(x,x)
@@ -39,11 +39,10 @@ def MC_int(s, dist):
         print "(Not distributed)"
 		    
 
-N=10**4
+N=8000
 
 MC_int(N, True)
 MC_int(N, False)
 MC_int(N, True)
 MC_int(N, False)
-MC_int(N, True)
-MC_int(N, False)
+

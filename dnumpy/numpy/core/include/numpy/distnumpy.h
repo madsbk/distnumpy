@@ -3,10 +3,6 @@
 
 //#define DISTNUMPY_DEBUG
 
-//Easy distribute check
-#define CHECK_DISTRIBUTED(x) (((PyArrayObject *)x)->flags \
-                                & NPY_DISTRIBUTED)
-
 //Easy retrieval of dnduid
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)                                
 

@@ -642,7 +642,7 @@ static void do_SET_ITEM(dndview *view, char* value,
         if(myrank == 0)
         {
             printf("SET_ITEM - uid: %d, coord: (", view->uid);
-            for(int i=0; i < view->ndims; i++)
+            for(i=0; i < view->ndims; i++)
                 printf(" %d", coord[i]);
             printf(")\n");
         }
@@ -709,7 +709,7 @@ static void do_GET_ITEM(char *retdata, dndview *view,
         if(myrank == 0)
         {
             printf("GET_ITEM - uid: %d, coord: (", view->uid);
-            for(int i=0; i < view->ndims; i++)
+            for(i=0; i < view->ndims; i++)
                 printf(" %d", coord[i]);
             printf(")\n");
         }
@@ -819,7 +819,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 		//A scalar is also compatible with the simple method.
 		if(views[i]->base->ndims == 0)
 			continue;
-printf("views[%d]->alterations: %d\n",i,views[i]->alterations);
+//printf("views[%d]->alterations: %d\n",i,views[i]->alterations);
         //If is sufficient to check the number of dimensions and the
         //alterations since NumPy will not allow different size
         //dimensions in a broadcast.
@@ -833,9 +833,9 @@ printf("views[%d]->alterations: %d\n",i,views[i]->alterations);
 	}
 
 	if(simple_method)
-	{printf("\n\n******simple_method*******\n\n\n");
-        int dims[NPY_MAXDIMS];
-        int strides[NPY_MAXDIMS];
+	{//printf("\n\n******simple_method*******\n\n\n");
+        intp dims[NPY_MAXDIMS];
+        intp strides[NPY_MAXDIMS];
         
 		PyObject *arytuple = PyTuple_New(narys);
 		for(i=0; i < narys; i++)
@@ -906,7 +906,7 @@ printf("views[%d]->alterations: %d\n",i,views[i]->alterations);
 		return;
 	}
 
-    printf("UFUNC - no simple_method\n");
+  //  printf("UFUNC - no simple_method\n");
 	
 	MPI_Win win[NPY_MAXARGS];
 	for(i=0; i<narys; i++)
@@ -932,7 +932,7 @@ printf("views[%d]->alterations: %d\n",i,views[i]->alterations);
         //If just one is outside we jump to next element.
 		if(!not_inside_view)
         {
-            int one = 1;
+            Py_ssize_t one = 1;
             PyObject *arytuple = PyTuple_New(narys);
             for(j=0; j<nin; j++)
                 PyTuple_SET_ITEM(arytuple, j, PyArray_SimpleNewFromData(1, 
@@ -1016,7 +1016,6 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 	
 		if(in_ary->localdims[0] > 0)
 		{
-
 			//Compute local reduce.
 			PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
 					PyArray_SimpleNewFromData(1, &in_ary->nelements,
@@ -1339,9 +1338,8 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
     int ni = 0; //new index.
     int oi = 0; //old index.
     int di = 0; //dim index.
-    printf("nslice: %d, orgview->nslice: %d\n", nslice, orgview->nslice);
 	while(si < nslice || oi < orgview->nslice)
-	{printf("si: %d, ni: %d, oi: %d, di: %d\n",si,ni,oi,di);
+	{
         //If we come to the end of the slices, that happens
         //if not all dimensions is included in the 'slices', we will
         //use the whole dimension.      
@@ -1350,7 +1348,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
         //If dimension is invisible we will just copy it to 'newview'.
         if(oi < orgview->nslice &&
            orgview->slice[oi].nsteps == SingleIndex)
-        {printf("SingleIndex1\n");
+        {
             memcpy(&newview.slice[ni], &orgview->slice[oi],
                    sizeof(dndslice));
             ni++; oi++; di++;
@@ -1358,7 +1356,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
         }
         //A single index makes the dimension invisible.
         else if(vs && slice[si].nsteps == SingleIndex)
-        {printf("SingleIndex2\n");
+        {
             //If dimension is a Pseudo-dimension then just go to next
             //dimension.
             if(orgview->slice[oi].nsteps == PseudoIndex)
@@ -1379,7 +1377,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
         //If a extra pseudo index should be added we just copy the
         //slice to 'newview'.
         else if(vs && slice[si].nsteps == PseudoIndex)
-        {printf("1\n");
+        {
             memcpy(&newview.slice[ni], &slice[si],
                    sizeof(dndslice));
             ni++; si++;
@@ -1387,7 +1385,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
             newview.alterations |= DNPY_NDIMS;
         }
         else if(orgview->slice[oi].nsteps == PseudoIndex)
-        {printf("2\n");
+        {
             memcpy(&newview.slice[ni], &orgview->slice[oi],
                    sizeof(dndslice));
             ni++; oi++; si++;
@@ -1396,7 +1394,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
         }
         //If no special slices we just merge the two views.   
         else
-        {printf("3\n");
+        {
             if(vs)
             {
                 newview.slice[ni].start = orgview->slice[oi].start +
@@ -1413,7 +1411,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
             if(newview.slice[ni].step > 1)
                 newview.alterations |= DNPY_STEP | DNPY_NSTEPS;
             else if(newview.slice[ni].nsteps < orgview->base->dims[di])
-            {printf("newview.slice[%d].nsteps: %d\n", ni, newview.slice[ni].nsteps);
+            {
                 newview.alterations |= DNPY_NSTEPS;  
             }
             newview.ndims++;
@@ -1451,7 +1449,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
  * Public
  */
 static int
-dnumpy_dndarray_setitem(int uid, int coordinate[NPY_MAXDIMS],
+dnumpy_dndarray_setitem(int uid, Py_ssize_t coordinate[NPY_MAXDIMS],
                         PyObject *item)
 {   
     //Get arrray structs.
@@ -1477,10 +1475,10 @@ dnumpy_dndarray_setitem(int uid, int coordinate[NPY_MAXDIMS],
     msg[1] = view->uid;
     memcpy(&msg[2], PyArray_DATA(citem2), elsize);
     memcpy(((char *) &msg[2]) + elsize, coordinate,
-           sizeof(int) * ndims);
-    *(((char *) &msg[2]) + elsize + sizeof(int) * ndims) = DNPY_MSG_END;
+           sizeof(Py_ssize_t) * ndims);
+    *(((char *) &msg[2]) + elsize + sizeof(Py_ssize_t) * ndims) = DNPY_MSG_END;
 
-    MPI_Bcast(msg, (3+ndims) * sizeof(int) + elsize,
+    MPI_Bcast(msg, 3 * sizeof(int) + elsize + ndims * sizeof(Py_ssize_t),
               MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation.
@@ -1507,7 +1505,7 @@ dnumpy_dndarray_setitem(int uid, int coordinate[NPY_MAXDIMS],
  */
 static void
 dnumpy_dndarray_getitem(char *retdata, int uid,
-                        int coordinate[NPY_MAXDIMS])
+                        Py_ssize_t coordinate[NPY_MAXDIMS])
 {
     //Get arrray structs.
     dndview *view = get_dndview(uid);
@@ -1516,10 +1514,10 @@ dnumpy_dndarray_getitem(char *retdata, int uid,
     //Tell slaves to send item.
     msg[0] = DNPY_GET_ITEM;
     msg[1] = view->uid;
-    memcpy(&msg[2], coordinate, sizeof(int) * ndims);
-    *(((char *) &msg[2]) + sizeof(int) * ndims) = DNPY_MSG_END;
+    memcpy(&msg[2], coordinate, sizeof(Py_ssize_t) * ndims);
+    *(((char *) &msg[2]) + sizeof(Py_ssize_t) * ndims) = DNPY_MSG_END;
 
-    MPI_Bcast(msg, 3 * ndims * sizeof(int),
+    MPI_Bcast(msg, 3 * sizeof(int) + ndims * sizeof(Py_ssize_t),
               MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master will retrive the whole array.
@@ -1817,12 +1815,12 @@ dnumpy_master_slave_split()
                 ary = get_dndview(*((int*)msg_data));
                 t1 = msg_data+sizeof(int);
                 t2 = t1+dtypesize(ary->base->dtype);
-                do_SET_ITEM(ary, t1, (int*) t2);
+                do_SET_ITEM(ary, t1, (Py_ssize_t*) t2);
                 break;
             case DNPY_GET_ITEM:
                 ary = get_dndview(*((int*)msg_data));
                 t1 = msg_data+sizeof(int);
-                do_GET_ITEM(NULL, ary, (int*) t1);
+                do_GET_ITEM(NULL, ary, (Py_ssize_t*) t1);
                 break;
             case DNPY_UFUNC:			
                 d1 = *((int*)msg_data);

@@ -150,13 +150,13 @@ PyArray_OverflowMultiplyList(register intp *l1, register int n)
     intp s = 1;
 
     while (n--) {
-	if (*l1 == 0) {
+    if (*l1 == 0) {
             return 0;
         }
-	if ((s > MAX_INTP / *l1) || (*l1 > MAX_INTP / s)) {
-	    return -1;
+    if ((s > MAX_INTP / *l1) || (*l1 > MAX_INTP / s)) {
+        return -1;
         }
-	s *= (*l1++);
+    s *= (*l1++);
     }
     return s;
 }
@@ -264,8 +264,15 @@ PyArray_Ravel(PyArrayObject *a, NPY_ORDER fortran)
     intp val[1] = {-1};
 
     if (fortran == PyArray_ANYORDER) {
-        fortran = PyArray_ISFORTRAN(a);
-    }
+            fortran = PyArray_ISFORTRAN(a);
+        }
+
+    /* DISTNUMPY */
+    //We always have to copy (flatten) when working
+    //with a distributed array.
+    if(PyArray_ISDISTRIBUTED(a))
+        return PyArray_Flatten(a, fortran);
+    
     newdim.ptr = val;
     if (!fortran && PyArray_ISCONTIGUOUS(a)) {
         return PyArray_Newshape(a, &newdim, PyArray_CORDER);
@@ -474,11 +481,37 @@ PyArray_Flatten(PyArrayObject *a, NPY_ORDER order)
                                NULL,
                                NULL,
                                0, (PyObject *)a);
-
     if (ret == NULL) {
         return NULL;
     }
-    if (_flat_copyinto(ret, (PyObject *)a, order) < 0) {
+                               
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(a))
+    {
+        char *data = PyArray_DATA(ret);
+        int coord[NPY_MAXDIMS];
+        int i,j;
+        memset(coord, 0, sizeof(int) * PyArray_NDIM(a));
+        for(i=0; i < PyArray_SIZE(a); i++)
+        {
+            //Get item.
+            dnumpy_dndarray_getitem(data, PyArray_DNDUID(a), coord);
+            data += PyArray_ITEMSIZE(a);
+
+            //Iterate coords one element.
+            for(j = PyArray_NDIM(a)-1; j >= 0; j--) 
+            {
+                if(++coord[j] >= PyArray_DIM(a,j))
+                    coord[j] = 0;
+                else
+                    break;
+            }
+        }
+        //Make sure thats 'ret' is not considered a
+        //distributed array.
+        PyArray_FLAGS(ret) &= ~DNPY_DISTRIBUTED;
+    }
+    else if (_flat_copyinto(ret, (PyObject *)a, order) < 0) {
         Py_DECREF(ret);
         return NULL;
     }
@@ -739,6 +772,14 @@ PyArray_Newshape(PyArrayObject *self, PyArray_Dims *newdims,
     if (fortran == PyArray_ANYORDER) {
         fortran = PyArray_ISFORTRAN(self);
     }
+
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        PyErr_SetString(PyExc_RuntimeError,"PyArray_Newshape with a "
+                        "distributed array is not implemented\n");
+        return NULL;
+    }
+    
     /*  Quick check to make sure anything actually needs to be done */
     if (n == self->nd) {
         same = TRUE;
@@ -960,14 +1001,14 @@ PyArray_Mean(PyArrayObject *self, int axis, int rtype, PyArrayObject *out)
  */
 static PyObject *
 PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
-	    int variance)
+        int variance)
 {
     return __New_PyArray_Std(self, axis, rtype, out, variance, 0);
 }
 
 static PyObject *
 __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
-		  int variance, int num)
+          int variance, int num)
 {
     PyObject *obj1 = NULL, *obj2 = NULL, *obj3 = NULL, *new = NULL;
     PyObject *ret = NULL, *newshape = NULL;
@@ -1016,11 +1057,11 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
     }
     /* Compute x * x */
     if (PyArray_ISCOMPLEX(obj1)) {
-	obj3 = PyArray_Conjugate((PyAO *)obj1, NULL);
+    obj3 = PyArray_Conjugate((PyAO *)obj1, NULL);
     }
     else {
-	obj3 = obj1;
-	Py_INCREF(obj1);
+    obj3 = obj1;
+    Py_INCREF(obj1);
     }
     if (obj3 == NULL) {
         Py_DECREF(new);
@@ -1035,7 +1076,7 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
         return NULL;
     }
     if (PyArray_ISCOMPLEX(obj2)) {
-	obj3 = PyObject_GetAttrString(obj2, "real");
+    obj3 = PyObject_GetAttrString(obj2, "real");
         switch(rtype) {
         case NPY_CDOUBLE:
             rtype = NPY_DOUBLE;
@@ -1049,8 +1090,8 @@ __New_PyArray_Std(PyArrayObject *self, int axis, int rtype, PyArrayObject *out,
         }
     }
     else {
-	obj3 = obj2;
-	Py_INCREF(obj2);
+    obj3 = obj2;
+    Py_INCREF(obj2);
     }
     if (obj3 == NULL) {
         Py_DECREF(new);
@@ -1322,13 +1363,13 @@ PyArray_Nonzero(PyArrayObject *self)
 
 static PyObject *
 _GenericBinaryOutFunction(PyArrayObject *m1, PyObject *m2, PyArrayObject *out,
-			  PyObject *op)
+              PyObject *op)
 {
     if (out == NULL) {
-	return PyObject_CallFunction(op, "OO", m1, m2);
+    return PyObject_CallFunction(op, "OO", m1, m2);
     }
     else {
-	return PyObject_CallFunction(op, "OOO", m1, m2, out);
+    return PyObject_CallFunction(op, "OOO", m1, m2, out);
     }
 }
 
@@ -1338,27 +1379,27 @@ _slow_array_clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObjec
     PyObject *res1=NULL, *res2=NULL;
 
     if (max != NULL) {
-	res1 = _GenericBinaryOutFunction(self, max, out, n_ops.minimum);
-	if (res1 == NULL) {
+    res1 = _GenericBinaryOutFunction(self, max, out, n_ops.minimum);
+    if (res1 == NULL) {
             return NULL;
         }
     }
     else {
-	res1 = (PyObject *)self;
-	Py_INCREF(res1);
+    res1 = (PyObject *)self;
+    Py_INCREF(res1);
     }
 
     if (min != NULL) {
-	res2 = _GenericBinaryOutFunction((PyArrayObject *)res1,
-					 min, out, n_ops.maximum);
-	if (res2 == NULL) {
+    res2 = _GenericBinaryOutFunction((PyArrayObject *)res1,
+                     min, out, n_ops.maximum);
+    if (res2 == NULL) {
             Py_XDECREF(res1);
             return NULL;
         }
     }
     else {
-	res2 = res1;
-	Py_INCREF(res2);
+    res2 = res1;
+    Py_INCREF(res2);
     }
     Py_DECREF(res1);
     return res2;
@@ -1380,9 +1421,9 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
     PyObject *zero;
 
     if ((max == NULL) && (min == NULL)) {
-	PyErr_SetString(PyExc_ValueError, "array_clip: must set either max "\
-			"or min");
-	return NULL;
+    PyErr_SetString(PyExc_ValueError, "array_clip: must set either max "\
+            "or min");
+    return NULL;
     }
 
     func = self->descr->f->fastclip;
@@ -1395,21 +1436,21 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
     /* First we need to figure out the correct type */
     indescr = NULL;
     if (min != NULL) {
-	indescr = PyArray_DescrFromObject(min, NULL);
-	if (indescr == NULL) {
+    indescr = PyArray_DescrFromObject(min, NULL);
+    if (indescr == NULL) {
             return NULL;
         }
     }
     if (max != NULL) {
-	newdescr = PyArray_DescrFromObject(max, indescr);
-	Py_XDECREF(indescr);
-	if (newdescr == NULL) {
+    newdescr = PyArray_DescrFromObject(max, indescr);
+    Py_XDECREF(indescr);
+    if (newdescr == NULL) {
             return NULL;
         }
     }
     else {
         /* Steal the reference */
-	newdescr = indescr;
+    newdescr = indescr;
     }
 
 
@@ -1444,15 +1485,15 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
 
     /* Convert max to an array */
     if (max != NULL) {
-	maxa = (NPY_AO *)PyArray_FromAny(max, indescr, 0, 0,
-					 NPY_DEFAULT, NULL);
-	if (maxa == NULL) {
+    maxa = (NPY_AO *)PyArray_FromAny(max, indescr, 0, 0,
+                     NPY_DEFAULT, NULL);
+    if (maxa == NULL) {
             return NULL;
         }
     }
     else {
-	/* Side-effect of PyArray_FromAny */
-	Py_DECREF(indescr);
+    /* Side-effect of PyArray_FromAny */
+    Py_DECREF(indescr);
     }
 
     /*
@@ -1464,32 +1505,32 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
      * are interpreted as their modular counterparts.
     */
     if (min != NULL) {
-	if (PyArray_ISUNSIGNED(self)) {
-	    int cmp;
-	    zero = PyInt_FromLong(0);
-	    cmp = PyObject_RichCompareBool(min, zero, Py_LT);
-	    if (cmp == -1) {
+    if (PyArray_ISUNSIGNED(self)) {
+        int cmp;
+        zero = PyInt_FromLong(0);
+        cmp = PyObject_RichCompareBool(min, zero, Py_LT);
+        if (cmp == -1) {
                 Py_DECREF(zero);
                 goto fail;
             }
-	    if (cmp == 1) {
-		min = zero;
-	    }
-	    else {
-		Py_DECREF(zero);
-		Py_INCREF(min);
-	    }
-	}
-	else {
-	    Py_INCREF(min);
-	}
+        if (cmp == 1) {
+        min = zero;
+        }
+        else {
+        Py_DECREF(zero);
+        Py_INCREF(min);
+        }
+    }
+    else {
+        Py_INCREF(min);
+    }
 
-	/* Convert min to an array */
-	Py_INCREF(indescr);
-	mina = (NPY_AO *)PyArray_FromAny(min, indescr, 0, 0,
-					 NPY_DEFAULT, NULL);
-	Py_DECREF(min);
-	if (mina == NULL) {
+    /* Convert min to an array */
+    Py_INCREF(indescr);
+    mina = (NPY_AO *)PyArray_FromAny(min, indescr, 0, 0,
+                     NPY_DEFAULT, NULL);
+    Py_DECREF(min);
+    if (mina == NULL) {
             goto fail;
         }
     }
@@ -1603,10 +1644,10 @@ PyArray_Clip(PyArrayObject *self, PyObject *min, PyObject *max, PyArrayObject *o
     /* Now we can call the fast-clip function */
     min_data = max_data = NULL;
     if (mina != NULL) {
-	min_data = mina->data;
+    min_data = mina->data;
     }
     if (maxa != NULL) {
-	max_data = maxa->data;
+    max_data = maxa->data;
     }
     func(newin->data, PyArray_SIZE(newin), min_data, max_data, newout->data);
 
@@ -1761,7 +1802,7 @@ PyArray_Diagonal(PyArrayObject *self, int offset, int axis1, int axis2)
         if (a == NULL) {
             Py_DECREF(indices);
             return NULL;
-        }
+        } 
         ret = PyObject_GetItem(a, indices);
         Py_DECREF(a);
         Py_DECREF(indices);
@@ -2491,7 +2532,7 @@ PyArray_ConvertToCommonType(PyObject *op, int *retn)
 
     *retn = n = PySequence_Length(op);
     if (n == 0) {
-	PyErr_SetString(PyExc_ValueError, "0-length sequence.");
+    PyErr_SetString(PyExc_ValueError, "0-length sequence.");
     }
     if (PyErr_Occurred()) {
         *retn = 0;
@@ -2636,7 +2677,7 @@ PyArray_Choose(PyArrayObject *ip, PyObject *op, PyArrayObject *ret,
     }
     /* Broadcast all arrays to each other, index array at the end. */ 
     multi = (PyArrayMultiIterObject *)
-	PyArray_MultiIterFromObjects((PyObject **)mps, n, 1, ap);
+    PyArray_MultiIterFromObjects((PyObject **)mps, n, 1, ap);
     if (multi == NULL) {
         goto fail;
     }
@@ -2657,7 +2698,7 @@ PyArray_Choose(PyArrayObject *ip, PyObject *op, PyArrayObject *ret,
         if ((PyArray_NDIM(ret) != multi->nd)
                 || !PyArray_CompareLists(
                     PyArray_DIMS(ret), multi->dimensions, multi->nd)) {
-	    PyErr_SetString(PyExc_TypeError,
+        PyErr_SetString(PyExc_TypeError,
                             "invalid shape for output array.");
             ret = NULL;
             goto fail;
@@ -2685,7 +2726,7 @@ PyArray_Choose(PyArrayObject *ip, PyObject *op, PyArrayObject *ret,
     ret_data = ret->data;
 
     while (PyArray_MultiIter_NOTDONE(multi)) {
-	mi = *((intp *)PyArray_MultiIter_DATA(multi, n));
+    mi = *((intp *)PyArray_MultiIter_DATA(multi, n));
         if (mi < 0 || mi >= n) {
             switch(clipmode) {
             case NPY_RAISE:
@@ -2717,7 +2758,7 @@ PyArray_Choose(PyArrayObject *ip, PyObject *op, PyArrayObject *ret,
         }
         memmove(ret_data, PyArray_MultiIter_DATA(multi, mi), elsize);
         ret_data += elsize;
-	PyArray_MultiIter_NEXT(multi);
+    PyArray_MultiIter_NEXT(multi);
     }
 
     PyArray_INCREF(ret);
@@ -3502,7 +3543,7 @@ PyArray_SearchSorted(PyArrayObject *op1, PyObject *op2, NPY_SEARCHSIDE side)
     /* need ap1 as contiguous array and of right type */
     Py_INCREF(dtype);
     ap1 = (PyArrayObject *)PyArray_FromAny((PyObject *)op1, dtype,
-					   1, 1, NPY_DEFAULT, NULL);
+                       1, 1, NPY_DEFAULT, NULL);
     if (ap1 == NULL) {
         Py_DECREF(dtype);
         return NULL;
@@ -3560,6 +3601,8 @@ new_array_for_sum(PyArrayObject *ap1, PyArrayObject *ap2,
     PyArrayObject *ret;
     PyTypeObject *subtype;
     double prior1, prior2;
+    int flags = 0;
+    
     /*
      * Need to choose an output array that can hold a sum
      * -- use priority to determine which subtype.
@@ -3574,8 +3617,23 @@ new_array_for_sum(PyArrayObject *ap1, PyArrayObject *ap2,
         subtype = ap1->ob_type;
     }
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(ap1) || PyArray_ISDISTRIBUTED(ap2))
+    {
+        if(PyArray_ISDISTRIBUTED(ap1) && PyArray_ISDISTRIBUTED(ap2))
+        {
+            flags |= DNPY_DISTRIBUTED;
+        }
+        else
+        {
+            PyErr_SetString(PyExc_RuntimeError, "Can't do the operation"
+                     " on a distributed and a non-distributed array.");
+            return NULL;            
+        }
+    }
+
     ret = (PyArrayObject *)PyArray_New(subtype, nd, dimensions,
-                                       typenum, NULL, NULL, 0, 0,
+                                       typenum, NULL, NULL, 0, flags,
                                        (PyObject *)
                                        (prior2 > prior1 ? ap2 : ap1));
     return ret;
@@ -4313,7 +4371,7 @@ PyArray_TakeFrom(PyArrayObject *self0, PyObject *indices0, int axis,
             copyret = 1;
         }
         ret = obj;
-	if (ret == NULL) {
+    if (ret == NULL) {
             goto fail;
         }
     }
@@ -6244,13 +6302,16 @@ _prepend_ones(PyArrayObject *arr, int nd, int ndmin)
                                 ((order) == PyArray_FORTRANORDER &&     \
                                  PyArray_ISFORTRAN(op)))
 
+
 static PyObject *
 _array_fromobject(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kws)
 {
     PyObject *op, *ret = NULL;
+    /* DISTNUMPY */
     static char *kwd[]= {"object", "dtype", "copy", "order", "subok",
-                         "ndmin", NULL};
+                         "ndmin", "dist", NULL};
     Bool subok = FALSE;
+    Bool dist = FALSE;
     Bool copy = TRUE;
     int ndmin = 0, nd;
     PyArray_Descr *type = NULL;
@@ -6263,15 +6324,17 @@ _array_fromobject(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kws)
                         "only 2 non-keyword arguments accepted");
         return NULL;
     }
-    if(!PyArg_ParseTupleAndKeywords(args, kws, "O|O&O&O&O&i", kwd, &op,
+    if(!PyArg_ParseTupleAndKeywords(args, kws, "O|O&O&O&O&iO&", kwd, &op,
                                     PyArray_DescrConverter2,
                                     &type,
                                     PyArray_BoolConverter, &copy,
                                     PyArray_OrderConverter, &order,
                                     PyArray_BoolConverter, &subok,
-                                    &ndmin)) {
+                                    &ndmin,
+                                    /* DISTNUMPY */
+                                    PyArray_BoolConverter, &dist)) {
         goto clean_type;
-    }
+    }   
 
     if (ndmin > NPY_MAXDIMS) {
         PyErr_Format(PyExc_ValueError,
@@ -6280,8 +6343,9 @@ _array_fromobject(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kws)
         goto clean_type;
     }
     /* fast exit if simple call */
-    if ((subok && PyArray_Check(op))
-        || (!subok && PyArray_CheckExact(op))) {
+    if(!dist && ((subok && PyArray_Check(op)) ||
+                (!subok && PyArray_CheckExact(op))))
+    {
         if (type == NULL) {
             if (!copy && STRIDING_OK(op, order)) {
                 Py_INCREF(op);
@@ -6331,6 +6395,11 @@ _array_fromobject(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kws)
 
     flags |= NPY_FORCECAST;
     Py_XINCREF(type);
+
+    /* DISTNUMPY */
+    if(dist)
+        flags |= DNPY_DISTRIBUTED;
+   
     ret = PyArray_CheckFromAny(op, type, 0, 0, flags, NULL);
 
  finish:
@@ -6356,7 +6425,7 @@ clean_type:
  * steals referenct to type
  */
 static PyObject *
-PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int fortran)
+PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags)
 {
     PyArrayObject *ret;
 
@@ -6364,7 +6433,7 @@ PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int fortran)
     ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type,
                                                 type, nd, dims,
                                                 NULL, NULL,
-                                                fortran, NULL);
+                                                flags, NULL);
     if (ret == NULL) {
         return NULL;
     }
@@ -6381,29 +6450,33 @@ PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int fortran)
 static PyObject *
 array_empty(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 {
-
-    static char *kwlist[] = {"shape","dtype","order",NULL};
+    /* DISTNUMPY */
+    static char *kwlist[] = {"shape","dtype","order","dist",NULL};
     PyArray_Descr *typecode = NULL;
     PyArray_Dims shape = {NULL, 0};
     NPY_ORDER order = PyArray_CORDER;
-    Bool fortran;
     PyObject *ret = NULL;
+    Bool dist = FALSE;
+    int flags = 0;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|O&O&",
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|O&O&O&",
                                      kwlist, PyArray_IntpConverter,
                                      &shape,
                                      PyArray_DescrConverter,
                                      &typecode,
-                                     PyArray_OrderConverter, &order)) {
+                                     PyArray_OrderConverter, &order,
+                                     /* DISTNUMPY */
+                                     PyArray_BoolConverter, &dist)) {
         goto fail;
     }
     if (order == PyArray_FORTRANORDER) {
-        fortran = TRUE;
+        flags |= NPY_FORTRAN;
     }
-    else {
-        fortran = FALSE;
-    }
-    ret = PyArray_Empty(shape.len, shape.ptr, typecode, fortran);
+    /* DISTNUMPY */
+    if(dist)
+        flags |= DNPY_DISTRIBUTED;
+
+    ret = PyArray_Empty(shape.len, shape.ptr, typecode, flags);
     PyDimMem_FREE(shape.ptr);
     return ret;
 
@@ -6488,7 +6561,7 @@ array_scalar(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
  * accepts NULL type
  */
 static PyObject *
-PyArray_Zeros(int nd, intp *dims, PyArray_Descr *type, int fortran)
+PyArray_Zeros(int nd, intp *dims, PyArray_Descr *type, int flags)
 {
     PyArrayObject *ret;
 
@@ -6499,11 +6572,14 @@ PyArray_Zeros(int nd, intp *dims, PyArray_Descr *type, int fortran)
                                                 type,
                                                 nd, dims,
                                                 NULL, NULL,
-                                                fortran, NULL);
+                                                flags, NULL);
     if (ret == NULL) {
         return NULL;
     }
-    if (_zerofill(ret) < 0) {
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(ret))
+        dnumpy_zerofill(PyArray_DNDUID(ret));
+    else if (_zerofill(ret) < 0) {
         return NULL;
     }
     return (PyObject *)ret;
@@ -6513,29 +6589,34 @@ PyArray_Zeros(int nd, intp *dims, PyArray_Descr *type, int fortran)
 static PyObject *
 array_zeros(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 {
-    static char *kwlist[] = {"shape","dtype","order",NULL}; /* XXX ? */
+    /* DISTNUMPY */
+    static char *kwlist[] = {"shape","dtype","order","dist",NULL}; /* XXX ? */
     PyArray_Descr *typecode = NULL;
     PyArray_Dims shape = {NULL, 0};
     NPY_ORDER order = PyArray_CORDER;
-    Bool fortran = FALSE;
     PyObject *ret = NULL;
+    Bool dist=FALSE;
+    int flags=0;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|O&O&",
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|O&O&O&",
                                      kwlist, PyArray_IntpConverter,
                                      &shape,
                                      PyArray_DescrConverter,
                                      &typecode,
                                      PyArray_OrderConverter,
-                                     &order)) {
+                                     &order,
+                                     PyArray_BoolConverter, &dist)) {
         goto fail;
     }
+    
     if (order == PyArray_FORTRANORDER) {
-        fortran = TRUE;
+        flags |= NPY_FORTRAN;
     }
-    else {
-        fortran = FALSE;
-    }
-    ret = PyArray_Zeros(shape.len, shape.ptr, typecode, (int) fortran);
+    /* DISTNUMPY */
+    if(dist)
+        flags |= DNPY_DISTRIBUTED;
+
+    ret = PyArray_Zeros(shape.len, shape.ptr, typecode, flags);
     PyDimMem_FREE(shape.ptr);
     return ret;
 
@@ -6785,7 +6866,7 @@ array_from_text(PyArray_Descr *dtype, intp num, char *sep, size_t *nread,
                 err = 1;
                 break;
             }
-	    r->data = tmp;
+        r->data = tmp;
             dptr = tmp + (totalbytes - bytes);
             thisbuf = 0;
         }
@@ -6795,13 +6876,13 @@ array_from_text(PyArray_Descr *dtype, intp num, char *sep, size_t *nread,
     }
     if (num < 0) {
         tmp = PyDataMem_RENEW(r->data, (*nread)*dtype->elsize);
-	if (tmp == NULL) {
+    if (tmp == NULL) {
             err = 1;
         }
-	else {
-	    PyArray_DIM(r,0) = *nread;
-	    r->data = tmp;
-	}
+    else {
+        PyArray_DIM(r,0) = *nread;
+        r->data = tmp;
+    }
     }
     NPY_END_ALLOW_THREADS;
     free(clean_sep);
@@ -7047,17 +7128,17 @@ PyArray_FromFile(FILE *fp, PyArray_Descr *dtype, intp num, char *sep)
     if (((intp) nread) < num) {
         fprintf(stderr, "%ld items requested but only %ld read\n",
                 (long) num, (long) nread);
-	/* Make sure realloc is > 0 */
-	tmp = PyDataMem_RENEW(ret->data,
-			      NPY_MAX(nread,1) * ret->descr->elsize);
-	/* FIXME: This should not raise a memory error when nread == 0
-	   We should return an empty array or at least raise an  EOF Error.
-	 */
+    /* Make sure realloc is > 0 */
+    tmp = PyDataMem_RENEW(ret->data,
+                  NPY_MAX(nread,1) * ret->descr->elsize);
+    /* FIXME: This should not raise a memory error when nread == 0
+       We should return an empty array or at least raise an  EOF Error.
+     */
         if ((tmp == NULL) || (nread == 0)) {
-	    Py_DECREF(ret);
-	    return PyErr_NoMemory();
-	}
-	ret->data = tmp;
+        Py_DECREF(ret);
+        return PyErr_NoMemory();
+    }
+        ret->data = tmp;
         PyArray_DIM(ret,0) = nread;
     }
     return (PyObject *)ret;
@@ -7148,7 +7229,7 @@ PyArray_FromIter(PyObject *obj, PyArray_Descr *dtype, intp count)
         goto done;
     }
     for (i = 0; (i < count || count == -1) &&
-             (value = PyIter_Next(iter)); i++) {
+        (value = PyIter_Next(iter)); i++) {
         if (i >= elcount) {
             /*
               Grow ret->data:
@@ -8479,6 +8560,10 @@ set_flaginfo(PyObject *d)
 PyMODINIT_FUNC initmultiarray(void) {
     PyObject *m, *d, *s;
     PyObject *c_api;
+
+    /* DISTNUMPY */
+    dnumpy_init();
+    Py_AtExit(dnumpy_exit);
 
     /* Create the module and add the functions */
     m = Py_InitModule("multiarray", array_module_methods);

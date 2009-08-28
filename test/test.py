@@ -35,28 +35,22 @@ def random_list(dims):
 def ufunc(max_ndim=5):
     for i in range(1,max_ndim+1):
         src = random_list(random.sample(range(1, 10),i))
-        Ad = np.array(src, dtype=float, isdist=True)
-        Af = np.array(src, dtype=float, isdist=False)
+        Ad = np.array(src, dtype=float, dist=True)
+        Af = np.array(src, dtype=float, dist=False)
         
         ran = random.randint(0,i-1)
         if i > 1 and ran > 0:
             for j in range(0,ran):
                 src = src[0]
 
-        Bd = np.array(src, dtype=float, isdist=True)
-        Bf = np.array(src, dtype=float, isdist=False)
-        print "1"
+        Bd = np.array(src, dtype=float, dist=True)
+        Bf = np.array(src, dtype=float, dist=False)
         Cd = Ad + Bd + 42 + Bd[-1]
-        print "2"
         Cf = Af + Bf + 42 + Bf[-1]
-        print "3"
         Cd = Cd[::2] + Cd[::2,...] + Cd[0,np.newaxis]
-        print "4"
         Cf = Cf[::2] + Cf[::2,...] + Cf[0,np.newaxis]
-        print "5"
-        Dd = np.array(Cd, dtype=float, isdist=True)
-        Df = np.array(Cf, dtype=float, isdist=False)
-        
+        Dd = np.array(Cd, dtype=float, dist=True)
+        Df = np.array(Cf, dtype=float, dist=False)
         Dd[1:] = Cd[:-1]
         Df[1:] = Cf[:-1]
 
@@ -71,8 +65,8 @@ def ufunc(max_ndim=5):
 def ufunc_reduce(max_ndim=6):
     for i in range(1,max_ndim+1):
         src = random_list(random.sample(range(1, 10),i))
-        Ad = np.array(src, dtype=float, isdist=True)
-        Af = np.array(src, dtype=float, isdist=False)
+        Ad = np.array(src, dtype=float, dist=True)
+        Af = np.array(src, dtype=float, dist=False)
         for j in range(len(Ad.shape)):
             Cd = np.add.reduce(Ad,j)
             Cf = np.add.reduce(Af,j)

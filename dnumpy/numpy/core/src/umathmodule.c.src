@@ -225,6 +225,10 @@ PyMODINIT_FUNC initumath(void) {
     PyDict_SetItemString(d, "conj", s);
     PyDict_SetItemString(d, "mod", s2);
 
+    /* DISTNUMPY */
+    dnumpy_reg_ufunc_module(m);
+    dnumpy_master_slave_split();
+
     return;
 
  err:

@@ -175,7 +175,7 @@ PyArray_Item_INCREF(char *data, PyArray_Descr *descr)
         Py_ssize_t pos = 0;
 
         while (PyDict_Next(descr->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset,
@@ -211,10 +211,10 @@ PyArray_Item_XDECREF(char *data, PyArray_Descr *descr)
             Py_ssize_t pos = 0;
 
             while (PyDict_Next(descr->fields, &pos, &key, &value)) {
-		if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                     continue;
                 }
-		if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset,
+        if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset,
                                       &title)) {
                     return;
                 }
@@ -1104,6 +1104,56 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
                 "cannot write to array");
         return -1;
     }
+
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(dest) || PyArray_ISDISTRIBUTED(src))
+    {
+        if(!PyArray_ISDISTRIBUTED(dest))
+        {
+            PyErr_SetString(PyExc_RuntimeError, "Copying a "
+                    "distributed array into a non-distribued "
+                    "array is not supported");
+            return -1;
+        }
+        else if(!PyArray_ISDISTRIBUTED(src))
+        {
+            PyErr_SetString(PyExc_RuntimeError, "Copying a "
+                    "non-distributed array into a distribued "
+                    "array is not supported");
+            return -1;
+        }
+        //This is just to make sure that the dimensions match.
+        PyObject* tmpIter = PyArray_MultiIterNew(2,src,dest);
+        if(tmpIter == NULL)
+            return -1;
+
+        if(((PyArrayMultiIterObject*)tmpIter)->size !=
+            PyArray_SIZE(dest))
+        {
+            PyErr_SetString(PyExc_ValueError,
+                            "array dimensions are not "
+                            "compatible for copy");
+            Py_DECREF(tmpIter);
+            return -1;
+        }
+       
+        char *zero = malloc(PyArray_ITEMSIZE(dest));
+        memset(zero, 0, PyArray_ITEMSIZE(dest));
+        PyArrayObject *scalar = (PyArrayObject *)
+                                PyArray_SimpleNewFromData(0, NULL,
+                                                PyArray_TYPE(dest),
+                                                zero);
+
+        PyArrayObject *arylist[3] = {src,scalar,dest};
+        //TODO: create a specialized COPY function.
+        dnumpy_ufunc(arylist, 3, 1, "add");
+
+        free(zero);
+        return 0;
+    }
+
+
+    
     same = PyArray_SAMESHAPE(dest, src);
     simple = same && ((PyArray_ISCARRAY_RO(src) && PyArray_ISCARRAY(dest)) ||
             (PyArray_ISFARRAY_RO(src) && PyArray_ISFARRAY(dest)));
@@ -1163,6 +1213,13 @@ PyArray_CopyAnyInto(PyArrayObject *dest, PyArrayObject *src)
     void (*myfunc)(char *, intp, char *, intp, intp, int);
     NPY_BEGIN_THREADS_DEF;
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(dest) || PyArray_ISDISTRIBUTED(src))
+    {
+        PyErr_SetString(PyExc_RuntimeError, "PyArray_CopyAnyInto for "
+                        "distributed arrays are not implemented");
+        return -1;
+    }
     if (!PyArray_EquivArrTypes(dest, src)) {
         return PyArray_CastAnyTo(dest, src);
     }
@@ -1376,8 +1433,12 @@ static PyObject *
 PyArray_NewCopy(PyArrayObject *m1, NPY_ORDER fortran)
 {
     PyArrayObject *ret;
-    if (fortran == PyArray_ANYORDER)
-        fortran = PyArray_ISFORTRAN(m1);
+    /* DISTNUMPY */
+    int flags = 0;
+    if (fortran == PyArray_ANYORDER && PyArray_ISFORTRAN(m1))
+        flags = NPY_FORTRAN; 
+    if (PyArray_ISDISTRIBUTED(m1))
+        flags |= DNPY_DISTRIBUTED; 
 
     Py_INCREF(m1->descr);
     ret = (PyArrayObject *)PyArray_NewFromDescr(m1->ob_type,
@@ -1385,7 +1446,7 @@ PyArray_NewCopy(PyArrayObject *m1, NPY_ORDER fortran)
                                                 m1->nd,
                                                 m1->dimensions,
                                                 NULL, NULL,
-                                                fortran,
+                                                flags,
                                                 (PyObject *)m1);
     if (ret == NULL) {
         return NULL;
@@ -1644,7 +1705,7 @@ _default_nonzero(void *ip, void *arr)
 
 static void
 _default_copyswapn(void *dst, npy_intp dstride, void *src,
-		   npy_intp sstride, npy_intp n, int swap, void *arr)
+           npy_intp sstride, npy_intp n, int swap, void *arr)
 {
     npy_intp i;
     PyArray_CopySwapFunc *copyswap;
@@ -1654,9 +1715,9 @@ _default_copyswapn(void *dst, npy_intp dstride, void *src,
     copyswap = PyArray_DESCR(arr)->f->copyswap;
 
     for (i = 0; i < n; i++) {
-	copyswap(dstptr, srcptr, swap, arr);
-	dstptr += dstride;
-	srcptr += sstride;
+    copyswap(dstptr, srcptr, swap, arr);
+    dstptr += dstride;
+    srcptr += sstride;
     }
 }
 
@@ -1720,11 +1781,11 @@ PyArray_RegisterDataType(PyArray_Descr *descr)
         f->nonzero = _default_nonzero;
     }
     if (f->copyswapn == NULL) {
-	f->copyswapn = _default_copyswapn;
+    f->copyswapn = _default_copyswapn;
     }
     if (f->copyswap == NULL || f->getitem == NULL ||
         f->setitem == NULL) {
-	PyErr_SetString(PyExc_ValueError, "a required array function"	\
+    PyErr_SetString(PyExc_ValueError, "a required array function"    \
                         " is missing.");
         return -1;
     }
@@ -2003,15 +2064,15 @@ PyArray_ToList(PyArrayObject *self)
     sz = self->dimensions[0];
     lp = PyList_New(sz);
     for (i = 0; i < sz; i++) {
-	v = (PyArrayObject *)array_big_item(self, i);
-	if (PyArray_Check(v) && (v->nd >= self->nd)) {
-	    PyErr_SetString(PyExc_RuntimeError,
-			    "array_item not returning smaller-"	\
-			    "dimensional array");
-	    Py_DECREF(v);
-	    Py_DECREF(lp);
-	    return NULL;
-	}
+    v = (PyArrayObject *)array_big_item(self, i);
+    if (PyArray_Check(v) && (v->nd >= self->nd)) {
+        PyErr_SetString(PyExc_RuntimeError,
+                "array_item not returning smaller-"    \
+                "dimensional array");
+        Py_DECREF(v);
+        Py_DECREF(lp);
+        return NULL;
+    }
         PyList_SetItem(lp, i, PyArray_ToList(v));
         Py_DECREF(v);
     }
@@ -2089,6 +2150,10 @@ PyArray_ToString(PyArrayObject *self, NPY_ORDER order)
 static void
 array_dealloc(PyArrayObject *self) {
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+        dnumpy_destroy_dndarray(self->dnduid);
+
     if (self->weakreflist != NULL) {
         PyObject_ClearWeakRefs((PyObject *)self);
     }
@@ -2164,7 +2229,22 @@ array_big_item(PyArrayObject *self, intp i)
                         "0-d arrays can't be indexed");
         return NULL;
     }
-    if ((item = index2ptr(self, i)) == NULL) {
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        //item just need to be a dummy pointer. 
+        item = PyArray_DATA(self);
+
+        if (i < 0)
+                i += self->dimensions[0];
+        if (i < 0 || i >= self->dimensions[0])
+        {
+            PyErr_SetString(PyExc_IndexError,
+                            "index out of bounds");
+            return NULL;
+        }
+    }
+    else if ((item = index2ptr(self, i)) == NULL) {
         return NULL;
     }
     Py_INCREF(self->descr);
@@ -2173,11 +2253,26 @@ array_big_item(PyArrayObject *self, intp i)
                                               self->nd-1,
                                               self->dimensions+1,
                                               self->strides+1, item,
-                                              self->flags,
+                                              /* DISTNUMPY */
+                                              self->flags &
+                                              ~DNPY_DISTRIBUTED,
                                               (PyObject *)self);
     if (r == NULL) {
         return NULL;
     }
+    /* DISTNUMY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        //Lets make a slice covering the whole 'self' array beside
+        //the Single Index 'i'.
+        dndslice slice = {i, 0, SingleIndex};
+        //And then create the new view based on 'self'.
+        PyArray_DNDUID(r) = dnumpy_create_dndview(
+                                          PyArray_DNDUID(self),
+                                          1, &slice);
+        PyArray_FLAGS(r) |= DNPY_DISTRIBUTED;//Flag it as distributed.
+    }
+    
     Py_INCREF(self);
     r->base = (PyObject *)self;
     PyArray_UpdateFlags(r, CONTIGUOUS | FORTRAN);
@@ -2188,6 +2283,31 @@ array_big_item(PyArrayObject *self, intp i)
 static PyObject *
 array_item_nice(PyArrayObject *self, Py_ssize_t i)
 {
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        if (self->nd == 1)
+        {
+            if (i < 0)
+                i += self->dimensions[0];
+            if (i < 0 || i >= self->dimensions[0])
+            {
+                PyErr_SetString(PyExc_IndexError,
+                                "index out of bounds");
+                return NULL;
+            }
+            PyObject *retval;
+            char *data = malloc(PyArray_ITEMSIZE(self));
+            dnumpy_dndarray_getitem(data, self->dnduid, &i);
+            retval = PyArray_Scalar(data, self->descr,(PyObject *)self);
+            free(data);
+            return retval;
+        }
+        else
+            return PyArray_Return(
+                (PyArrayObject *) array_big_item(self, (intp) i));
+    }
+
     if (self->nd == 1) {
         char *item;
         if ((item = index2ptr(self, i)) == NULL) {
@@ -2237,6 +2357,14 @@ array_ass_big_item(PyArrayObject *self, intp i, PyObject *v)
     if ((item = index2ptr(self, i)) == NULL) {
         return -1;
     }
+
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        if (i < 0)
+            i += self->dimensions[0];
+        return dnumpy_dndarray_setitem(PyArray_DNDUID(self), &i, v);
+    }
+    
     if (self->descr->f->setitem(v, item, self) == -1) {
         return -1;
     }
@@ -2406,16 +2534,19 @@ parse_subindex(PyObject *op, intp *step_size, intp *n_steps, intp max)
     return -1;
 }
 
-
+/* DISTNUMPY */
+//We need some extra args if self is a distributed array.
 static int
 parse_index(PyArrayObject *self, PyObject *op,
-            intp *dimensions, intp *strides, intp *offset_ptr)
+            intp *dimensions, intp *strides, intp *offset_ptr,
+            int *nslice, dndslice *slice)
 {
     int i, j, n;
     int nd_old, nd_new, n_add, n_pseudo;
     intp n_steps, start, offset, step_size;
     PyObject *op1 = NULL;
     int is_slice;
+    int ret_nslice = 0;
 
     if (PySlice_Check(op) || op == Py_Ellipsis || op == Py_None) {
         n = 1;
@@ -2448,14 +2579,17 @@ parse_index(PyArrayObject *self, PyObject *op,
         }
         start = parse_subindex(op1, &step_size, &n_steps,
                                nd_old < self->nd ?
-                               self->dimensions[nd_old] : 0);
+                               self->dimensions[nd_old] : 0);       
         Py_DECREF(op1);
         if (start == -1) {
             break;
         }
         if (n_steps == PseudoIndex) {
             dimensions[nd_new] = 1; strides[nd_new] = 0;
-            nd_new++;
+            slice[ret_nslice].start = 0;
+            slice[ret_nslice].step = 0;
+            slice[ret_nslice].nsteps = PseudoIndex;
+            nd_new++; ret_nslice++;
         }
         else {
             if (n_steps == RubberIndex) {
@@ -2477,7 +2611,11 @@ parse_index(PyArrayObject *self, PyObject *op,
                         self->dimensions[nd_old];
                     strides[nd_new] = \
                         self->strides[nd_old];
-                    nd_new++; nd_old++;
+
+                    slice[ret_nslice].start = 0;
+                    slice[ret_nslice].step = 1;
+                    slice[ret_nslice].nsteps = self->dimensions[nd_old];
+                    nd_new++; nd_old++; ret_nslice++;
                 }
             }
             else {
@@ -2494,6 +2632,10 @@ parse_index(PyArrayObject *self, PyObject *op,
                         self->strides[nd_old-1];
                     nd_new++;
                 }
+                slice[ret_nslice].start = start;
+                slice[ret_nslice].step = step_size;
+                slice[ret_nslice].nsteps = n_steps;
+                ret_nslice++;
             }
         }
     }
@@ -2504,10 +2646,13 @@ parse_index(PyArrayObject *self, PyObject *op,
     for (j = 0; j < n_add; j++) {
         dimensions[nd_new] = self->dimensions[nd_old];
         strides[nd_new] = self->strides[nd_old];
-        nd_new++;
-        nd_old++;
+        slice[ret_nslice].start = 0;
+        slice[ret_nslice].step = 1;
+        slice[ret_nslice].nsteps = self->dimensions[nd_old];
+        nd_new++; nd_old++; ret_nslice++;
     }
     *offset_ptr = offset;
+    *nslice = ret_nslice;
     return nd_new;
 }
 
@@ -2897,6 +3042,9 @@ static PyObject *
 array_subscript_simple(PyArrayObject *self, PyObject *op)
 {
     intp dimensions[MAX_DIMS], strides[MAX_DIMS];
+    /* DISTNUMPY */
+    dndslice slice[MAX_DIMS];
+    int nslice=0;
     intp offset;
     int nd;
     PyArrayObject *other;
@@ -2909,18 +3057,28 @@ array_subscript_simple(PyArrayObject *self, PyObject *op)
     PyErr_Clear();
 
     /* Standard (view-based) Indexing */
-    if ((nd = parse_index(self, op, dimensions, strides, &offset)) == -1) {
+    /* DISTNUMPY */
+    if ((nd = parse_index(self, op, dimensions, strides, &offset,
+                          &nslice, slice)) == -1)
         return NULL;
-    }
+
     /* This will only work if new array will be a view */
     Py_INCREF(self->descr);
     if ((other = (PyArrayObject *)
          PyArray_NewFromDescr(self->ob_type, self->descr,
                               nd, dimensions,
                               strides, self->data+offset,
-                              self->flags,
+                              self->flags & ~DNPY_DISTRIBUTED,
                               (PyObject *)self)) == NULL) {
         return NULL;
+    }
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        PyArray_DNDUID(other) = dnumpy_create_dndview(
+                                        PyArray_DNDUID(self),
+                                        nslice, slice);
+        PyArray_FLAGS(other) |= DNPY_DISTRIBUTED;
     }
     other->base = (PyObject *)self;
     Py_INCREF(self);
@@ -2959,37 +3117,37 @@ array_subscript(PyArrayObject *self, PyObject *op)
 
     /* Check for multiple field access */
     if (self->descr->names && PySequence_Check(op) && !PyTuple_Check(op)) {
-	int seqlen, i;
-	seqlen = PySequence_Size(op);
-	for (i = 0; i < seqlen; i++) {
-	    obj = PySequence_GetItem(op, i);
-	    if (!PyString_Check(obj) && !PyUnicode_Check(obj)) {
-		Py_DECREF(obj);
-		break;
-	    }
-	    Py_DECREF(obj);
-	}
-	/*
+    int seqlen, i;
+    seqlen = PySequence_Size(op);
+    for (i = 0; i < seqlen; i++) {
+        obj = PySequence_GetItem(op, i);
+        if (!PyString_Check(obj) && !PyUnicode_Check(obj)) {
+        Py_DECREF(obj);
+        break;
+        }
+        Py_DECREF(obj);
+    }
+    /*
          * extract multiple fields if all elements in sequence
-	 * are either string or unicode (i.e. no break occurred).
+     * are either string or unicode (i.e. no break occurred).
          */
-	fancy = ((seqlen > 0) && (i == seqlen));
-	if (fancy) {
-	    PyObject *_numpy_internal;
-	    _numpy_internal = PyImport_ImportModule("numpy.core._internal");
-	    if (_numpy_internal == NULL) {
+    fancy = ((seqlen > 0) && (i == seqlen));
+    if (fancy) {
+        PyObject *_numpy_internal;
+        _numpy_internal = PyImport_ImportModule("numpy.core._internal");
+        if (_numpy_internal == NULL) {
                 return NULL;
             }
-	    obj = PyObject_CallMethod(_numpy_internal,
+        obj = PyObject_CallMethod(_numpy_internal,
                     "_index_fields", "OO", self, op);
-	    Py_DECREF(_numpy_internal);
-	    return obj;
-	}
+        Py_DECREF(_numpy_internal);
+        return obj;
+    }
     }
 
     if (op == Py_Ellipsis) {
-	Py_INCREF(self);
-	return (PyObject *)self;
+    Py_INCREF(self);
+    return (PyObject *)self;
     }
 
     if (self->nd == 0) {
@@ -3328,6 +3486,16 @@ array_subscript_nice(PyArrayObject *self, PyObject *op)
                 return NULL;
             }
         }
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(self))
+        {
+            item = malloc(PyArray_ITEMSIZE(self));
+            dnumpy_dndarray_getitem(item, self->dnduid, vals);
+            PyObject *retval = PyArray_Scalar(item, self->descr,
+                                              (PyObject *)self);
+            free(item);
+            return retval;
+        }
         item = PyArray_GetPtr(self, vals);
         return PyArray_Scalar(item, self->descr, (PyObject *)self);
     }
@@ -3359,9 +3527,9 @@ array_subscript_nice(PyArrayObject *self, PyObject *op)
         }
         else if (PyBool_Check(op) || PyArray_IsScalar(op, Bool) ||
                  (PyArray_Check(op) && (PyArray_DIMS(op)==0) &&
-		  PyArray_ISBOOL(op))) {
-	    noellipses = FALSE;
-	}
+          PyArray_ISBOOL(op))) {
+        noellipses = FALSE;
+    }
         else if (PySequence_Check(op)) {
             Py_ssize_t n, i;
             PyObject *temp;
@@ -4365,7 +4533,17 @@ array_slice(PyArrayObject *self, Py_ssize_t ilow,
         PyArray_NewFromDescr(self->ob_type, self->descr,
                              self->nd, self->dimensions,
                              self->strides, data,
-                             self->flags, (PyObject *)self);
+                             self->flags & ~DNPY_DISTRIBUTED,
+                             (PyObject *)self);
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        dndslice slice = {ilow, 1, self->dimensions[0]};
+        PyArray_DNDUID(r) = dnumpy_create_dndview(
+                            PyArray_DNDUID(self), 1, &slice);
+        PyArray_FLAGS(r) |= DNPY_DISTRIBUTED;
+    }
+                             
     self->dimensions[0] = l;
     if (r == NULL) {
         return NULL;
@@ -5041,7 +5219,7 @@ _void_compare(PyArrayObject *self, PyArrayObject *other, int cmp_op)
 
         op = (cmp_op == Py_EQ ? n_ops.logical_and : n_ops.logical_or);
         while (PyDict_Next(self->descr->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             a = PyArray_EnsureAnyArray(array_subscript(self, key));
@@ -5909,10 +6087,13 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
         self->flags = DEFAULT;
         if (flags) {
             self->flags |= FORTRAN;
+            /* DISTNUMPY */
+            self->flags |= flags & DNPY_DISTRIBUTED;
             if (nd > 1) {
                 self->flags &= ~CONTIGUOUS;
             }
-            flags = FORTRAN;
+            /* DISTNUMPY */
+            flags = FORTRAN | (flags & DNPY_DISTRIBUTED);
         }
     }
     else {
@@ -5948,12 +6129,23 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
     }
 
     if (data == NULL) {
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(self))
+        {   
+            self->dnduid = dnumpy_create_dndarray(nd, dims,
+                           NULL, self->descr->type_num);
+            //Make sure that set-/getitem are used.
+            self->descr->hasobject |= NPY_USE_GETITEM;
+            self->descr->hasobject |= NPY_USE_SETITEM;
+            //Need to get elsize allocated
+            sd = 0;
+        }
+                
         /*
          * Allocate something even for zero-space arrays
          * e.g. shape=(0,) -- otherwise buffer exposure
          * (a.data) doesn't work as it should.
          */
-
         if (sd == 0) {
             sd = descr->elsize;
         }
@@ -5977,6 +6169,17 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
          * Caller must arrange for this to be reset if truly desired
          */
         self->flags &= ~OWNDATA;
+        
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(self))
+        {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "PyArray_NewFromDescr does not support "
+                            "creating a view based on a distributed "
+                            "array. Only the creations of new arrays "
+                            "are supported\n");            
+            goto fail;
+        }        
     }
     self->data = data;
 
@@ -6049,7 +6252,7 @@ _putzero(char *optr, PyObject *zero, PyArray_Descr *dtype)
         int offset;
         Py_ssize_t pos = 0;
         while (PyDict_Next(dtype->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset, &title)) {
@@ -6229,7 +6432,7 @@ _fillobject(char *optr, PyObject *obj, PyArray_Descr *dtype)
         Py_ssize_t pos = 0;
 
         while (PyDict_Next(dtype->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset, &title)) {
@@ -7170,17 +7373,17 @@ array_imag_get(PyArrayObject *self)
     }
     else {
         Py_INCREF(self->descr);
-	ret = (PyArrayObject *)PyArray_NewFromDescr(self->ob_type,
-						    self->descr,
-						    self->nd,
-						    self->dimensions,
-						    NULL, NULL,
-						    PyArray_ISFORTRAN(self),
-						    (PyObject *)self);
-	if (ret == NULL) {
+    ret = (PyArrayObject *)PyArray_NewFromDescr(self->ob_type,
+                            self->descr,
+                            self->nd,
+                            self->dimensions,
+                            NULL, NULL,
+                            PyArray_ISFORTRAN(self),
+                            (PyObject *)self);
+    if (ret == NULL) {
             return NULL;
         }
-	if (_zerofill(ret) < 0) {
+    if (_zerofill(ret) < 0) {
             return NULL;
         }
         ret->flags &= ~WRITEABLE;
@@ -7220,6 +7423,13 @@ array_imag_set(PyArrayObject *self, PyObject *val)
 static PyObject *
 array_flat_get(PyArrayObject *self)
 {
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Iterator of distributed "
+                        "arrays is not implemented.\n");
+        return NULL;
+    }        
     return PyArray_IterNew((PyObject *)self);
 }
 
@@ -7232,6 +7442,14 @@ array_flat_set(PyArrayObject *self, PyObject *val)
     PyArray_Descr *typecode;
     int swap;
     PyArray_CopySwapFunc *copyswap;
+
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        PyErr_SetString(PyExc_RuntimeError, "Iterator of distributed "
+                        "arrays is not implemented.\n");
+        goto exit;
+    }
 
     typecode = self->descr;
     Py_INCREF(typecode);
@@ -7386,6 +7604,8 @@ array_alloc(PyTypeObject *type, Py_ssize_t NPY_UNUSED(nitems))
     /* nitems will always be 0 */
     obj = (PyObject *)_pya_malloc(sizeof(PyArrayObject));
     PyObject_Init(obj, type);
+    /* DISTNUMPY */
+    PyArray_DNDUID(obj) = 0;
     return obj;
 }
 
@@ -7547,8 +7767,8 @@ discover_itemsize(PyObject *s, int nd, int *itemsize)
     PyObject *e;
 
     if (PyArray_Check(s)) {
-	*itemsize = MAX(*itemsize, PyArray_ITEMSIZE(s));
-	return 0;
+    *itemsize = MAX(*itemsize, PyArray_ITEMSIZE(s));
+    return 0;
     }
 
     n = PyObject_Length(s);
@@ -7582,10 +7802,10 @@ discover_dimensions(PyObject *s, int nd, intp *d, int check_it)
 
 
     if (PyArray_Check(s)) {
-	for (i=0; i<nd; i++) {
-	    d[i] = PyArray_DIM(s,i);
-	}
-	return 0;
+    for (i=0; i<nd; i++) {
+        d[i] = PyArray_DIM(s,i);
+    }
+    return 0;
     }
     n = PyObject_Length(s);
     *d = n;
@@ -7935,7 +8155,7 @@ setArrayFromSequence(PyArrayObject *a, PyObject *s, int dim, intp offset)
        * a faster algorithm.  Right now, just make sure a base-class array is
        * used so that the dimensionality reduction assumption is correct.
        */
-	s = PyArray_EnsureArray(s);
+    s = PyArray_EnsureArray(s);
     }
 
     if (dim > a->nd) {
@@ -7968,6 +8188,58 @@ setArrayFromSequence(PyArrayObject *a, PyObject *s, int dim, intp offset)
     return 0;
 }
 
+/* DISTNUMPY */
+static int
+setDistArrayFromSequence(PyArrayObject *a, PyObject *s, int dim,
+                         int coords[NPY_MAXDIMS])
+{
+    Py_ssize_t i, slen;
+    int res = 0;
+    /*
+     * This code is to ensure that the sequence access below will
+     * return a lower-dimensional sequence.
+     */
+    if (PyArray_Check(s) && !(PyArray_CheckExact(s))) {
+      /*
+       * FIXME:  This could probably copy the entire subarray at once here using
+       * a faster algorithm.  Right now, just make sure a base-class array is
+       * used so that the dimensionality reduction assumption is correct.
+       */
+        s = PyArray_EnsureArray(s);
+    }
+
+    if (dim > a->nd) {
+        PyErr_Format(PyExc_ValueError,
+                     "setArrayFromSequence: sequence/array dimensions mismatch.");
+        return -1;
+    }
+
+    slen = PySequence_Length(s);
+    if (slen != a->dimensions[dim]) {
+        PyErr_Format(PyExc_ValueError,
+                     "setArrayFromSequence: sequence/array shape mismatch.");
+        return -1;
+    }
+    
+    for (i = 0; i < slen; i++) {
+        PyObject *o = PySequence_GetItem(s, i);
+        coords[dim] = i;
+        if ((a->nd - dim) > 1) {
+            res = setDistArrayFromSequence(a, o, dim+1, coords);
+        }
+        else {
+            if((res = dnumpy_dndarray_setitem(a->dnduid, coords, o)) < 0)
+                PyErr_SetString(PyExc_ValueError,
+                        "assignment from incompatible type.");
+        }
+        Py_DECREF(o);
+        if (res < 0) {
+            return res;
+        }
+    }
+
+    return 0;
+}
 
 static int
 Assign_Array(PyArrayObject *self, PyObject *v)
@@ -7982,7 +8254,15 @@ Assign_Array(PyArrayObject *self, PyObject *v)
                         "assignment to 0-d array");
         return -1;
     }
-    return setArrayFromSequence(self, v, 0, 0);
+
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        int coords[NPY_MAXDIMS];
+        return setDistArrayFromSequence(self, v, 0, coords);
+    }
+    else
+        return setArrayFromSequence(self, v, 0, 0);
 }
 
 /*
@@ -8512,6 +8792,14 @@ PyArray_CastTo(PyArrayObject *out, PyArrayObject *mp)
     int iswap, oswap;
     NPY_BEGIN_THREADS_DEF;
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(out) || PyArray_ISDISTRIBUTED(mp))
+    {
+        PyErr_SetString(PyExc_RuntimeError, "PyArray_CastTo for "
+                        "distributed arrays are not implemented");
+        return -1;
+    }
+
     if (mpsize == 0) {
         return 0;
     }
@@ -8679,6 +8967,14 @@ PyArray_CastAnyTo(PyArrayObject *out, PyArrayObject *mp)
     PyArray_VectorUnaryFunc *castfunc = NULL;
     int mpsize = PyArray_SIZE(mp);
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(out) || PyArray_ISDISTRIBUTED(mp))
+    {
+        PyErr_SetString(PyExc_RuntimeError, "PyArray_CastAnyTo for "
+                        "distributed arrays are not implemented");
+        return -1;
+    }
+
     if (mpsize == 0) {
         return 0;
     }
@@ -8783,7 +9079,9 @@ PyArray_FromArray(PyArrayObject *arr, PyArray_Descr *newtype, int flags)
                                      arr->nd,
                                      arr->dimensions,
                                      NULL, NULL,
-                                     flags & FORTRAN,
+                                     flags &
+                                     /* DISTNUMPY */
+                                     (FORTRAN | DNPY_DISTRIBUTED),
                                      (PyObject *)arr);
             if (ret == NULL) {
                 return NULL;
@@ -8807,6 +9105,16 @@ PyArray_FromArray(PyArrayObject *arr, PyArray_Descr *newtype, int flags)
             Py_DECREF(newtype);
             if ((flags & ENSUREARRAY) &&
                 !PyArray_CheckExact(arr)) {
+
+                /* DISTNUMPY */
+                if(PyArray_ISDISTRIBUTED(arr))
+                {
+                    PyErr_SetString(PyExc_RuntimeError, "PyArray_From"
+                        "Array on distributed arrays when no copying is"
+                        " needed - not implemented");
+                    return NULL;
+                }
+                    
                 Py_INCREF(arr->descr);
                 ret = (PyArrayObject *)
                     PyArray_NewFromDescr(&PyArray_Type,
@@ -8846,7 +9154,8 @@ PyArray_FromArray(PyArrayObject *arr, PyArray_Descr *newtype, int flags)
             PyArray_NewFromDescr(subtype, newtype,
                                  arr->nd, arr->dimensions,
                                  NULL, NULL,
-                                 flags & FORTRAN,
+                                 /* DISTNUMPY */
+                                 flags & (FORTRAN | DNPY_DISTRIBUTED),
                                  (PyObject *)arr);
         if (ret == NULL) {
             return NULL;
@@ -9369,7 +9678,9 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
 
             /* necessary but not sufficient */
             Py_INCREF(newtype);
-            r = Array_FromSequence(op, newtype, flags & FORTRAN,
+            r = Array_FromSequence(op, newtype,
+                                  /* DISTNUMPY */
+                                  flags & (FORTRAN | DNPY_DISTRIBUTED),
                                    min_depth, max_depth);
             if (r == NULL && (thiserr=PyErr_Occurred())) {
                 if (PyErr_GivenExceptionMatches(thiserr,
@@ -9383,8 +9694,8 @@ PyArray_FromAny(PyObject *op, PyArray_Descr *newtype, int min_depth,
                 PyErr_Clear();
                 if (isobject) {
                     Py_INCREF(newtype);
-                    r = ObjectArray_FromNestedList
-                        (op, newtype, flags & FORTRAN);
+                    r = ObjectArray_FromNestedList(op, newtype,
+                        flags & (FORTRAN | DNPY_DISTRIBUTED));
                     seq = TRUE;
                     Py_DECREF(newtype);
                 }
@@ -10142,7 +10453,7 @@ iter_subscript_int(PyArrayIterObject *self, PyArrayObject *ind)
             PyErr_Format(PyExc_IndexError,
                          "index %"INTP_FMT" out of bounds" \
                          " 0<=index<%"INTP_FMT,
-			 num, self->size);
+             num, self->size);
             Py_DECREF(ind_it);
             Py_DECREF(r);
             PyArray_ITER_RESET(self);
@@ -10198,16 +10509,32 @@ iter_subscript(PyArrayIterObject *self, PyObject *ind)
     PyArray_ITER_RESET(self);
 
     if (PyBool_Check(ind)) {
-        if (PyObject_IsTrue(ind)) {
-            return PyArray_ToScalar(self->dataptr, self->ao);
+        if (PyObject_IsTrue(ind))
+        {
+            /* DISTNUMPY */
+            if(PyArray_ISDISTRIBUTED(self->ao))
+            {
+                int coord[NPY_MAXDIMS];
+                memset(coord, 0, NPY_MAXDIMS);
+                char *data = malloc(PyArray_ITEMSIZE(self->ao));
+                dnumpy_dndarray_getitem(data, PyArray_DNDUID(self->ao),
+                                        coord);
+                r = PyArray_ToScalar(data, self->ao);
+                free(data);
+                return r;
+            }
+            else
+                return PyArray_ToScalar(self->dataptr, self->ao);
         }
         else { /* empty array */
             intp ii = 0;
             Py_INCREF(self->ao->descr);
             r = PyArray_NewFromDescr(self->ao->ob_type,
                                      self->ao->descr,
-                                     1, &ii,
-                                     NULL, NULL, 0,
+                                     1, &ii, NULL, NULL,
+                                     /* DISTNUMPY */
+                                     PyArray_FLAGS(self->ao) &
+                                     DNPY_DISTRIBUTED,
                                      (PyObject *)self->ao);
             return r;
         }
@@ -10237,7 +10564,10 @@ iter_subscript(PyArrayIterObject *self, PyObject *ind)
                                  self->ao->descr,
                                  1, &n_steps,
                                  NULL, NULL,
-                                 0, (PyObject *)self->ao);
+                                 /* DISTNUMPY */
+                                 PyArray_FLAGS(self->ao) &
+                                 DNPY_DISTRIBUTED,
+                                 (PyObject *)self->ao);
         if (r == NULL) {
             goto fail;
         }
@@ -10734,18 +11064,18 @@ static PyTypeObject PyArrayIter_Type = {
     0,                                           /* tp_dict */
     0,                                           /* tp_descr_get */
     0,                                           /* tp_descr_set */
-    0,   				         /* tp_dictoffset */
-    0,   				         /* tp_init */
-    0,   				         /* tp_alloc */
-    0,   				         /* tp_new */
-    0,   				         /* tp_free */
-    0,   				         /* tp_is_gc */
-    0,   				         /* tp_bases */
-    0,   				         /* tp_mro */
-    0,   				         /* tp_cache */
-    0,   				         /* tp_subclasses */
-    0,   				         /* tp_weaklist */
-    0,   				         /* tp_del */
+    0,                            /* tp_dictoffset */
+    0,                            /* tp_init */
+    0,                            /* tp_alloc */
+    0,                            /* tp_new */
+    0,                            /* tp_free */
+    0,                            /* tp_is_gc */
+    0,                            /* tp_bases */
+    0,                            /* tp_mro */
+    0,                            /* tp_cache */
+    0,                            /* tp_subclasses */
+    0,                            /* tp_weaklist */
+    0,                            /* tp_del */
 #ifdef COUNT_ALLOCS
     /* these must be last and never explicitly initialized */
     0,                                           /* tp_allocs */
@@ -10854,9 +11184,9 @@ PyArray_Broadcast(PyArrayMultiIterObject *mit)
      */
     tmp = PyArray_OverflowMultiplyList(mit->dimensions, mit->nd);
     if (tmp < 0) {
-	PyErr_SetString(PyExc_ValueError, 
-			"broadcast dimensions too large.");
-	return -1;
+    PyErr_SetString(PyExc_ValueError, 
+            "broadcast dimensions too large.");
+    return -1;
     }
     mit->size = tmp;
     for (i = 0; i < mit->numiter; i++) {
@@ -11122,9 +11452,9 @@ PyArray_MapIterBind(PyArrayMapIterObject *mit, PyArrayObject *arr)
     /* Here check the indexes (now that we have iteraxes) */
     mit->size = PyArray_OverflowMultiplyList(mit->dimensions, mit->nd);
     if (mit->size < 0) {
-	PyErr_SetString(PyExc_ValueError, 
-			"dimensions too large in fancy indexing");
-	goto fail;
+    PyErr_SetString(PyExc_ValueError, 
+            "dimensions too large in fancy indexing");
+    goto fail;
     }
     if (mit->ait->size == 0 && mit->size != 0) {
         PyErr_SetString(PyExc_ValueError,
@@ -11504,7 +11834,7 @@ static PyTypeObject PyArrayMapIter_Type = {
     0,                                           /* tp_cache */
     0,                                           /* tp_subclasses */
     0,                                           /* tp_weaklist */
-    0,   				         /* tp_del */
+    0,                            /* tp_del */
 
 #ifdef COUNT_ALLOCS
     /* these must be last and never explicitly initialized */
@@ -11559,12 +11889,12 @@ PyArray_MultiIterFromObjects(PyObject **mps, int n, int nadd, ...)
 
     va_start(va, nadd);
     for (i = 0; i < ntot; i++) {
-	if (i < n) {
-	    current = mps[i];
-	}
-	else {
-	    current = va_arg(va, PyObject *);
-	}
+    if (i < n) {
+        current = mps[i];
+    }
+    else {
+        current = va_arg(va, PyObject *);
+    }
         arr = PyArray_FROM_O(current);
         if (arr == NULL) {
             err = 1;
@@ -12160,7 +12490,7 @@ _arraydescr_isnative(PyArray_Descr *self)
         int offset;
         Py_ssize_t pos = 0;
         while (PyDict_Next(self->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset, &title)) {
@@ -12223,8 +12553,8 @@ static PyObject *
 arraydescr_names_get(PyArray_Descr *self)
 {
     if (self->names == NULL) {
-	Py_INCREF(Py_None);
-	return Py_None;
+    Py_INCREF(Py_None);
+    return Py_None;
     }
     Py_INCREF(self->names);
     return self->names;
@@ -12237,44 +12567,44 @@ arraydescr_names_set(PyArray_Descr *self, PyObject *val)
     int i;
     PyObject *new_names;
     if (self->names == NULL) {
-	PyErr_SetString(PyExc_ValueError, "there are no fields defined");
-	return -1;
+    PyErr_SetString(PyExc_ValueError, "there are no fields defined");
+    return -1;
     }
 
     N = PyTuple_GET_SIZE(self->names);
     if (!PySequence_Check(val) || PyObject_Size((PyObject *)val) != N) {
-	PyErr_Format(PyExc_ValueError, "must replace all names at once" \
-		     " with a sequence of length %d", N);
-	return -1;
+    PyErr_Format(PyExc_ValueError, "must replace all names at once" \
+             " with a sequence of length %d", N);
+    return -1;
     }
     /* Make sure all entries are strings */
     for (i = 0; i < N; i++) {
-	PyObject *item;
-	int valid = 1;
-	item = PySequence_GetItem(val, i);
-	valid = PyString_Check(item);
-	Py_DECREF(item);
-	if (!valid) {
-	    PyErr_Format(PyExc_ValueError,
-			 "item #%d of names is of type %s and not string",
-			 i, item->ob_type->tp_name);
-	    return -1;
-	}
+    PyObject *item;
+    int valid = 1;
+    item = PySequence_GetItem(val, i);
+    valid = PyString_Check(item);
+    Py_DECREF(item);
+    if (!valid) {
+        PyErr_Format(PyExc_ValueError,
+             "item #%d of names is of type %s and not string",
+             i, item->ob_type->tp_name);
+        return -1;
+    }
     }
     /* Update dictionary keys in fields */
     new_names = PySequence_Tuple(val);
     for (i = 0; i < N; i++) {
-	PyObject *key;
-	PyObject *item;
-	PyObject *new_key;
-	key = PyTuple_GET_ITEM(self->names, i);
-	/* Borrowed reference to item */
-	item = PyDict_GetItem(self->fields, key);
-	Py_INCREF(item); /* Hold on to it even through DelItem */
-	new_key = PyTuple_GET_ITEM(new_names, i);
-	PyDict_DelItem(self->fields, key);
-	PyDict_SetItem(self->fields, new_key, item);
-	Py_DECREF(item); /* self->fields now holds reference */
+    PyObject *key;
+    PyObject *item;
+    PyObject *new_key;
+    key = PyTuple_GET_ITEM(self->names, i);
+    /* Borrowed reference to item */
+    item = PyDict_GetItem(self->fields, key);
+    Py_INCREF(item); /* Hold on to it even through DelItem */
+    new_key = PyTuple_GET_ITEM(new_names, i);
+    PyDict_DelItem(self->fields, key);
+    PyDict_SetItem(self->fields, new_key, item);
+    Py_DECREF(item); /* self->fields now holds reference */
     }
 
     /* Replace names */
@@ -12462,7 +12792,7 @@ _descr_find_object(PyArray_Descr *self)
         Py_ssize_t pos = 0;
 
         while (PyDict_Next(self->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             if (!PyArg_ParseTuple(value, "Oi|O", &new, &offset, &title)) {
@@ -12669,7 +12999,7 @@ PyArray_DescrNewByteorder(PyArray_Descr *self, char newendian)
         newfields = PyDict_New();
         /* make new dictionary with replaced PyArray_Descr Objects */
         while(PyDict_Next(self->fields, &pos, &key, &value)) {
-	    if NPY_TITLE_KEY(key, value) {
+        if NPY_TITLE_KEY(key, value) {
                 continue;
             }
             if (!PyString_Check(key) ||
