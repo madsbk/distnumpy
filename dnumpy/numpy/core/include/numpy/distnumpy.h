@@ -7,7 +7,7 @@
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)                                
 
 //Maximum message size (in bytes)
-#define DNPY_MAX_MSG_SIZE 1024
+#define DNPY_MAX_MSG_SIZE 1024*10
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
@@ -33,9 +33,7 @@ typedef struct
     //Number of dimensions
     int ndims;
     //Size of dimensions
-    int dims[NPY_MAXDIMS];
-    //Blocksize in every dimension
-    int blocksize[NPY_MAXDIMS];    
+    npy_intp dims[NPY_MAXDIMS];
     //Data type of elements in array
     int dtype;
     //Size of an element in bytes
@@ -43,20 +41,20 @@ typedef struct
     //Pointer to local data
     char *data;
     //Number of local elements
-    int nelements;
+    npy_intp nelements;
     //Size of local dimensions
-    int localdims[NPY_MAXDIMS];
+    npy_intp localdims[NPY_MAXDIMS];
 } dndarray;
 
 //Type describing a slice of a dimension.
 typedef struct
 {
     //Start index
-    int start;
+    npy_intp start;
     //Elements between index
-    int step;
+    npy_intp step;
     //Number of steps (Length of the dimension)
-    int nsteps; 
+    npy_intp nsteps; 
 } dndslice;
 
 //View-alteration flags

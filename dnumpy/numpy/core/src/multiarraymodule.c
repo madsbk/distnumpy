@@ -26,8 +26,7 @@
 
 #include "hashdescr.c"
 
-
-/* DISTNUMPY inc */
+/* Include DISTNUMPY */
 #include "distnumpy.inc"
 
 
@@ -489,7 +488,7 @@ PyArray_Flatten(PyArrayObject *a, NPY_ORDER order)
     if(PyArray_ISDISTRIBUTED(a))
     {
         char *data = PyArray_DATA(ret);
-        int coord[NPY_MAXDIMS];
+        npy_intp coord[NPY_MAXDIMS];
         int i,j;
         memset(coord, 0, sizeof(int) * PyArray_NDIM(a));
         for(i=0; i < PyArray_SIZE(a); i++)

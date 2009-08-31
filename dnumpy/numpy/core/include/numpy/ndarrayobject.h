@@ -77,9 +77,6 @@ enum NPY_TYPES {    NPY_BOOL=0,
                     NPY_USERDEF=256  /* leave room for characters */
 };
 
-/* Include DISTNUMPY header */
-#include "distnumpy.h"
-
 /* basetype array priority */
 #define NPY_PRIORITY 0.0
 
@@ -243,6 +240,11 @@ typedef Py_uintptr_t npy_uintp;
         #undef NPY_INTP_FMT
         #define NPY_INTP_FMT PRIdPTR
 #endif
+
+
+/* Include DISTNUMPY header */
+#include "distnumpy.h"
+
 
 #define NPY_ERR(str) fprintf(stderr, #str); fflush(stderr);
 #define NPY_ERR2(str) fprintf(stderr, str); fflush(stderr);

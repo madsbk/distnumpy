@@ -6133,7 +6133,7 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
         if(PyArray_ISDISTRIBUTED(self))
         {   
             self->dnduid = dnumpy_create_dndarray(nd, dims,
-                           NULL, self->descr->type_num);
+                           self->descr->type_num);
             //Make sure that set-/getitem are used.
             self->descr->hasobject |= NPY_USE_GETITEM;
             self->descr->hasobject |= NPY_USE_SETITEM;
@@ -8191,7 +8191,7 @@ setArrayFromSequence(PyArrayObject *a, PyObject *s, int dim, intp offset)
 /* DISTNUMPY */
 static int
 setDistArrayFromSequence(PyArrayObject *a, PyObject *s, int dim,
-                         int coords[NPY_MAXDIMS])
+                         npy_intp coords[NPY_MAXDIMS])
 {
     Py_ssize_t i, slen;
     int res = 0;
@@ -8258,7 +8258,7 @@ Assign_Array(PyArrayObject *self, PyObject *v)
     /* DISTNUMPY */
     if(PyArray_ISDISTRIBUTED(self))
     {
-        int coords[NPY_MAXDIMS];
+        npy_intp coords[NPY_MAXDIMS];
         return setDistArrayFromSequence(self, v, 0, coords);
     }
     else
@@ -10514,7 +10514,7 @@ iter_subscript(PyArrayIterObject *self, PyObject *ind)
             /* DISTNUMPY */
             if(PyArray_ISDISTRIBUTED(self->ao))
             {
-                int coord[NPY_MAXDIMS];
+                npy_intp coord[NPY_MAXDIMS];
                 memset(coord, 0, NPY_MAXDIMS);
                 char *data = malloc(PyArray_ITEMSIZE(self->ao));
                 dnumpy_dndarray_getitem(data, PyArray_DNDUID(self->ao),
