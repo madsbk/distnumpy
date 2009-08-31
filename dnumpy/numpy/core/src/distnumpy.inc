@@ -239,9 +239,10 @@ static void rm_dndview(int uid)
  * The coordinates are in Row-major.
  * Private.
  */
-static void view2base_globalcoord(npy_intp coord_based_on_view[NPY_MAXDIMS],
-                                  dndview* view,
-                                  npy_intp coord_based_on_base[NPY_MAXDIMS])
+static void
+view2base_globalcoord(npy_intp coord_based_on_view[NPY_MAXDIMS],
+                      dndview* view,
+                      npy_intp coord_based_on_base[NPY_MAXDIMS])
 {
     int viewi = 0;
     int basei = 0;
@@ -595,9 +596,9 @@ static void do_DESTROY_ARRAY(int uid)
 static void do_CREATE_VIEW(int org_view_uid, dndview *newview)
 {
 	dndview *orgview = get_dndview(org_view_uid);
+    int i, bi;
     //Print debug info.
-    #ifdef DISTNUMPY_DEBUG
-        int i;
+    #ifndef DISTNUMPY_DEBUG
         printf("CREATE_VIEW - adding view id: %d, ndims: %d, slices:",
                newview->uid, newview->ndims);
 		for(i=0; i<newview->nslice; i++)
@@ -613,9 +614,29 @@ static void do_CREATE_VIEW(int org_view_uid, dndview *newview)
 		printf("\n");
     #endif
 
-    //Add the base to the new view and save it.
+    //Add the base to the new view.
     newview->base = orgview->base;
     newview->base->refcount++;
+
+    //Compute the block sliceses.
+    bi=0;
+    for(i=0; i<newview->ndims; i++)
+    {
+        newview->slice[i].step
+
+    }
+
+
+    printf("block sliceses:");
+    for(i=0; i<newview->base->ndims; i++)
+        printf(" (%d, %d, %d)",newview->bslice[i].start,
+                               newview->bslice[i].step,
+                               newview->bslice[i].nsteps);
+    printf("\n");
+
+    MPI_Abort(MPI_COMM_WORLD, -1);
+
+    //Save the view.
     put_dndview(newview);
 } /* do_CREATE_VIEW */
 
