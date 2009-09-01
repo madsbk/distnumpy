@@ -596,9 +596,9 @@ static void do_DESTROY_ARRAY(int uid)
 static void do_CREATE_VIEW(int org_view_uid, dndview *newview)
 {
 	dndview *orgview = get_dndview(org_view_uid);
-    int i, bi;
     //Print debug info.
-    #ifndef DISTNUMPY_DEBUG
+    #ifdef DISTNUMPY_DEBUG
+        int i;
         printf("CREATE_VIEW - adding view id: %d, ndims: %d, slices:",
                newview->uid, newview->ndims);
 		for(i=0; i<newview->nslice; i++)
@@ -617,24 +617,6 @@ static void do_CREATE_VIEW(int org_view_uid, dndview *newview)
     //Add the base to the new view.
     newview->base = orgview->base;
     newview->base->refcount++;
-
-    //Compute the block sliceses.
-    bi=0;
-    for(i=0; i<newview->ndims; i++)
-    {
-        newview->slice[i].step
-
-    }
-
-
-    printf("block sliceses:");
-    for(i=0; i<newview->base->ndims; i++)
-        printf(" (%d, %d, %d)",newview->bslice[i].start,
-                               newview->bslice[i].step,
-                               newview->bslice[i].nsteps);
-    printf("\n");
-
-    MPI_Abort(MPI_COMM_WORLD, -1);
 
     //Save the view.
     put_dndview(newview);
@@ -828,8 +810,9 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 	
-	//If all array and views have identical dimensions and if the
-    //views are "simple" we can use a simple computation method.
+	//If all array have the same number of dimensions and if the views
+    //are all identical we can use a very simple end efficient
+    //computation method.
     //Note we presume that all blocksizes are identical.
 	int simple_method = 1;
 	for(i=0; i<narys; i++)
@@ -837,21 +820,26 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 		//A scalar is also compatible with the simple method.
 		if(views[i]->base->ndims == 0)
 			continue;
-//printf("views[%d]->alterations: %d\n",i,views[i]->alterations);
-        //If is sufficient to check the number of dimensions and the
-        //alterations since NumPy will not allow different size
-        //dimensions in a broadcast.
+
+        //It is sufficient to check the number of dimensions and the
+        //sliceses.
 		if(views[i]->base->ndims != views[narys-1]->base->ndims ||
-           views[i]->ndims != views[narys-1]->ndims ||
-          (views[i]->alterations & ~DNPY_NDIMS))
+           views[i]->nslice != views[narys-1]->nslice)
 		{
 			simple_method = 0;
 			break;
 		}
+        if(memcmp(views[i]->slice, views[narys-1]->slice,
+                  views[i]->nslice * sizeof(dndslice)))
+        {
+         	simple_method = 0;
+			break;   
+        }
 	}
 
 	if(simple_method)
-	{//printf("\n\n******simple_method*******\n\n\n");
+	{
+//        printf("UFUNC - simple_method\n");
         intp dims[NPY_MAXDIMS];
         intp strides[NPY_MAXDIMS];
         
@@ -902,16 +890,6 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
                 }
                 sj++;
             }
-/*
-            printf("dims:");
-            for(int j=0; j<views[i]->ndims; j++)
-                printf(" %d", dims[j]);
-            printf(", strides:");
-            for(int j=0; j<views[i]->ndims; j++)
-                printf(" %d", strides[j]);
-            printf("\n");
-*/
-
             PyTuple_SET_ITEM(arytuple, i, PyArray_New(&PyArray_Type,
                              views[i]->ndims, dims,
                              views[i]->base->dtype, strides, data,
@@ -924,7 +902,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 		return;
 	}
 
-  //  printf("UFUNC - no simple_method\n");
+//    printf("UFUNC - no simple_method\n");
 	
 	MPI_Win win[NPY_MAXARGS];
 	for(i=0; i<narys; i++)

@@ -76,7 +76,7 @@ typedef struct
     //Block slice - sliceses that indicate the viewable blocks in this
     //view (local to the MPI-process).
     //NB: number of bsliceses is always base->ndims.
-    dndslice bslice[NPY_MAXDIMS];
+//    dndslice bslice[NPY_MAXDIMS];
     //Number of viewable dimensions.
     int ndims;
     //A binary mask specifying which alterations this view represents.
