@@ -513,6 +513,81 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
 
 
 /*===================================================================
+ * 
+ * Access a distributed array block located at 'src_ary' using local 
+ * block coordinates (local to the 'dest_ary' array and NOT the view).
+ * Broadcasting if required.
+ * The coordinates are in Row-major.
+ * Private.
+ */
+static int remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
+					       MPI_Win *win, const int lcoords[NPY_MAXDIMS])
+{
+    int i;
+    //A scalar dummy can be returned directly.
+    if(src_ary->base->ndims == 0)
+    {
+        memcpy(dest, src_ary->base->data, src_ary->base->elsize);
+        return 0;
+    }
+    
+    printf("src_ary-view id: %d\n",src_ary->uid);
+    printf("1 - lcoords:");
+    for(i=0; i<dest_ary->base->ndims; i++)
+        printf(" %d", lcoords[i]);
+    printf("\n");
+
+	//Convert local coordinates to global coordinates based on dest_ary.
+    int coordsA[NPY_MAXDIMS];
+    int coordsB[NPY_MAXDIMS];
+	for(i=0; i<dest_ary->base->ndims; i++)
+	{
+		rank2cart(dest_ary->base->ndims, myrank, coordsB);
+		coordsA[i] = coordsB[i] + lcoords[i] *
+                     cart_dim_sizes[dest_ary->base->ndims-1][i];
+	}
+
+    printf("2 - coordsA (global coords):");
+    for(i=0; i<dest_ary->base->ndims; i++)
+        printf(" %d", coordsA[i]);
+    printf("\n");
+        
+
+	//Find process cartesian coords and local offset.
+	int offset = 0;
+	for(i=src_ary->base->ndims-1; i>=0; i--)
+	{
+		coordsB[i] = coordsA[i] % cart_dim_sizes[src_ary->base->ndims-1][i];
+		int block_index = coordsA[i] / cart_dim_sizes[src_ary->base->ndims-1][i];
+		
+		int stride = 1;
+        int s;
+        for(s=i+1; s<src_ary->base->ndims; s++)
+			stride *= dnumroc(src_ary->base->dims[s],
+                              DNPY_BLOCKSIZE, 
+					          coordsB[s],
+                              cart_dim_sizes[src_ary->base->ndims-1][s]);
+
+		offset += stride * block_index * DNPY_BLOCKSIZE;
+	}
+	
+	//Convert to a MPI rank number.
+	int rank = cart2rank(src_ary->base->ndims, coordsB);
+
+	//Transfer element.
+	int itemsize = src_ary->base->elsize * DNPY_BLOCKSIZE;
+	MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
+	MPI_Get(dest, itemsize, MPI_BYTE, rank, offset*itemsize, itemsize, 
+			MPI_BYTE, *win);
+	MPI_Win_unlock(rank, *win);
+
+    printf("3 - reading data at rank %d, value: %lf\n", rank, *((double*)dest));
+
+	return 0;
+}/* remote_blockget */
+
+
+/*===================================================================
  *
  * Message handler for CREATE_ARRAY.
  * Private.
@@ -809,37 +884,40 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         fprintf(stderr, "UFUNC : unknown operator: %s\n", op);
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
-	
-	//If all array have the same number of dimensions and if the views
-    //are all identical we can use a very simple end efficient
-    //computation method.
-    //Note we presume that all blocksizes are identical.
-	int simple_method = 1;
+
+    //Analyse if it is possible to use a simplified computation method.
+	//* If all array have the same number of dimensions and if the views
+    //  are all identical we can use a very simple end efficient
+    //  computation method which do not require any communication..
+    //* If the only view-alteration is concerning the number of visible
+    //  dimensions we can use a block-oriented computation method.
+	int nocomm_method = 1;
+    int block_method = 1;
 	for(i=0; i<narys; i++)
 	{
-		//A scalar is also compatible with the simple method.
+		//A scalar is also compatible with all methods.
 		if(views[i]->base->ndims == 0)
 			continue;
 
-        //It is sufficient to check the number of dimensions and the
-        //sliceses.
 		if(views[i]->base->ndims != views[narys-1]->base->ndims ||
            views[i]->nslice != views[narys-1]->nslice)
 		{
-			simple_method = 0;
-			break;
+			nocomm_method = 0;
 		}
-        if(memcmp(views[i]->slice, views[narys-1]->slice,
-                  views[i]->nslice * sizeof(dndslice)))
+        else if(memcmp(views[i]->slice, views[narys-1]->slice,
+                 views[i]->nslice * sizeof(dndslice)))
         {
-         	simple_method = 0;
-			break;   
+         	nocomm_method = 0;
+        }
+        if(views[i]->alterations & ~DNPY_NDIMS)
+        {
+            block_method = 0;
         }
 	}
 
-	if(simple_method)
+	if(nocomm_method)
 	{
-//        printf("UFUNC - simple_method\n");
+        printf("UFUNC - nocomm_method\n");
         intp dims[NPY_MAXDIMS];
         intp strides[NPY_MAXDIMS];
         
@@ -900,60 +978,78 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 		//Call the python operator.
 		PyObject_Call(PyOp, arytuple, NULL);
 		return;
-	}
+	}//End of the simple method.
 
-//    printf("UFUNC - no simple_method\n");
-	
 	MPI_Win win[NPY_MAXARGS];
-	for(i=0; i<narys; i++)
+	for(i=0; i<nin; i++)
 		MPI_Win_create(views[i]->base->data, views[i]->base->nelements * 
-					   dtypesize(views[i]->base->dtype), 1, 
-					   MPI_INFO_NULL, MPI_COMM_WORLD, &win[i]);	
-	
-	int coords[NPY_MAXDIMS];
-	memset(coords, 0, sizeof(int)*NPY_MAXDIMS);
-	
-	//Allocate a buffer for every array.
-	char *buffer[NPY_MAXARGS];
-	for(i=0; i<narys; i++)
-		buffer[i] = malloc(dtypesize(views[i]->base->dtype));
+					   views[i]->base->elsize, 1, 
+					   MPI_INFO_NULL, MPI_COMM_WORLD, &win[i]);
+
+	intp coords[NPY_MAXDIMS];
+	memset(coords, 0, NPY_MAXDIMS * sizeof(intp));
+    char *buffer[NPY_MAXARGS];
+    
+	if(block_method)
+	{
+        printf("UFUNC - block_method\n");
+
+        //Allocate a buffer for every array.
+        char *buffer[NPY_MAXARGS];
+        for(i=0; i<narys; i++)
+            buffer[i] = malloc(views[i]->base->ndims * views[i]->base->elsize * DNPY_BLOCKSIZE);
+
+        for(j=0; j<nin; j++)
+            remote_blockget(buffer[j], views[j], views[narys-1], &win[j], coords);
+
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_Abort(MPI_COMM_WORLD, -1);
         
-	for(i=0; i<views[narys-1]->base->nelements; i++)
-	{       
-        int not_inside_view = 0;
-		for(j=0; j<nin; j++)
-            not_inside_view += remote_get(buffer[j], views[j],
-                                          views[narys-1], &win[j],
-                                          coords);
-        //If just one is outside we jump to next element.
-		if(!not_inside_view)
-        {
-            npy_intp one = 1;
-            PyObject *arytuple = PyTuple_New(narys);
-            for(j=0; j<nin; j++)
-                PyTuple_SET_ITEM(arytuple, j, PyArray_SimpleNewFromData(1, 
-                                 &one, views[j]->base->dtype, buffer[j]));
-                
-            for(j=nin; j<narys; j++)
-                PyTuple_SET_ITEM(arytuple, j, PyArray_SimpleNewFromData(1, 
-                                 &one, views[j]->base->dtype,
-                                 views[j]->base->data +
-                                 i*dtypesize(views[j]->base->dtype)));
+    }//End of the block method.
+    else
+    {
+        printf("UFUNC - NO simple method\n");
+        
+        //Allocate a buffer for every array.
+        for(i=0; i<narys; i++)
+            buffer[i] = malloc(views[i]->base->elsize);
             
-            //Call the python operator.
-            PyObject_Call(PyOp, arytuple, NULL);
+        for(i=0; i<views[narys-1]->base->nelements; i++)
+        {       
+            int not_inside_view = 0;
+            for(j=0; j<nin; j++)
+                not_inside_view += remote_get(buffer[j], views[j],
+                                              views[narys-1], &win[j],
+                                              coords);
+            //If just one is outside we jump to next element.
+            if(!not_inside_view)
+            {
+                npy_intp one = 1;
+                PyObject *arytuple = PyTuple_New(narys);
+                for(j=0; j<nin; j++)
+                    PyTuple_SET_ITEM(arytuple, j, PyArray_SimpleNewFromData(1, 
+                                     &one, views[j]->base->dtype, buffer[j]));
+                    
+                for(j=nin; j<narys; j++)
+                    PyTuple_SET_ITEM(arytuple, j, PyArray_SimpleNewFromData(1, 
+                                     &one, views[j]->base->dtype,
+                                     views[j]->base->data +
+                                     i*dtypesize(views[j]->base->dtype)));
+                
+                //Call the python operator.
+                PyObject_Call(PyOp, arytuple, NULL);
+            }
+            
+            //Iterate coords one element.
+            for(j=views[narys-1]->base->ndims-1; j >= 0; j--) 
+            {
+                if(++coords[j] >= views[narys-1]->base->localdims[j])
+                    coords[j] = 0;
+                else
+                    break;
+            }
         }
-		
-		//Iterate coords one element.
-		for(j=views[narys-1]->base->ndims-1; j >= 0; j--) 
-		{
-			if(++coords[j] >= views[narys-1]->base->localdims[j])
-				coords[j] = 0;
-			else
-				break;
-		}
-	}
-	
+    }
 	//Clean up
 	for(i=0; i<narys; i++)
 	{

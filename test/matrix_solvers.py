@@ -111,16 +111,15 @@ def sor(A, B, rf, tol=0.005, forcedIter=0):
             #t2 = add.reduce(t1)
             #hnew[i] = h[i] + (B[i] - t2) / A[i,i]
         
-        
         #over-relaxation
-        dh = subtract(hnew, h)
-        multiply(rf,dh,dh)
-        add(h,dh,hnew)
-        subtract(h,hnew,dh)
-        divide(dh,h,dh)
-        absolute(dh,dh)
-        dmax = maximum.reduce(dh)
-        h[:] = hnew[:]
+        #dh = subtract(hnew, h)
+        #multiply(rf,dh,dh)
+        #add(h,dh,hnew)
+        #subtract(h,hnew,dh)
+        #divide(dh,h,dh)
+        #absolute(dh,dh)
+        #dmax = maximum.reduce(dh)
+        #h[:] = hnew[:]
         
     print "SOLVED at: Itteration = ", n, ":   dmax = ", dmax, ": tol = ", tol
     print "                           Time = ", time.time() - t, "seconds"
