@@ -537,13 +537,13 @@ static int remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
         printf(" %d", lcoords[i]);
     printf("\n");
 
-	//Convert local coordinates to global coordinates based on dest_ary.
+	//Convert local coordinates to global coordinates.
     int coordsA[NPY_MAXDIMS];
-    int coordsB[NPY_MAXDIMS];
+    int pcoords[NPY_MAXDIMS];
 	for(i=0; i<dest_ary->base->ndims; i++)
 	{
-		rank2cart(dest_ary->base->ndims, myrank, coordsB);
-		coordsA[i] = coordsB[i] + lcoords[i] *
+		rank2cart(dest_ary->base->ndims, myrank, pcoords);
+		coordsA[i] = pcoords[i] + lcoords[i] *
                      cart_dim_sizes[dest_ary->base->ndims-1][i];
 	}
 
@@ -552,36 +552,76 @@ static int remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
         printf(" %d", coordsA[i]);
     printf("\n");
         
-
-	//Find process cartesian coords and local offset.
-	int offset = 0;
-	for(i=src_ary->base->ndims-1; i>=0; i--)
+    int bdims[NPY_MAXDIMS];
+    int ldims[NPY_MAXDIMS];
+//    int bdims_inbytes[NPY_MAXDIMS];
+//    int ldims_inbytes[NPY_MAXDIMS];    
+    int msgsize = src_ary->base->elsize;
+    int *cart_dim_size = cart_dim_sizes[src_ary->base->ndims-1];
+    for(i=0; i<src_ary->base->ndims; i++)
 	{
-		coordsB[i] = coordsA[i] % cart_dim_sizes[src_ary->base->ndims-1][i];
-		int block_index = coordsA[i] / cart_dim_sizes[src_ary->base->ndims-1][i];
-		
-		int stride = 1;
-        int s;
-        for(s=i+1; s<src_ary->base->ndims; s++)
-			stride *= dnumroc(src_ary->base->dims[s],
-                              DNPY_BLOCKSIZE, 
-					          coordsB[s],
-                              cart_dim_sizes[src_ary->base->ndims-1][s]);
+        //Find process cartesian coords.
+		pcoords[i] = coordsA[i] % cart_dim_size[i];
+        
+        //Convert global block coordinates to local coordinates.
+		coordsA[i] = coordsA[i] / cart_dim_size[i] * DNPY_BLOCKSIZE;
+        
+        //Compute local dims (local to the target MPI-process).
+        ldims[i] = dnumroc(src_ary->base->dims[i],
+                           DNPY_BLOCKSIZE,
+                           pcoords[i],
+                           cart_dim_size[i]);
 
-		offset += stride * block_index * DNPY_BLOCKSIZE;
+        //Compute a block's dims.
+        bdims[i] = ldims[i] - coordsA[i];
+        if(bdims[i] > DNPY_BLOCKSIZE)
+            bdims[i] = DNPY_BLOCKSIZE;
+
+        //Convert to bytes.
+        //ldims_inbytes[i] = ldims[i] * src_ary->base->elsize;
+        //bdims_inbytes[i] = bdims[i] * src_ary->base->elsize;
+        //coordsA[i] *= src_ary->base->elsize;
+
+        //Computes total message size.
+        msgsize *= bdims[i];
 	}
 	
 	//Convert to a MPI rank number.
-	int rank = cart2rank(src_ary->base->ndims, coordsB);
+	int rank = cart2rank(src_ary->base->ndims, pcoords);
+
+    //Setup a matching MPI datatype.
+    
+    MPI_Datatype arraytype, elementtype;
+
+    MPI_Type_contiguous(src_ary->base->elsize, MPI_BYTE, &elementtype);
+    //MPI_Type_commit(&elementtype);
+
+    
+    MPI_Type_create_subarray(src_ary->base->ndims,
+                             ldims,
+                             bdims,
+                             coordsA,
+                             MPI_ORDER_C, elementtype, &arraytype);
+    MPI_Type_commit(&arraytype);
+
+    int tmpsize;
+    MPI_Type_size(arraytype, &tmpsize);
+    printf("MPI_Type_create_subarray size: %d - src_ary->base->ndims: %d, ldims: [%d, %d],  bdims: [%d, %d], coordsA: [%d, %d]\n", tmpsize, src_ary->base->ndims, ldims[0], ldims[1], bdims[0], bdims[1], coordsA[0], coordsA[1]);
 
 	//Transfer element.
-	int itemsize = src_ary->base->elsize * DNPY_BLOCKSIZE;
 	MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
-	MPI_Get(dest, itemsize, MPI_BYTE, rank, offset*itemsize, itemsize, 
-			MPI_BYTE, *win);
+	MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, *win);
 	MPI_Win_unlock(rank, *win);
 
-    printf("3 - reading data at rank %d, value: %lf\n", rank, *((double*)dest));
+    MPI_Type_free(&arraytype);
+
+    printf("3 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
+
+
+    PyObject *tmp = PyArray_SimpleNewFromData(src_ary->base->ndims,
+                        bdims, src_ary->base->dtype, dest);
+    PyObject_Print(tmp, stdout, 0);
+    printf("\n");
 
 	return 0;
 }/* remote_blockget */
@@ -619,7 +659,7 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
                      DNPY_BLOCKSIZE)/dims[i]) * DNPY_BLOCKSIZE;
  
     //Allocate local data.
-    MPI_Alloc_mem(localsize * dtypesize(ary->dtype), 
+    MPI_Alloc_mem(localsize * ary->elsize, 
 				  MPI_INFO_NULL, &ary->data);
 
     //Allocate and copy the array to the views's base.
@@ -915,7 +955,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         }
 	}
 
-	if(nocomm_method)
+	if(nocomm_method && 0)
 	{
         printf("UFUNC - nocomm_method\n");
         intp dims[NPY_MAXDIMS];
@@ -989,7 +1029,6 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 	intp coords[NPY_MAXDIMS];
 	memset(coords, 0, NPY_MAXDIMS * sizeof(intp));
     char *buffer[NPY_MAXARGS];
-    
 	if(block_method)
 	{
         printf("UFUNC - block_method\n");
@@ -999,8 +1038,30 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         for(i=0; i<narys; i++)
             buffer[i] = malloc(views[i]->base->ndims * views[i]->base->elsize * DNPY_BLOCKSIZE);
 
-        for(j=0; j<nin; j++)
-            remote_blockget(buffer[j], views[j], views[narys-1], &win[j], coords);
+        int notfinished = 1;
+        while(notfinished)
+        {           
+            for(j=0; j<nin; j++)
+                remote_blockget(buffer[j], views[j], views[narys-1], &win[j], coords);
+
+            //PyObject *arytuple = PyTuple_New(narys);
+            //PyTuple_SET_ITEM(arytuple, 0, );
+
+            //Iterate coords one block.
+            for(j=views[narys-1]->base->ndims-1; j >= 0; j--) 
+                if(++coords[j] >= ceil(views[narys-1]->base->localdims[j] / (double) DNPY_BLOCKSIZE))
+                {
+                    if(j == 0)
+                    {
+                        notfinished = 0;
+                        break;
+                    }
+                    else
+                        coords[j] = 0;
+                }
+                else
+                    break;
+        }
 
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Abort(MPI_COMM_WORLD, -1);
