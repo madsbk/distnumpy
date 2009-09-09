@@ -520,7 +520,7 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
  * The coordinates are in Row-major.
  * Private.
  */
-static int remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
+static PyObject *remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
 					       MPI_Win *win, const int lcoords[NPY_MAXDIMS])
 {
     int i;
@@ -592,11 +592,7 @@ static int remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
     //Setup a matching MPI datatype.
     
     MPI_Datatype arraytype, elementtype;
-
-    MPI_Type_contiguous(src_ary->base->elsize, MPI_BYTE, &elementtype);
-    //MPI_Type_commit(&elementtype);
-
-    
+    MPI_Type_contiguous(src_ary->base->elsize, MPI_BYTE, &elementtype);    
     MPI_Type_create_subarray(src_ary->base->ndims,
                              ldims,
                              bdims,
@@ -620,10 +616,11 @@ static int remote_blockget(char *dest, dndview *src_ary, dndview *dest_ary,
 
     PyObject *tmp = PyArray_SimpleNewFromData(src_ary->base->ndims,
                         bdims, src_ary->base->dtype, dest);
+
     PyObject_Print(tmp, stdout, 0);
     printf("\n");
 
-	return 0;
+	return tmp;
 }/* remote_blockget */
 
 
@@ -788,7 +785,8 @@ static void do_SET_ITEM(dndview *view, char* value,
             int s;
             for(s=i+1; s<base->ndims; s++)
                 stride *= dnumroc(base->dims[s], DNPY_BLOCKSIZE, 
-                          pcoords[s], cart_dim_sizes[base->ndims-1][s]);
+                                  pcoords[s],
+                                  cart_dim_sizes[base->ndims-1][s]);
             
             offset += stride * (block_index * DNPY_BLOCKSIZE + index);
         }
@@ -855,7 +853,8 @@ static void do_GET_ITEM(char *retdata, dndview *view,
             int s;
             for(s=i+1; s<base->ndims; s++)
                 stride *= dnumroc(base->dims[s], DNPY_BLOCKSIZE, 
-                          pcoords[s], cart_dim_sizes[base->ndims-1][s]);
+                                  pcoords[s],
+                                  cart_dim_sizes[base->ndims-1][s]);
             
             offset += stride * (block_index * DNPY_BLOCKSIZE + index);
         }
@@ -1016,7 +1015,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         }       
 
 		//Call the python operator.
-		PyObject_Call(PyOp, arytuple, NULL);
+		PyObject_CallObject(PyOp, arytuple);
 		return;
 	}//End of the simple method.
 
@@ -1034,23 +1033,60 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         printf("UFUNC - block_method\n");
 
         //Allocate a buffer for every array.
-        char *buffer[NPY_MAXARGS];
         for(i=0; i<narys; i++)
             buffer[i] = malloc(views[i]->base->ndims * views[i]->base->elsize * DNPY_BLOCKSIZE);
 
         int notfinished = 1;
+        intp offset = 0;
         while(notfinished)
-        {           
+        {
+            printf("\nIteration offset: %d\n\n", offset);
+            PyObject *arytuple = PyTuple_New(narys);
             for(j=0; j<nin; j++)
-                remote_blockget(buffer[j], views[j], views[narys-1], &win[j], coords);
+                PyTuple_SET_ITEM(arytuple, j, remote_blockget(buffer[j], views[j], views[narys-1], &win[j], coords));
 
-            //PyObject *arytuple = PyTuple_New(narys);
-            //PyTuple_SET_ITEM(arytuple, 0, );
+
+            //Compute a block's dims for the dest arrays.
+            intp bdims[NPY_MAXDIMS];
+            int stride = views[narys-1]->base->elsize;
+            for(j=0; j<views[narys-1]->base->ndims; j++)
+            {
+                bdims[j] = views[narys-1]->base->localdims[j] - coords[j] * DNPY_BLOCKSIZE;
+                if(bdims[j] > DNPY_BLOCKSIZE)
+                    bdims[j] = DNPY_BLOCKSIZE;
+
+//                stride *= bdims[j];
+            }
+
+            PyObject *tmp = /* PyArray_New(&PyArray_Type,
+                             views[i]->ndims, dims,
+                             views[i]->base->dtype, strides, data,
+                             views[i]->base->elsize, NPY_WRITEABLE,
+                             NULL)*/
+
+
+            PyArray_SimpleNewFromData(views[j]->base->ndims, bdims, views[j]->base->dtype, views[j]->base->data + offset);
+            for(j=nin; j<narys; j++)
+                PyTuple_SET_ITEM(arytuple, j, tmp);
+
+            offset += PyArray_SIZE(tmp) * PyArray_ITEMSIZE(tmp);
+
+
+            PyObject_Print(tmp, stdout, 0);
+            printf("\n");  
+            
+
+            //Call the python operator.
+            PyObject_CallObject(PyOp, arytuple);          
+            
+//            offset += stride;
 
             //Iterate coords one block.
-            for(j=views[narys-1]->base->ndims-1; j >= 0; j--) 
+            for(j=views[narys-1]->base->ndims-1; j >= 0; j--)
+            {
                 if(++coords[j] >= ceil(views[narys-1]->base->localdims[j] / (double) DNPY_BLOCKSIZE))
                 {
+                    //We a finished, if wrapping around.
                     if(j == 0)
                     {
                         notfinished = 0;
@@ -1061,10 +1097,11 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
                 }
                 else
                     break;
+            }
         }
 
-        MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Abort(MPI_COMM_WORLD, -1);
+        //MPI_Barrier(MPI_COMM_WORLD);
+        //MPI_Abort(MPI_COMM_WORLD, -1);
         
     }//End of the block method.
     else
@@ -1098,7 +1135,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
                                      i*dtypesize(views[j]->base->dtype)));
                 
                 //Call the python operator.
-                PyObject_Call(PyOp, arytuple, NULL);
+                PyObject_CallObject(PyOp, arytuple);
             }
             
             //Iterate coords one element.
@@ -1115,13 +1152,14 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 	for(i=0; i<narys; i++)
 	{
 		free(buffer[i]);
-		MPI_Win_free(&win[i]);
         if(views[i]->base->ndims == 0)//Scalar dummy.
         {
             free(views[i]->base);
             free(views[i]);
-        }
+        }            
 	}
+    for(i=0; i<nin; i++)
+        MPI_Win_free(&win[i]);
 
 } /* do_UFUNC */
 
