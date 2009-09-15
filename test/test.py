@@ -53,12 +53,17 @@ def ufunc(max_ndim=5):
         Df = np.array(Cf, dtype=float, dist=False)
         Dd[1:] = Cd[:-1]
         Df[1:] = Cf[:-1]
-
-        if not array_equal(Dd,Df):
-            print "Error in ufunc_broadcast!"
-            print Dd
+        Cd = Dd + Bd[np.newaxis,-1]
+        Cf = Df + Bf[np.newaxis,-1]
+        if not array_equal(Cd,Cf):
+            print "Error in ufunc!"
+            print Cd
             print "The distributed array no equal to facit"
-            print Df
+            print Cf
+            print "Af:"
+            print Af
+            print "Bf:"
+            print Bf
             return False
     return True
 
@@ -71,6 +76,10 @@ def ufunc_reduce(max_ndim=6):
             Cd = np.add.reduce(Ad,j)
             Cf = np.add.reduce(Af,j)
             if not array_equal(Cd,Cf):
+                print "Error in ufunc_reduce!"
+                print Cd
+                print "The distributed array no equal to facit"
+                print Cf                
                 return False
     return True
 
@@ -91,4 +100,5 @@ print "*"*100
 print "Testing ufunc reduce (no views)"
 if ufunc_reduce(6):
     print "Succes"
-
+else:
+    print "Fail!"
