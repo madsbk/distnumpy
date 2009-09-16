@@ -86,6 +86,30 @@ static char ldexp_signatures[] = {
 #endif
 };
 
+/* DISTNUMPY a ufunc generating random numbers between 0 and 1 */
+static void
+dnumpy_urandom(char **args, npy_intp *dimensions, npy_intp *steps,
+               void *extra)
+{
+    npy_intp i;
+    npy_intp outstep=steps[1], n=dimensions[0];
+    char *out=args[1];
+    for (i=0; i<n; i++)
+    {
+        double scale=RAND_MAX;
+        double base=rand()/scale;
+        double fine=rand()/scale;
+
+        *((double *)out) = base+fine/scale;
+        out += outstep;
+    }
+}
+static PyUFuncGenericFunction dnumpy_urandom_functions[] = {
+    dnumpy_urandom
+};
+static char dnumpy_urandom_signatures[] = {PyArray_DOUBLE,
+                                           PyArray_DOUBLE};
+
 static void
 InitOtherOperators(PyObject *dictionary) {
     PyObject *f;
@@ -117,6 +141,16 @@ InitOtherOperators(PyObject *dictionary) {
                                 "Compute y = x1 * 2**x2.",0);
     PyDict_SetItemString(dictionary, "ldexp", f);
     Py_DECREF(f);
+
+
+    f = PyUFunc_FromFuncAndData(dnumpy_urandom_functions, blank3_data,
+                                dnumpy_urandom_signatures, 1,
+                                1, 1, PyUFunc_One, "ufunc_random",
+                                "Generates random numbers between 0 "
+                                "and 1. The input array is ignored.",0);
+    PyDict_SetItemString(dictionary, "ufunc_random", f);
+    Py_DECREF(f);
+
     return;
 }
 
