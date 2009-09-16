@@ -105,6 +105,8 @@ static int dtypesize(int dtype)
             return sizeof(npy_cfloat);
         case NPY_CDOUBLE:
             return sizeof(npy_cdouble);
+        case NPY_LONG:
+            return sizeof(npy_long);            
         default:
             fprintf(stderr, "typesize of %s is not implemented\n",
                     types_numpy2str(dtype));
@@ -1071,7 +1073,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 
 	if(nocomm_method)
 	{
-        printf("UFUNC - nocomm_method\n");
+//        printf("UFUNC - nocomm_method\n");
         intp dims[NPY_MAXDIMS];
         intp strides[NPY_MAXDIMS];
         
