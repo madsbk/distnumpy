@@ -13,12 +13,13 @@
 #define DNPY_MAX_NARRAYS 1024
 
 //Default blocksize
-#define DNPY_BLOCKSIZE 1
+#define DNPY_BLOCKSIZE 2
 
 //Operation types
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_SET_ITEM, DNPY_GET_ITEM,
-          DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL};
+          DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL,
+          DNPY_INIT_BLOCKSIZE};
 
 //dndslice constants.
 #define PseudoIndex -1//Adds a extra 1-dim - 'A[1,newaxis]'
@@ -44,6 +45,11 @@ typedef struct
     npy_intp nelements;
     //Size of local dimensions (local to the MPI-process).
     npy_intp localdims[NPY_MAXDIMS];
+    //Number of local blocks (local to the MPI-process).
+    //npy_intp nblocks;
+    //Size of local block-dimensions (local to the MPI-process).
+    //npy_intp localblockdims[NPY_MAXDIMS];
+    
 } dndarray;
 
 //Type describing a slice of a dimension.
