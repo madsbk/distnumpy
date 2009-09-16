@@ -544,8 +544,8 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
 */
     
 	//Convert local coordinates to global coordinates.
-    intp coordsA[NPY_MAXDIMS];
-    intp coordsB[NPY_MAXDIMS];
+    int coordsA[NPY_MAXDIMS];
+    int coordsB[NPY_MAXDIMS];
     int pcoords[NPY_MAXDIMS];
 	for(i=0; i<dest_ary->base->ndims; i++)
 	{
@@ -629,7 +629,7 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
     int msgsize = src_ary->base->elsize;
     int bdims[NPY_MAXDIMS];
     int ldims[NPY_MAXDIMS];
-    int vdims[NPY_MAXDIMS];
+    intp vdims[NPY_MAXDIMS];
     bi=0, vi=0;
     for(i=0; i < src_ary->nslice; i++)
     {
@@ -1140,8 +1140,8 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 					   views[i]->base->elsize, 1, 
 					   MPI_INFO_NULL, MPI_COMM_WORLD, &win[i]);
 
-	intp coords[NPY_MAXDIMS];
-	memset(coords, 0, NPY_MAXDIMS * sizeof(intp));
+	int coords[NPY_MAXDIMS];
+	memset(coords, 0, NPY_MAXDIMS * sizeof(int));
     char *buffer[NPY_MAXARGS];
 	if(block_method)
 	{
@@ -1193,7 +1193,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
                 
             //Compute a block's dims for the dest array.
             intp bdims[NPY_MAXDIMS];
-            int strides[NPY_MAXDIMS];
+            intp strides[NPY_MAXDIMS];
             offset = 0;
             for(j=0; j < lastary->base->ndims; j++)
             {
@@ -1445,7 +1445,7 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 	if(cart_coords[axis] == 0)//MPI-process is a receiver.
 	{	
 		npy_intp recv_dims[NPY_MAXDIMS];
-		memset(recv_dims, 0, out_ary->ndims*sizeof(int));
+		memset(recv_dims, 0, out_ary->ndims*sizeof(intp));
 
 		//Handle one sender at a time.
 		for(cart_coords[axis]=1;
@@ -2144,7 +2144,7 @@ dnumpy_master_slave_split()
         //Send block size to clients.
         int msg[3];
         msg[0] = DNPY_INIT_BLOCKSIZE;
-        msg[1] = blocksize;//TODO change to env variable.
+        msg[1] = blocksize;
         msg[2] = DNPY_MSG_END;
 
         MPI_Barrier(MPI_COMM_WORLD);
