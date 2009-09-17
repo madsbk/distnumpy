@@ -700,6 +700,7 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
 	MPI_Win_unlock(rank, *win);
 
     MPI_Type_free(&arraytype);
+    MPI_Type_free(&elementtype);
 
 //    printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
 //    printf("5 - Create array - ndims: %d, vdims: [%d, %d]\n", src_ary->ndims, vdims[0], vdims[1]);
@@ -1133,6 +1134,14 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 
 		//Call the python operator.
 		PyObject_CallObject(PyOp, arytuple);
+
+        //Clean up
+        for(i=0; i<narys; i++)
+            if(views[i]->base->ndims == 0)//Scalar dummy.
+            {
+                free(views[i]->base);
+                free(views[i]);
+            }            
 		return;
 	}//End of the simple method.
 
@@ -1263,7 +1272,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         printf("UFUNC - NO simple method\n");
         
         //Allocate a buffer for every array.
-        for(i=0; i<narys; i++)
+        for(i=0; i<nin; i++)
             buffer[i] = malloc(views[i]->base->elsize);
             
         for(i=0; i<lastary->base->nelements; i++)
@@ -1810,8 +1819,7 @@ dnumpy_dndarray_setitem(int uid, intp coordinate[NPY_MAXDIMS],
     //Cleanup and return error if the cast failed.
     if(citem2 == NULL)
     {
-        free(PyArray_DATA(item2));
-        free(item2);
+        Py_DECREF(item2);
         return -1;
     }
    
@@ -1835,10 +1843,7 @@ dnumpy_dndarray_setitem(int uid, intp coordinate[NPY_MAXDIMS],
 
     //Clean up.
     Py_DECREF(citem2);
-    //TODO: Use some kind of Py_DECREF instead.
-    //      But this works.
-    free(PyArray_DATA(item2));
-    free(item2);
+    Py_DECREF(item2);
     
     return 0;//Succes
 } /* dnumpy_dndarray_setitem */
