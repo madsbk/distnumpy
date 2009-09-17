@@ -1,6 +1,7 @@
 import time
 import numpy as np
 import random
+import sys
 
 def MonteCarlo_num_Mflops(Num_samples):
     # 3 flops in x^2+y^2 and 1 flop in random routine
@@ -27,10 +28,11 @@ def MC_int(c, s, dist):
         print "(Not distributed)"
 		    
 
-N=10000000
+N=int(sys.argv[1])
+C=int(sys.argv[2])
 
-MC_int(1, N, True)
-MC_int(1, N, False)
-MC_int(1, N, True)
-MC_int(1, N, False)
+MC_int(C, N, True)
+MC_int(C, N, False)
+MC_int(C, N, True)
+MC_int(C, N, False)
 
