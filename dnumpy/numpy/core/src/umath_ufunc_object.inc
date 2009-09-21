@@ -2378,8 +2378,8 @@ construct_reduce(PyUFuncObject *self, PyArrayObject **arr, PyArrayObject *out,
                 PyArray_New(aar->ob_type, aar->nd-1, loop_i,
                             otype, NULL, NULL, 0,
                             /* DISTNUMPY */
-                            ((PyArray_FLAGS(aar) & DNPY_DISTRIBUTED)
-                            && aar->nd-1)?DNPY_DISTRIBUTED:0,
+                            (PyArray_ISDISTRIBUTED(aar) && aar->nd-1)?
+                            DNPY_DISTRIBUTED:0,
                             (PyObject *)aar);
         }
         else {

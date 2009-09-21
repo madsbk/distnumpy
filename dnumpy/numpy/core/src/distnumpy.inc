@@ -1341,6 +1341,7 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
     int i,j;
 	dndview *in_view = get_dndview(in_ary_uid);
 	dndarray *in_ary = in_view->base;
+    PyObject *local_scalar, *tmpobj, *tmp_scalar;
 
     //Get Python function.
     PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
@@ -1362,8 +1363,6 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 				   in_ary_uid, axis, out_scalar_address);
 		#endif
 
-		//local output scalar.
-		PyObject *local_scalar;
 		//The master should use the final output address.
 		if(myrank == 0)
 			local_scalar = PyArray_SimpleNewFromData(0, NULL,
@@ -1373,17 +1372,19 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 	
 		if(in_ary->localdims[0] > 0)
 		{
+            tmpobj = PyArray_SimpleNewFromData(1, &in_ary->nelements,
+                                               in_ary->dtype,
+                                               in_ary->data);
 			//Compute local reduce.
 			PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
-					PyArray_SimpleNewFromData(1, &in_ary->nelements,
-					in_ary->dtype, in_ary->data),
-					axis, Py_None, local_scalar);
+                                tmpobj, axis, Py_None, local_scalar);
 
 			//Send local output scalar to the master process.
 			if(myrank > 0)
 				MPI_Send(PyArray_DATA(local_scalar),
 						 dtypesize(out_dtype), MPI_BYTE, 0, 0,
 						 MPI_COMM_WORLD);
+            Py_DECREF(tmpobj);
 		}
 		if(myrank == 0)
 		{
@@ -1399,7 +1400,7 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 			}
 			
 			//We need a tmp scalar for receiving scalars. 
-			PyObject *tmp_scalar = PyArray_SimpleNew(0, NULL, out_dtype);
+            tmp_scalar = PyArray_SimpleNew(0, NULL, out_dtype);
 
 			//For all ranks in dimension 'axis', we reduces the scalars
 			//to local_scalar at the master.
@@ -1415,7 +1416,9 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 				PyObject_CallFunction(PyOp, "(O,O,O)", local_scalar,
 									  tmp_scalar, local_scalar);
 			}
+            Py_DECREF(tmp_scalar);
 		}
+        Py_DECREF(local_scalar);
 		return;
 	}
 
@@ -1442,11 +1445,15 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 					   dtypesize(out_ary->dtype), 1, MPI_INFO_NULL, 
 					   MPI_COMM_WORLD, &win);	
 
+    PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
+                                              in_ary->localdims,
+                                              in_ary->dtype,
+                                              in_ary->data);
+
 	//All MPI-processes computes its own sub-result.
 	PyObject *subres = PyObject_CallMethod(PyOp, "reduce", "(O,i)",
-					   PyArray_SimpleNewFromData(in_ary->ndims,
-					   in_ary->localdims, in_ary->dtype, in_ary->data),
-					   axis);
+                                           tmp, axis);
+    Py_DECREF(tmp);
 
 	int subres_dtypesize = dtypesize(PyArray_TYPE(subres));
 
@@ -1518,6 +1525,7 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 
 	//Cleanup
 	MPI_Win_free(&win);
+    Py_DECREF(subres);
 
 } /* do_UFUNC_REDUCE */
 
@@ -2119,7 +2127,16 @@ dnumpy_exit()
 		free(cart_dim_strides[i]);
 		free(cart_dim_sizes[i]);
 	}
-	
+
+    int nleaks = 0;
+    for(i=0; i < DNPY_MAX_NARRAYS; i++)
+        if(dndviews_uid[i] != 0)
+            nleaks++;
+
+    if(nleaks > 0)
+        printf("DistNumPy - Warning %d distributed arrays didn't get "
+               "deallocated.\n", nleaks);
+    
 	MPI_Finalize();
 } /* dnumpy_exit */
 

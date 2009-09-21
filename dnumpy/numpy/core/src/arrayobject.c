@@ -1148,7 +1148,10 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
         //TODO: create a specialized COPY function.
         dnumpy_ufunc(arylist, 3, 1, "add");
 
+        //Cleanup
         free(zero);
+        Py_DECREF(tmpIter);
+        Py_DECREF(scalar);
         return 0;
     }
 
