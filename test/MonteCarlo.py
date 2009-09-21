@@ -12,13 +12,13 @@ def MC_int(c, s, dist):
     y = np.empty([s], dtype=np.double, dist=dist)
     sum=0.0
     start=time.time()
-    np.ufunc_random(x,x)
-    np.ufunc_random(y,y)
     for i in range(c):
+        np.ufunc_random(x,x)
+        np.ufunc_random(y,y)
         np.square(x,x)
         np.square(y,y)
         np.add(x,y,x)
-        x = np.less_equal(x, 1)
+        #z = np.less_equal(x, 1)
         sum += np.add.reduce(x)*4.0/s
     stop=time.time()
     print 'Pi: ', sum, ' in sec: ', stop-start,

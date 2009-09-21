@@ -1,5 +1,6 @@
-from numpy import *
 import time
+import sys
+from numpy import *
 
 def jacobi(A, B, tol=0.005, init_val=0.0):
     '''itteratively solving for matrix A with solution vector B
@@ -103,23 +104,21 @@ def sor(A, B, rf, tol=0.005, forcedIter=0):
     t = time.time()
     while (forcedIter and forcedIter > n) or \
           (forcedIter == 0 and dmax > tol):
-        n += 1
-
+        n += 1        
         for i in range(len(B)):
             t1 = multiply(A[i],hnew)
-
-            #t2 = add.reduce(t1)
-            #hnew[i] = h[i] + (B[i] - t2) / A[i,i]
+            t2 = add.reduce(t1)
+            hnew[i] = h[i] + (B[i] - t2) / A[i,i]
         
         #over-relaxation
-        #dh = subtract(hnew, h)
-        #multiply(rf,dh,dh)
-        #add(h,dh,hnew)
-        #subtract(h,hnew,dh)
-        #divide(dh,h,dh)
-        #absolute(dh,dh)
-        #dmax = maximum.reduce(dh)
-        #h[:] = hnew[:]
+        dh = subtract(hnew, h)
+        multiply(rf,dh,dh)
+        add(h,dh,hnew)
+        subtract(h,hnew,dh)
+        divide(dh,h,dh)
+        absolute(dh,dh)
+        dmax = maximum.reduce(dh)
+        h[:] = hnew[:]
         
     print "SOLVED at: Itteration = ", n, ":   dmax = ", dmax, ": tol = ", tol
     print "                           Time = ", time.time() - t, "seconds"
@@ -127,42 +126,21 @@ def sor(A, B, rf, tol=0.005, forcedIter=0):
     return h
 
 
-def print_arr(arr, title):
-    print title, shape(arr)
-    print arr
+d = int(sys.argv[1])
+size = int(sys.argv[2])
+iter = int(sys.argv[3])
 
-def random_list(dims):
-    if len(dims) == 0:
-        return random.randint(0,100000)
-    
-    list = []
-    for i in range(dims[-1]):
-        list.append(random_list(dims[0:-1]))
-    return list  
+A = array([[4, -1, -1, 0], [-1, 4, 0, -1], [-1, 0, 4, -1], [0, -1, -1, 4]], float, dist=d)
+B = array([1,2,0,1], float, dist=d)
 
-d = True
-size = 100
-iter = 10
-
-#A = array([[4, -1, -1, 0], [-1, 4, 0, -1], [-1, 0, 4, -1], [0, -1, -1, 4]], float, dist=d)
 
 #A = array(random_list([size,size]), float, dist=d)
-A = zeros([size,size], dtype=float, dist=d)
-add(A,42,A)
+#A = zeros([size,size], dtype=float, dist=d)
+#add(A,42,A)
 
-#B = array(random_list([size]), float, dist=d)
-B = zeros([size], dtype=float, dist=d)
-add(B,42,B)
+# = array(random_list([size]), float, dist=d)
+#B = zeros([size], dtype=float, dist=d)
+#add(B,42,B)
 
-
-"""
-C = jacobi(A,B)
-print_arr(C, "C jacobi")
-C = gauss_seidel(A,B)
-print_arr(C, "C gauss_seidel")
-"""
-
-
-C = sor(A, B, rf=1.3,forcedIter=iter)
-
-
+C = sor(A, B, rf=1.3)
+print C
