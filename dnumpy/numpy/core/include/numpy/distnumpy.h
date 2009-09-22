@@ -72,7 +72,7 @@ typedef struct
 typedef struct
 {
     //Unique identification.
-    int uid;
+    npy_intp uid;
     //The array this view is a view of.
     dndarray *base;
     //Number of sliceses. NB: nslice >= base->ndims.

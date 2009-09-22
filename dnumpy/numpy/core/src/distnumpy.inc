@@ -5,18 +5,18 @@
 #include <math.h>
 #include "mpi.h"
 
-
 /*===================================================================
  *
  * MPI process variables.
 */
-static int myrank, worldsize, blocksize;
-static int msg[DNPY_MAX_MSG_SIZE];
+static int myrank, worldsize;
+static npy_intp blocksize;
+static npy_intp msg[DNPY_MAX_MSG_SIZE];
 //Unique identification counter
-static int uid_count;
+static npy_intp uid_count;
 //Array-views belonging to local MPI process
 static dndview dndviews[DNPY_MAX_NARRAYS];
-static int dndviews_uid[DNPY_MAX_NARRAYS];
+static npy_intp dndviews_uid[DNPY_MAX_NARRAYS];
 //Cartesian dimension information - one for every dimension-order.
 static int *cart_dim_strides[NPY_MAXDIMS];
 static int *cart_dim_sizes[NPY_MAXDIMS];
@@ -122,8 +122,8 @@ static int dtypesize(int dtype)
  * From Fortran source: http://www.cs.umu.se/~dacke/ngssc/numroc.f
  * Private
 */
-static int dnumroc(int nelem_in_dim, int block_size, 
-                   int proc_dim_rank, int nproc_in_dim)
+static npy_intp dnumroc(npy_intp nelem_in_dim, npy_intp block_size, 
+                        int proc_dim_rank, int nproc_in_dim)
 {
     int first_process = 0; //Assume array begins at pracess 0.
 	
@@ -132,13 +132,13 @@ static int dnumroc(int nelem_in_dim, int block_size,
 				  nproc_in_dim;
 
 	//Figure the total number of whole NB blocks N is split up into.
-	int nblocks = nelem_in_dim / block_size;
+	npy_intp nblocks = nelem_in_dim / block_size;
 
 	//Figure the minimum number of elements a process can have.
-	int numroc = nblocks / nproc_in_dim * block_size;
+	npy_intp numroc = nblocks / nproc_in_dim * block_size;
 	
 	//See if there are any extra blocks
-	int extrablocks = nblocks % nproc_in_dim;
+	npy_intp extrablocks = nblocks % nproc_in_dim;
 	
 	//If I have an extra block.
 	if(mydist < extrablocks)
@@ -182,20 +182,20 @@ static void rank2cart(int ndims, int rank, int coords[NPY_MAXDIMS])
  * Put, get & remove views from local MPI process.
  * Private.
  */
-static dndview *get_dndview(int uid)
+static dndview *get_dndview(npy_intp uid)
 {
-    int i;
+    npy_intp i;
     if(uid > 0)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
                 return &dndviews[i];
-    fprintf(stderr, "get_dndview, uid %d does not exist\n", uid);
+    fprintf(stderr, "get_dndview, uid %ld does not exist\n", uid);
     MPI_Abort(MPI_COMM_WORLD, -1);
     return NULL;
 }
 static void put_dndview(dndview *view)
 {
-    int i;    
+    npy_intp i;    
     for(i=0; i < DNPY_MAX_NARRAYS; i++)
         if(dndviews_uid[i] == 0)
         {
@@ -209,9 +209,9 @@ static void put_dndview(dndview *view)
 
 //NB: rm_dndview will also free memory allocted for the dndarray
 //if it is the last reference to the dndarray.
-static void rm_dndview(int uid)
+static void rm_dndview(npy_intp uid)
 {
-    int i;
+    npy_intp i;
     if(uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
@@ -224,7 +224,7 @@ static void rm_dndview(int uid)
 				}
                 return;
             } 
-    fprintf(stderr, "rm_dndarray, uid %d does not exist\n", uid);
+    fprintf(stderr, "rm_dndarray, uid %ld does not exist\n", (long)uid);
     MPI_Abort(MPI_COMM_WORLD, -1);
     return;
 }/* Put, get & rm dndview */ 
@@ -287,10 +287,11 @@ view2base_globalcoord(npy_intp coord_based_on_view[NPY_MAXDIMS],
  * Private.
  */
 static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
-				int reduce_axis, MPI_Win *win, int lcoords[NPY_MAXDIMS])
+				      int reduce_axis, MPI_Win *win, 
+					  npy_intp lcoords[NPY_MAXDIMS])
 {   
 	//Convert local coordinates to global coordinates.
-	int gcoords[NPY_MAXDIMS];
+	npy_intp gcoords[NPY_MAXDIMS];
 	int count = 0;
     int i;
     int *cdimsizes = cart_dim_sizes[src_ary->ndims-1];
@@ -314,20 +315,21 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
 
 	//Find process cartesian coords and local offset.
 	int pcoords[NPY_MAXDIMS];
-	int offset = 0;
+	npy_intp offset = 0;
 	for(i=dest_ary->ndims-1; i>=0; i--)
 	{				
-		int B = gcoords[i] / blocksize;
+		npy_intp B = gcoords[i] / blocksize;
 		int P = cart_dim_sizes[dest_ary->ndims-1][i];
 		pcoords[i] = B % P;
-		int block_index = B / P;
-		int index = gcoords[i] % blocksize;
+		npy_intp block_index = B / P;
+		npy_intp index = gcoords[i] % blocksize;
 		
-		int stride = 1;
+		npy_intp stride = 1;
         int s;
 		for(s=i+1; s<dest_ary->ndims; s++)
 			stride *= dnumroc(dest_ary->dims[s], blocksize, 
-					  pcoords[s], cart_dim_sizes[dest_ary->ndims-1][s]);
+							  pcoords[s], 
+							  cart_dim_sizes[dest_ary->ndims-1][s]);
 		
 		offset += stride * (block_index * blocksize +
                             index);
@@ -337,10 +339,10 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
 	int rank = cart2rank(dest_ary->ndims, pcoords);
 
 	//Transfer element.
-	int itemsize = dtypesize(dest_ary->dtype);
+	int itemsize = dest_ary->elsize;
 	MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
-	MPI_Put(src, itemsize, MPI_BYTE, rank, offset*itemsize, itemsize, 
-			MPI_BYTE, *win);
+	MPI_Put(src, itemsize, MPI_BYTE, rank, offset*dest_ary->elsize, 
+			dest_ary->elsize, MPI_BYTE, *win);
 	MPI_Win_unlock(rank, *win);
 
 	return 0;
@@ -355,7 +357,7 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
  * Private.
  */
 static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
-					  MPI_Win *win, const int lcoords[NPY_MAXDIMS])
+					  MPI_Win *win, const npy_intp lcoords[NPY_MAXDIMS])
 {
     int i;
     int ai = 0;
@@ -364,7 +366,7 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
     //A scalar dummy can be returned directly.
     if(src_ary->base->ndims == 0)
     {
-        memcpy(dest, src_ary->base->data, dtypesize(src_ary->base->dtype));
+        memcpy(dest, src_ary->base->data, src_ary->base->elsize);
         return 0;
     }
 /*
@@ -376,13 +378,14 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
 */
 
 	//Convert local coordinates to global coordinates based on dest_ary.
-    int coordsA[NPY_MAXDIMS];
-    int coordsB[NPY_MAXDIMS];
+    npy_intp coordsA[NPY_MAXDIMS];
+    npy_intp coordsB[NPY_MAXDIMS];
     int *cdimsizes = cart_dim_sizes[dest_ary->base->ndims-1];
 	for(i=0; i<dest_ary->base->ndims; i++)
 	{
-		rank2cart(dest_ary->base->ndims, myrank, coordsB);
-		coordsA[i] = coordsB[i] * blocksize + //process offset
+		int tcoords[NPY_MAXDIMS];
+		rank2cart(dest_ary->base->ndims, myrank, tcoords);
+		coordsA[i] = tcoords[i] * blocksize + //process offset
                      (lcoords[i] / blocksize) * //block index
                      (cdimsizes[i] * blocksize) + //jump per block
                      lcoords[i] % blocksize; //index inside block
@@ -480,22 +483,22 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
 
 	//Find process cartesian coords and local offset.
 	int pcoords[NPY_MAXDIMS];
-	int offset = 0;
+	npy_intp offset = 0;
 	for(i=src_ary->base->ndims-1; i>=0; i--)
 	{
-		int B = coordsB[i] / blocksize;
+		npy_intp B = coordsB[i] / blocksize;
 		int P = cart_dim_sizes[src_ary->base->ndims-1][i];
 		pcoords[i] = B % P;
-		int block_index = B / P;
-		int index = coordsB[i] % blocksize;
+		npy_intp block_index = B / P;
+		npy_intp index = coordsB[i] % blocksize;
 		
-		int stride = 1;
+		npy_intp stride = 1;
         int s;
         for(s=i+1; s<src_ary->base->ndims; s++)
 			stride *= dnumroc(src_ary->base->dims[s],
-                            blocksize, 
-					        pcoords[s],
-                            cart_dim_sizes[src_ary->base->ndims-1][s]);
+                              blocksize, 
+					          pcoords[s],
+                              cart_dim_sizes[src_ary->base->ndims-1][s]);
 
 		offset += stride * (block_index *
                             blocksize + index);
@@ -505,10 +508,10 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
 	int rank = cart2rank(src_ary->base->ndims, pcoords);
 
 	//Transfer element.
-	int itemsize = dtypesize(src_ary->base->dtype);
 	MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
-	MPI_Get(dest, itemsize, MPI_BYTE, rank, offset*itemsize, itemsize, 
-			MPI_BYTE, *win);
+	MPI_Get(dest, src_ary->base->elsize, MPI_BYTE, rank, 
+			offset*src_ary->base->elsize, 
+			src_ary->base->elsize, MPI_BYTE, *win);
 	MPI_Win_unlock(rank, *win);
 
 //    printf("5 - reading data at rank %d, value: %lf\n", rank, *((double*)dest));
@@ -527,27 +530,27 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
  */
 static PyObject *remote_blockget(char *dest, dndview *src_ary,
                                  dndview *dest_ary, MPI_Win *win,
-                                 const int lcoords[NPY_MAXDIMS])
+                                 const npy_intp lcoords[NPY_MAXDIMS])
 {
     int i, ai, bi, vi, rbi;
     //A scalar dummy can be returned directly.
     if(src_ary->base->ndims == 0)
     {
         memcpy(dest, src_ary->base->data, src_ary->base->elsize);
-        return 0;
+        return NULL;
     }
 
-/*
+
     printf("src_ary-view id: %d\n",src_ary->uid);
     printf("1 - lcoords:");
     for(i=0; i<dest_ary->base->ndims; i++)
-        printf(" %d", lcoords[i]);
+        printf(" %ld", lcoords[i]);
     printf("\n");
-*/
+
     
 	//Convert local coordinates to global coordinates.
-    int coordsA[NPY_MAXDIMS];
-    int coordsB[NPY_MAXDIMS];
+    npy_intp coordsA[NPY_MAXDIMS];
+    npy_intp coordsB[NPY_MAXDIMS];
     int pcoords[NPY_MAXDIMS];
 	for(i=0; i<dest_ary->base->ndims; i++)
 	{
@@ -555,12 +558,12 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
 		coordsA[i] = pcoords[i] + lcoords[i] *
                      cart_dim_sizes[dest_ary->base->ndims-1][i];
 	}
-/*
+
     printf("2 - coordsA (global coords  based on dest_ary):");
     for(i=0; i<dest_ary->base->ndims; i++)
-        printf(" %d", coordsA[i]);
+        printf(" %ld", coordsA[i]);
     printf("\n");
-*/
+
 
     //Convert coords to be based on 'src_ary' instead of 'dest_ary'.
     //Including broadcasting.
@@ -580,7 +583,7 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
         if(src_ary->slice[i].nsteps == SingleIndex)
         {
             //Note src_ary->slice[i].start is NOT a block index.
-            int B = src_ary->slice[i].start / blocksize;
+            npy_intp B = src_ary->slice[i].start / blocksize;
             int P = cart_dim_size[rbi];
 
             //Find process cartesian coords.
@@ -616,22 +619,23 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
         coordsA[i] = coordsB[bi];
     }
 
-/*
-    printf("3 - coordsA (global non-block coords based on src_ary):");
+
+    printf("3 - coordsA (local non-block coords based on src_ary):");
     for(i=0; i<src_ary->base->ndims; i++)
-        printf(" %d", coordsA[i]);
+        printf(" %ld", coordsA[i]);
     printf("\n");
     printf("3 - pcoords:");
     for(i=0; i<src_ary->base->ndims; i++)
         printf(" %d", pcoords[i]);
     printf("\n");
-*/
+
 
     //Compute block-/local-/visible-dims.
-    int msgsize = src_ary->base->elsize;
-    int bdims[NPY_MAXDIMS];
-    int ldims[NPY_MAXDIMS];
-    intp vdims[NPY_MAXDIMS];
+    npy_intp msgsize = src_ary->base->elsize;
+    npy_intp vdims[NPY_MAXDIMS];
+	int bdims[NPY_MAXDIMS];	       //Using int instead of npy_intp here 
+    int ldims[NPY_MAXDIMS];	       //because MPI_Type_create_subarray
+	int subary_coords[NPY_MAXDIMS];//only support int.
     bi=0, vi=0;
     for(i=0; i < src_ary->nslice; i++)
     {
@@ -650,13 +654,11 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
                                 blocksize,
                                 pcoords[bi],
                                 cart_dim_size[bi]);
+			subary_coords[bi] = 0;
         }
         else
-        {
-            //Convert global block coordinates to local (non-block)
-            //coordinates.
-            coordsB[bi] = (coordsA[bi] / cart_dim_size[bi]) * blocksize;            
-                       
+        {    
+			subary_coords[bi] = coordsA[bi];
             //Compute local dims (local to the target MPI-process).
             ldims[bi] = dnumroc(src_ary->base->dims[bi],
                                 blocksize,
@@ -664,20 +666,23 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
                                 cart_dim_size[bi]);
 
             //Compute a block's dims.
-            bdims[bi] = ldims[bi] - coordsA[bi];
+            bdims[bi] = ldims[bi] - subary_coords[bi];
             if(bdims[bi] > blocksize)
                 bdims[bi] = blocksize;
 
             vdims[vi++] = bdims[bi];
         }
         //Computes total message size.
+		printf("%d - bdims: %d, ldims: %d, subary_coords: %d\n", bi, bdims[bi], ldims[bi], subary_coords[bi]);
         msgsize *= bdims[bi];
         bi++;
     }
 
     //TODO: detect earlier.
     if(msgsize < 1)
+	{printf("msgsize: %ld\n",msgsize);
         return NULL;
+	}
     
 	//Convert to a MPI rank number.
 	int rank = cart2rank(src_ary->base->ndims, pcoords);
@@ -690,7 +695,7 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
     MPI_Type_create_subarray(src_ary->base->ndims,
                              ldims,
                              bdims,
-                             coordsA,
+                             subary_coords,
                              MPI_ORDER_C, elementtype, &arraytype);
     MPI_Type_commit(&arraytype);
 
@@ -702,15 +707,15 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
     MPI_Type_free(&arraytype);
     MPI_Type_free(&elementtype);
 
-//    printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
-//    printf("5 - Create array - ndims: %d, vdims: [%d, %d]\n", src_ary->ndims, vdims[0], vdims[1]);
+    printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
+    printf("5 - Create array - ndims: %d, vdims: [%d, %d]\n", src_ary->ndims, vdims[0], vdims[1]);
 
     PyObject *tmp = PyArray_SimpleNewFromData(src_ary->ndims,
                         vdims, src_ary->base->dtype, dest);
-/*
+
     PyObject_Print(tmp, stdout, 0);
     printf("\n");
-*/
+
     
 	return tmp;
 }/* remote_blockget */
@@ -720,11 +725,11 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
  * Message handler for INIT_BLOCKSIZE.
  * Private.
  */
-static void do_INIT_BLOCKSIZE(int new_blocksize)
+static void do_INIT_BLOCKSIZE(npy_intp new_blocksize)
 {
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG    
-        printf("INIT_BLOCKSIZE - block size: %d\n", new_blocksize);
+        printf("INIT_BLOCKSIZE - block size: %ld\n",(long)new_blocksize);
     #endif
 
     blocksize = new_blocksize;
@@ -758,9 +763,9 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     ary->nelements = nelements;
 
     //Acummulate max total local size.
-    int localsize = 1;
+    npy_intp localsize = 1;
     for(i=0; i<ndims; i++)
-        localsize *= ceilf(ceilf((float) ary->dims[i]/
+        localsize *= ceil(ceil((double) ary->dims[i]/
                      blocksize)/dims[i]) * blocksize;
  
     //Allocate local data.
@@ -776,17 +781,17 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
-        printf("CREATE_ARRAY - rank: %d, uid: %d, dtype: %s(%d)," 
-		       "localsize: %d, nelem: %d, ndims: %d, dims: {", 
-			   myrank, view->uid,
+        printf("CREATE_ARRAY - uid: %ld, dtype: %s(%d)," 
+		       "localsize: %ld, nelem: %ld, ndims: %d, dims: {", 
+			   (long) view->uid,
                types_numpy2str(ary->dtype), dtypesize(ary->dtype),
-               localsize, (int)nelements, ndims);
+               (long)localsize, (long)nelements, ndims);
         for(i=0; i<ndims-1; i++)
-            printf("%d ", ary->dims[i]);
-        printf("%d}, localdims: {", ary->dims[ndims-1]);
+            printf("%ld ", (long)ary->dims[i]);
+        printf("%ld}, localdims: {", (long)ary->dims[ndims-1]);
         for(i=0; i<ndims-1; i++)
-            printf("%d ", ary->localdims[i]);
-        printf("%d}, \n", ary->localdims[ndims-1]);        
+            printf("%ld ", (long)ary->localdims[i]);
+        printf("%ld}, \n", (long)ary->localdims[ndims-1]);        
     #endif
    
 } /* do_CREATE_ARRAY */
@@ -797,11 +802,11 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
  * Message handler for DESTROY_ARRAY.
  * Private.
  */
-static void do_DESTROY_ARRAY(int uid)
+static void do_DESTROY_ARRAY(npy_intp uid)
 {
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG    
-        printf("DESTROY_ARRAY - uid: %d\n", uid);
+        printf("DESTROY_ARRAY - uid: %ld\n", uid);
     #endif
     rm_dndview(uid);
     
@@ -813,24 +818,24 @@ static void do_DESTROY_ARRAY(int uid)
  * Message handler for CREATE_VIEW.
  * Private.
  */
-static void do_CREATE_VIEW(int org_view_uid, dndview *newview)
+static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
 {
 	dndview *orgview = get_dndview(org_view_uid);
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         int i;
-        printf("CREATE_VIEW - adding view id: %d, ndims: %d, slices:",
-               newview->uid, newview->ndims);
+        printf("CREATE_VIEW - adding view id: %ld, ndims: %d, slices:",
+               (long)newview->uid, newview->ndims);
 		for(i=0; i<newview->nslice; i++)
-			printf(" (%d, %d, %d)",newview->slice[i].start,
-								   newview->slice[i].step,
-								   newview->slice[i].nsteps);
-		printf(", based on view id: %d, ndims: %d, slices:",
-               orgview->uid, orgview->ndims);
+			printf(" (%ld, %ld, %ld)",(long)newview->slice[i].start,
+								      (long)newview->slice[i].step,
+								      (long)newview->slice[i].nsteps);
+		printf(", based on view id: %ld, ndims: %d, slices:",
+               (long)orgview->uid, orgview->ndims);
 		for(i=0; i<orgview->nslice; i++)
-			printf(" (%d, %d, %d)",orgview->slice[i].start,
-								   orgview->slice[i].step,
-								   orgview->slice[i].nsteps);
+			printf(" (%ld, %ld, %ld)",(long)orgview->slice[i].start,
+								      (long)orgview->slice[i].step,
+								      (long)orgview->slice[i].nsteps);
 		printf("\n");
     #endif
 
@@ -861,9 +866,9 @@ static void do_SET_ITEM(dndview *view, char* value,
     #ifdef DISTNUMPY_DEBUG
         if(myrank == 0)
         {
-            printf("SET_ITEM - uid: %d, coord: (", view->uid);
+            printf("SET_ITEM - uid: %ld, coord: (", (long)view->uid);
             for(i=0; i < view->ndims; i++)
-                printf(" %d", coord[i]);
+                printf(" %ld", (long)coord[i]);
             printf(")\n");
         }
     #endif
@@ -880,16 +885,16 @@ static void do_SET_ITEM(dndview *view, char* value,
        
         //Find process cartesian coords and local offset.
         int pcoords[NPY_MAXDIMS];
-        int offset = 0;
+        npy_intp offset = 0;
         for(i=base->ndims-1; i>=0; i--)
         {			
-            int B = newcoord[i] / blocksize;
+            npy_intp B = newcoord[i] / blocksize;
             int P = cart_dim_sizes[base->ndims-1][i];
             pcoords[i] = B % P;
-            int block_index = B / P;
-            int index = newcoord[i] % blocksize;
+            npy_intp block_index = B / P;
+            npy_intp index = newcoord[i] % blocksize;
             
-            int stride = 1;
+            npy_intp stride = 1;
             int s;
             for(s=i+1; s<base->ndims; s++)
                 stride *= dnumroc(base->dims[s], blocksize, 
@@ -923,15 +928,15 @@ static void do_GET_ITEM(char *retdata, dndview *view,
     int i;
     
     //Get element size.
-    int elsize = dtypesize(base->dtype);
+    int elsize = base->elsize;
        
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         if(myrank == 0)
         {
-            printf("GET_ITEM - uid: %d, coord: (", view->uid);
+            printf("GET_ITEM - uid: %ld, coord: (", (long)view->uid);
             for(i=0; i < view->ndims; i++)
-                printf(" %d", coord[i]);
+                printf(" %ld", (long)coord[i]);
             printf(")\n");
         }
     #endif
@@ -948,16 +953,16 @@ static void do_GET_ITEM(char *retdata, dndview *view,
        
         //Find process cartesian coords and local offset.
         int pcoords[NPY_MAXDIMS];
-        int offset = 0;
+        npy_intp offset = 0;
         for(i=base->ndims-1; i>=0; i--)
         {			
-            int B = newcoord[i] / blocksize;
+            npy_intp B = newcoord[i] / blocksize;
             int P = cart_dim_sizes[base->ndims-1][i];
             pcoords[i] = B % P;
-            int block_index = B / P;
-            int index = newcoord[i] % blocksize;
+            npy_intp block_index = B / P;
+            npy_intp index = newcoord[i] % blocksize;
             
-            int stride = 1;
+            npy_intp stride = 1;
             int s;
             for(s=i+1; s<base->ndims; s++)
                 stride *= dnumroc(base->dims[s], blocksize, 
@@ -988,7 +993,7 @@ static void do_GET_ITEM(char *retdata, dndview *view,
  * Message handler for UFUNC.
  * Private.
  */
-static void do_UFUNC(int arylist[NPY_MAXARGS], int narys, 
+static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys, 
 					 int nout_arys, int scalar_dtype, int scalar_size,
 					 char* scalar, char* op)
 {
@@ -1027,10 +1032,10 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
     #ifdef DISTNUMPY_DEBUG
         printf("UFUNC (%s) on - in:", op);
         for(i=0; i<nin; i++)
-            printf(" %d", views[i]->uid);
+            printf(" %ld", (long)views[i]->uid);
 		printf(" out:");
 		for(i=nin; i<narys; i++)
-            printf(" %d", views[i]->uid);
+            printf(" %ld", (long)views[i]->uid);
         printf(", scalar-size: %d\n", scalar_size);
     #endif
 
@@ -1071,12 +1076,18 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
             block_method = 0;
         }
 	}
+	//At the moment the block-method requires that the output array
+	//has no alterations.
+	//TODO: This shouldn't be a requirement.
+	for(i=nin; i<narys; i++)
+		if(views[i]->alterations != 0)
+			block_method = 0;
 
 	if(nocomm_method)
 	{
-//        printf("UFUNC - nocomm_method\n");
-        intp dims[NPY_MAXDIMS];
-        intp strides[NPY_MAXDIMS];
+        printf("UFUNC - nocomm_method\n");
+        npy_intp dims[NPY_MAXDIMS];
+        npy_intp strides[NPY_MAXDIMS];
         
 		PyObject *arytuple = PyTuple_New(narys);
 		for(i=0; i < narys; i++)
@@ -1151,17 +1162,17 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
 					   views[i]->base->elsize, 1, 
 					   MPI_INFO_NULL, MPI_COMM_WORLD, &win[i]);
 
-	int coords[NPY_MAXDIMS];
-	memset(coords, 0, NPY_MAXDIMS * sizeof(int));
+	npy_intp coords[NPY_MAXDIMS];
+	memset(coords, 0, NPY_MAXDIMS * sizeof(npy_intp));
     char *buffer[NPY_MAXARGS];
-	if(block_method)
+	if(block_method && 0)
 	{
         printf("UFUNC - block_method\n");
 
         //Allocate a buffer for every array.
         for(i=0; i<nin; i++)
         {
-            int s = views[i]->base->elsize;
+            npy_intp s = views[i]->base->elsize;
             for(j=0; j<views[i]->base->ndims; j++)
                 s *= blocksize;
             buffer[i] = malloc(s);
@@ -1183,17 +1194,20 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
         */
         
         int notfinished = 1;
-        intp offset = 0;
+        npy_intp offset = 0;
         while(notfinished)
         {
 
-//            printf("\nIteration\n");
+            printf("\nIteration\n");
             PyObject *arytuple = PyTuple_New(narys);
             for(j=0; j<nin; j++)
             {
-                PyObject *tmp = remote_blockget(buffer[j], views[j], lastary, &win[j], coords);
+                PyObject *tmp = remote_blockget(buffer[j], views[j], 
+									            lastary, &win[j], 
+												coords);
                 if(tmp == NULL)
                 {
+					printf("Finished since block not on this proc.\n");
                     notfinished = 0;
                     break;
                 }  
@@ -1203,18 +1217,19 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
                 break;
                 
             //Compute a block's dims for the dest array.
-            intp bdims[NPY_MAXDIMS];
-            intp strides[NPY_MAXDIMS];
+            npy_intp bdims[NPY_MAXDIMS];
+            npy_intp strides[NPY_MAXDIMS];
             offset = 0;
             for(j=0; j < lastary->base->ndims; j++)
             {
-                int stride = lastary->base->elsize;
+                npy_intp stride = lastary->base->elsize;
                 int s;
                 for(s=j+1; s<lastary->base->ndims; s++)
                     stride *= lastary->base->localdims[s];
                 strides[j] = stride;
 
-                bdims[j] = lastary->base->localdims[j] - coords[j] * blocksize;
+                bdims[j] = lastary->base->localdims[j] - 
+						   coords[j] * blocksize;
                 if(bdims[j] > blocksize)
                     bdims[j] = blocksize;
 
@@ -1232,7 +1247,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
                                          NPY_WRITEABLE, NULL);
 
 
-//    printf("stride: [%d, %d], offset: %d\n", PyArray_STRIDES(tmp)[0], PyArray_STRIDES(tmp)[1], offset);
+    printf("stride: [%ld, %ld], offset: %ld\n", PyArray_STRIDES(tmp)[0], PyArray_STRIDES(tmp)[1], offset);
 
             for(j=nin; j<narys; j++)
                 PyTuple_SET_ITEM(arytuple, j, tmp);
@@ -1240,7 +1255,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
             //Call the python operator.
             PyObject_CallObject(PyOp, arytuple);          
 
-/*
+
             PyObject_Print(tmp, stdout, 0);
             printf("\n");
 
@@ -1248,7 +1263,7 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
             tmp = PyArray_SimpleNewFromData(views[2]->base->ndims, views[2]->base->dims, views[2]->base->dtype, views[2]->base->data);
             PyObject_Print(tmp, stdout, 0);
             printf("\n");
-*/
+
             //Iterate coords one block.
             for(j=lastary->base->ndims-1; j >= 0; j--)
             {
@@ -1335,8 +1350,8 @@ static void do_UFUNC(int arylist[NPY_MAXARGS], int narys,
  * out_ary_uid is the output array uid or scalar datatype.
  * Private.
  */
-static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
-				char* out_scalar_address, int axis, char* op)
+static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
+							char* out_scalar_address, int axis, char* op)
 {
     int i,j;
 	dndview *in_view = get_dndview(in_ary_uid);
@@ -1358,9 +1373,9 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 		
 		//Print debug info.
 		#ifdef DISTNUMPY_DEBUG
-			printf("UFUNC_REDUCE (%s) on - in: %d, axis: %d, "
+			printf("UFUNC_REDUCE (%s) on - in: %ld, axis: %d, "
 				   "returning a scalar at address: %p\n", op,
-				   in_ary_uid, axis, out_scalar_address);
+				   (long)in_ary_uid, axis, out_scalar_address);
 		#endif
 
 		//The master should use the final output address.
@@ -1427,8 +1442,8 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 	
 	//Print debug info.
 	#ifdef DISTNUMPY_DEBUG
-		printf("UFUNC_REDUCE (%s) on - in: %d, out: %d, axis: %d\n", op,
-			   in_ary_uid, out_ary_uid, axis);
+		printf("UFUNC_REDUCE (%s) on - in: %ld, out: %ld, axis: %d\n", op,
+			   (long)in_ary_uid, (long)out_ary_uid, axis);
 	#endif
 
 	//There is two kind of roles for MPI-processes. They can be
@@ -1494,8 +1509,8 @@ static void do_UFUNC_REDUCE(int in_ary_uid, int out_ary_uid,
 		}
 
 		//Reusing cart_coords.
-		int *lcoords = cart_coords;
-		memset(lcoords, 0, in_ary->ndims * sizeof(int));
+		npy_intp lcoords[NPY_MAXDIMS];
+		memset(lcoords, 0, in_ary->ndims * sizeof(npy_intp));
 		char *element = PyArray_DATA(subres);
 		for(i=0; i<PyArray_SIZE(subres); i++)
 		{
@@ -1539,7 +1554,7 @@ static void do_ZEROFILL(dndview *view)
     int i;
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG    
-        printf("ZEROFILL - uid: %d\n", view->uid);
+        printf("ZEROFILL - uid: %ld\n", (long)view->uid);
     #endif
     
     //Chech if the view covers the whole array.
@@ -1572,9 +1587,8 @@ static void do_ZEROFILL(dndview *view)
  * Create dndarray.
  * Public
  */
-static int
-dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS],
-                                  int dtype)
+static intp
+dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype)
 {
     int i;
     #ifdef DISTNUMPY_DEBUG
@@ -1632,7 +1646,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS],
     *(((char *) &msg[1])+sizeof(dndarray)+sizeof(dndview)) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 2*sizeof(int) + sizeof(dndarray) + sizeof(dndview),
+    MPI_Bcast(msg, 2*sizeof(npy_intp) + sizeof(dndarray) + sizeof(dndview),
               MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation
@@ -1654,7 +1668,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS],
  * Public
  */
 static void
-dnumpy_destroy_dndarray(int uid)
+dnumpy_destroy_dndarray(intp uid)
 {
     //Get arrray structs.
     dndview *ary = get_dndview(uid);
@@ -1665,7 +1679,7 @@ dnumpy_destroy_dndarray(int uid)
     msg[2] = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(int), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(msg, 3 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -1682,7 +1696,7 @@ dnumpy_destroy_dndarray(int uid)
  * Public
  */
 static int
-dnumpy_create_dndview(int org_view_uid, int nslice,
+dnumpy_create_dndview(intp org_view_uid, int nslice,
 					  dndslice slice[NPY_MAXDIMS])						
 {
     //Get arrray structs.
@@ -1790,7 +1804,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
 	*(((char *) &msg[2])+sizeof(dndview)) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(int) + sizeof(dndview), MPI_BYTE, 0,
+    MPI_Bcast(msg, 3 * sizeof(npy_intp) + sizeof(dndview), MPI_BYTE, 0,
 			  MPI_COMM_WORLD);
 
     //The master should also do the operation
@@ -1811,7 +1825,7 @@ dnumpy_create_dndview(int org_view_uid, int nslice,
  * Public
  */
 static int
-dnumpy_dndarray_setitem(int uid, intp coordinate[NPY_MAXDIMS],
+dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
                         PyObject *item)
 {   
     //Get arrray structs.
@@ -1840,7 +1854,7 @@ dnumpy_dndarray_setitem(int uid, intp coordinate[NPY_MAXDIMS],
     *(((char *) &msg[2]) + elsize + sizeof(npy_intp) * ndims) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(int) + elsize + ndims * sizeof(npy_intp),
+    MPI_Bcast(msg, 3 * sizeof(npy_intp) + elsize + ndims * sizeof(npy_intp),
               MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation.
@@ -1863,7 +1877,7 @@ dnumpy_dndarray_setitem(int uid, intp coordinate[NPY_MAXDIMS],
  * Public
  */
 static void
-dnumpy_dndarray_getitem(char *retdata, int uid,
+dnumpy_dndarray_getitem(char *retdata, intp uid,
                         intp coordinate[NPY_MAXDIMS])
 {
     //Get arrray structs.
@@ -1877,7 +1891,7 @@ dnumpy_dndarray_getitem(char *retdata, int uid,
     *(((char *) &msg[2]) + sizeof(npy_intp) * ndims) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(int) + ndims * sizeof(npy_intp),
+    MPI_Bcast(msg, 3 * sizeof(npy_intp) + ndims * sizeof(npy_intp),
               MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master will retrive the whole array.
@@ -1927,8 +1941,8 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
 	
 	//Copy arylist's uid to msg.
 	for(i=0; i<narys;i++)
-		memcpy(((char*)(msg+5))+msg[4]+i*sizeof(int),
-				&arylist[i]->dnduid, sizeof(int));
+		memcpy(((char*)(msg+5))+msg[4]+i*sizeof(npy_intp),
+				&arylist[i]->dnduid, sizeof(npy_intp));
 	
 	//Copy the string op.
     strcpy(((char*)(msg+5+msg[1]))+msg[4], op);
@@ -1936,7 +1950,7 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
     *(((char*)(msg+5+msg[1]))+msg[4]+strlen(op)+1) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, (6+msg[1])*sizeof(int) + msg[4] + strlen(op)+1,
+    MPI_Bcast(msg, (6+msg[1])*sizeof(npy_intp) + msg[4] + strlen(op)+1,
 			  MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation.
@@ -1944,7 +1958,7 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC((int*)(((char*)(msg+5))+msg[4]), msg[1], msg[2], msg[3],
+    do_UFUNC((npy_intp*)(((char*)(msg+5))+msg[4]), msg[1], msg[2], msg[3],
 			msg[4], (char*) (msg+5), op);
     return 0;
 } /* dnumpy_ufunc */
@@ -2011,7 +2025,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
     *(((char*)(msg+4))+strlen(op)+1) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 5*sizeof(int)+strlen(op)+1, MPI_BYTE, 0,
+    MPI_Bcast(msg, 5*sizeof(npy_intp)+strlen(op)+1, MPI_BYTE, 0,
               MPI_COMM_WORLD);
 
     //The master should also do the operation
@@ -2029,7 +2043,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
  * Fill the distributed array/view with zeroes.
  */
 static void
-dnumpy_zerofill(int ary_uid)
+dnumpy_zerofill(intp ary_uid)
 {
     //Get arrray structs.
     dndview *view = get_dndview(ary_uid);
@@ -2040,7 +2054,7 @@ dnumpy_zerofill(int ary_uid)
     msg[2] = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(int), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(msg, 3 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -2116,7 +2130,7 @@ dnumpy_exit()
         msg[0] = DNPY_SHUTDOWN;
         msg[1] = DNPY_MSG_END;
         MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Bcast(msg, 2 * sizeof(int), MPI_BYTE, 0, MPI_COMM_WORLD);
+        MPI_Bcast(msg, 2 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
         #ifdef DISTNUMPY_DEBUG
             printf("Rank 0 received msg: SHUTDOWN\n");
         #endif
@@ -2166,14 +2180,17 @@ dnumpy_master_slave_split()
         }
         
         //Send block size to clients.
-        int msg[3];
+        npy_intp msg[3];
         msg[0] = DNPY_INIT_BLOCKSIZE;
         msg[1] = blocksize;
         msg[2] = DNPY_MSG_END;
 
         MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Bcast(msg, 3 * sizeof(int), MPI_BYTE, 0, MPI_COMM_WORLD);
+        MPI_Bcast(msg, 3 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
 
+		#ifdef DISTNUMPY_DEBUG
+        printf("Rank 0 received msg: ");
+		#endif
         do_INIT_BLOCKSIZE(msg[1]);
         return;
     }
@@ -2182,7 +2199,7 @@ dnumpy_master_slave_split()
     while(shutdown == 0)//Work loop
     {
         char *t1, *t2, *t3;
-        int d1, d2, d3, d4;
+        npy_intp d1, d2, d3, d4;
         dndview *ary;
         MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
@@ -2194,18 +2211,18 @@ dnumpy_master_slave_split()
         switch(msg[0])
         {
             case DNPY_INIT_BLOCKSIZE:
-                do_INIT_BLOCKSIZE(*((int*)msg_data));
+                do_INIT_BLOCKSIZE(*((npy_intp*)msg_data));
                 break;
             case DNPY_CREATE_ARRAY:
 				t1 = msg_data + sizeof(dndarray);
                 do_CREATE_ARRAY((dndarray*) msg_data, (dndview*) t1);                
                 break;
             case DNPY_DESTROY_ARRAY:
-                do_DESTROY_ARRAY(*((int*)msg_data));
+                do_DESTROY_ARRAY(*((npy_intp*)msg_data));
                 break;
             case DNPY_CREATE_VIEW:
-                d1 = *((int*)msg_data);
-				t1 = msg_data+sizeof(int);		
+                d1 = *((npy_intp*)msg_data);
+				t1 = msg_data+sizeof(npy_intp);		
                 do_CREATE_VIEW(d1, (dndview*) t1);                
                 break;			
             case DNPY_SHUTDOWN:
@@ -2215,39 +2232,39 @@ dnumpy_master_slave_split()
                 shutdown = 1;
                 break;
             case DNPY_SET_ITEM:
-                ary = get_dndview(*((int*)msg_data));
-                t1 = msg_data+sizeof(int);
+                ary = get_dndview(*((npy_intp*)msg_data));
+                t1 = msg_data+sizeof(npy_intp);
                 t2 = t1+dtypesize(ary->base->dtype);
                 do_SET_ITEM(ary, t1, (npy_intp*) t2);
                 break;
             case DNPY_GET_ITEM:
-                ary = get_dndview(*((int*)msg_data));
-                t1 = msg_data+sizeof(int);
+                ary = get_dndview(*((npy_intp*)msg_data));
+                t1 = msg_data+sizeof(npy_intp);
                 do_GET_ITEM(NULL, ary, (npy_intp*) t1);
                 break;
             case DNPY_UFUNC:			
-                d1 = *((int*)msg_data);
-				d2 = *(((int*)msg_data)+1);
-				d3 = *(((int*)msg_data)+2);
-				d4 = *(((int*)msg_data)+3);
-				t1 = msg_data+sizeof(int)*4;
+                d1 = *((npy_intp*)msg_data);
+				d2 = *(((npy_intp*)msg_data)+1);
+				d3 = *(((npy_intp*)msg_data)+2);
+				d4 = *(((npy_intp*)msg_data)+3);
+				t1 = msg_data+sizeof(npy_intp)*4;
                 t2 = t1+d4;				
-				t3 = t2+d1*sizeof(int);
-                do_UFUNC((int *)t2,d1,d2,d3,d4,t1,t3);
+				t3 = t2+d1*sizeof(npy_intp);
+                do_UFUNC((npy_intp *)t2,d1,d2,d3,d4,t1,t3);
                 break;
             case DNPY_UFUNC_REDUCE:			
-				d1 = *((int*)msg_data);
-				d2 = *(((int*)msg_data)+1);
-				d3 = *(((int*)msg_data)+2);
-				t1 = msg_data+sizeof(int)*3;
+				d1 = *((npy_intp*)msg_data);
+				d2 = *(((npy_intp*)msg_data)+1);
+				d3 = *(((npy_intp*)msg_data)+2);
+				t1 = msg_data+sizeof(npy_intp)*3;
 				//3. arg: msg_data is just used as a non-NULL pointer.
 				do_UFUNC_REDUCE(d1, d2, NULL, d3, t1);
                 break;
             case DNPY_ZEROFILL:
-                do_ZEROFILL(get_dndview(*((int*)msg_data)));
+                do_ZEROFILL(get_dndview(*((npy_intp*)msg_data)));
                 break;
             default:
-                fprintf(stderr, "Unknown msg: %d\n", msg[0]);
+                fprintf(stderr, "Unknown msg: %ld\n", (long)msg[0]);
                 MPI_Abort(MPI_COMM_WORLD, -1);
         }
     }

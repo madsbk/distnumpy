@@ -490,7 +490,7 @@ PyArray_Flatten(PyArrayObject *a, NPY_ORDER order)
         char *data = PyArray_DATA(ret);
         npy_intp coord[NPY_MAXDIMS];
         int i,j;
-        memset(coord, 0, sizeof(int) * PyArray_NDIM(a));
+        memset(coord, 0, sizeof(npy_intp) * PyArray_NDIM(a));
         for(i=0; i < PyArray_SIZE(a); i++)
         {
             //Get item.

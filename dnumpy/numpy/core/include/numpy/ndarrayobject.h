@@ -507,7 +507,7 @@ typedef struct PyArrayObject {
         PyArray_Descr *descr;   /* Pointer to type structure */
         int flags;              /* Flags describing array -- see below*/
         PyObject *weakreflist;  /* For weakreferences */
-        int dnduid;             /* DISTNUMPY - UID */
+        npy_intp dnduid;        /* DISTNUMPY - UID */
 } PyArrayObject;
 
 #define NPY_AO PyArrayObject
