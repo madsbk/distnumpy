@@ -394,7 +394,6 @@
    fun:malloc
    fun:_PyObject_GC_NewVar
    fun:PyFrame_New
-   fun:PyEval_EvalCodeEx  
 }
 
 {
