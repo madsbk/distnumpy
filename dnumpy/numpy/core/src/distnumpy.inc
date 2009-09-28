@@ -552,7 +552,6 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
     npy_intp coordsA[NPY_MAXDIMS];
     npy_intp coordsB[NPY_MAXDIMS];
     int pcoords[NPY_MAXDIMS];
-
     for(i=0; i<dest_ary->base->ndims; i++)
     {
         rank2cart(dest_ary->base->ndims, myrank, pcoords);
@@ -681,7 +680,7 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
 
     //TODO: detect earlier.
     if(msgsize < 1)
-    {printf("msgsize: %ld\n",msgsize);
+    {
         return NULL;
     }
 
@@ -712,7 +711,8 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
     printf("5 - Create array - ndims: %d, vdims: [%ld, %ld]\n", src_ary->ndims, vdims[0], vdims[1]);
 */
     PyObject *tmp = PyArray_SimpleNewFromData(src_ary->ndims,
-                        vdims, src_ary->base->dtype, dest);
+                        vdims, src_ary->base->dtype, dest);   
+    
 /*
     PyObject_Print(tmp, stdout, 0);
     printf("\n");
@@ -1152,7 +1152,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         }
 
         //Call the python operator.
-        PyObject_CallObject(PyOp, arytuple);
+        Py_DECREF(PyObject_CallObject(PyOp, arytuple));
 
         //Clean up
         Py_DECREF(arytuple);
@@ -1194,37 +1194,40 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         for(i=ec; i>=0; i--)
         {
             int broadcast = 0;
-            for(j=0; j<nin; j++)
+            if(lastary->base->dims[i] != 1)
             {
-                int s, si=0, gotdim=0;
-                for(s=0; s<views[j]->nslice; s++)
+                for(j=0; j<nin; j++)
                 {
-                    if(views[j]->slice[s].nsteps != SingleIndex)
-                        if(si++ == i)
+                    int lastcount = i - (lastary->ndims -
+                                         views[j]->ndims);
+                    int s, si=views[j]->ndims-1, gotdim=0;
+                    if(lastcount >= 0)
+                    {
+                        for(s=views[j]->nslice-1; s>=0; s--)
                         {
-                            gotdim = 1;
-                            break;
+                            if(views[j]->slice[s].nsteps !=
+                               SingleIndex)
+                                if(si-- == lastcount)
+                                {
+                                    gotdim = 1;
+                                    break;
+                                }
                         }
-                }
-                if(gotdim == 0 || //no more dims.
-                   views[j]->slice[s].nsteps == 1)//dim size is 1.
-                {
-                    broadcast = 1;
-                    break;
+                    }
+                    if(gotdim == 0 || //no more dims.
+                       views[j]->slice[s].nsteps == 1)//dim size is 1.
+                    {
+                        broadcast = 1;
+                        break;
+                    }
                 }
             }
             //Dims we need to broadcast should be ordered first.
             if(broadcast)
-                dim_iter_order[ec--] = i;
-            else
                 dim_iter_order[sc++] = i;
+            else
+                dim_iter_order[ec--] = i;
         }
-        printf("dim_iter_order: (");
-        for(i=0; i<lastary->ndims; i++)
-            printf(" %d", dim_iter_order[i]);
-        printf(")\n");
-
-
         /*
         //Init coords. SingleIndex should be set here and never again
         //touched and the rest is zero.
@@ -1243,17 +1246,19 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         gettimeofday(&tv, &tz);
         total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
 
+        PyObject *blocktuple = PyTuple_New(narys);
+        for(i=0; i<narys; i++)
+            PyTuple_SET_ITEM(blocktuple, i, NULL);
         int notfinished = 1;
         npy_intp offset = 0;
         niter = 0;
-        PyObject *blocklist[NPY_MAXARGS];
         while(notfinished)
-        {
+        {/*
             printf("\nIteration (");
             for(j=0; j<lastary->ndims; j++)
                 printf(" %ld", coords[j]);
             printf(")\n");
-
+        */
             gettimeofday(&tv, &tz);
             rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
 
@@ -1264,17 +1269,23 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 int use_prev_block = 0;
                 for(i=lastary->ndims-1; 0<=i; i--)
                 {
-                    if(coords[i] > 0)
+                    if(coords[i] > 0 && lastary->base->dims[i] != 1)
                     {
-                        int s, si=0, gotdim=0;
-                        for(s=0; s<views[j]->nslice; s++)
+                        int lastcount = i - (lastary->ndims -
+                                             views[j]->ndims);
+                        int s, si=views[j]->ndims-1, gotdim=0;
+                        if(lastcount >= 0)
                         {
-                            if(views[j]->slice[s].nsteps != SingleIndex)
-                                if(si++ == i)
-                                {
-                                    gotdim = 1;
-                                    break;
-                                }
+                            for(s=views[j]->nslice-1; s>=0; s--)
+                            {
+                                if(views[j]->slice[s].nsteps !=
+                                   SingleIndex)
+                                    if(si-- == lastcount)
+                                    {
+                                        gotdim = 1;
+                                        break;
+                                    }
+                            }
                         }
                         if(gotdim == 0 || //no more dims.
                            views[j]->slice[s].nsteps == 1)//dim size is 1.
@@ -1284,28 +1295,30 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                         }
                     }
                 }
-                if(!use_prev_block || 1)
+                if(!use_prev_block)
                 {
-                    //Py_XDECREF(blocklist[j]);
-                    blocklist[j] = remote_blockget(buffer[j], views[j],
-                                                   lastary, &win[j],
-                                                   coords);
-                    printf("henter dette ary: \n");
-                    PyObject_Print(blocklist[j] , stdout, 0);
-                    printf("\n");                  
-                      
-                    if(blocklist[j] == NULL)
+                    
+                    PyObject *tmp = remote_blockget(buffer[j], views[j],
+                                                    lastary, &win[j],
+                                                    coords);
+
+                    if(tmp == NULL)
                     {
                         printf("Finished since block not on this proc.\n");
                         notfinished = 0;
                         break;
-                    }                                                   
+                    }
+                    Py_XDECREF(PyTuple_GET_ITEM(blocktuple, j));
+                    PyTuple_SET_ITEM(blocktuple, j, tmp);
+
+                    //printf("henter dette ary: \n");
+                //    PyObject_Print(blocklist[j] , stdout, 0);
+                //    printf("\n");                    
+                    
                 }
                 else
                 {
-                    printf("using previous block!\n");
-                    PyObject_Print(blocklist[j] , stdout, 0);
-                    printf("\n");    
+                    //printf("using previous block!\n");
                 }
             }
 
@@ -1338,32 +1351,21 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 offset += stride * (coords[j] * blocksize);
             }
 
-            j=2;
             PyObject *tmp =  PyArray_New(&PyArray_Type,
-                                         views[j]->base->ndims,
+                                         lastary->base->ndims,
                                          bdims,
-                                         views[j]->base->dtype,
+                                         lastary->base->dtype,
                                          strides,
-                                         views[j]->base->data + offset,
-                                         views[j]->base->elsize,
+                                         lastary->base->data + offset,
+                                         lastary->base->elsize,
                                          NPY_WRITEABLE, NULL);
 
-
-//    printf("stride: [%ld, %ld], offset: %ld\n", PyArray_STRIDES(tmp)[0], PyArray_STRIDES(tmp)[1], offset);
-
-
-            PyObject *arytuple = PyTuple_New(narys);
-            for(j=0; j<nin; j++)
-                PyTuple_SET_ITEM(arytuple, j, blocklist[j]);
-            
-            for(j=nin; j<narys; j++)
-                PyTuple_SET_ITEM(arytuple, j, tmp);
+            Py_XDECREF(PyTuple_GET_ITEM(blocktuple, narys-1));
+            PyTuple_SET_ITEM(blocktuple, narys-1, tmp);
 
             //Call the python operator.
-            PyObject_CallObject(PyOp, arytuple);
-
-            //Py_DECREF(arytuple);
-
+            Py_DECREF(PyObject_CallObject(PyOp, blocktuple));
+           
 /*
             PyObject_Print(tmp, stdout, 0);
             printf("\n");
@@ -1377,7 +1379,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             for(j=0; j < lastary->base->ndims; j++)
             {
                 int o = dim_iter_order[j];//Using the computed order.
-                if(++coords[o] >= ceil(lastary->base->localdims[o] / 
+                if(++coords[o] >= ceil(lastary->base->localdims[o] /
                                        (double) blocksize))
                 {
                     //We a finished, if wrapping around.
@@ -1391,14 +1393,16 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 else
                     break;
             }
-                    
+
             gettimeofday(&tv, &tz);
             comp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - comp_time;
             niter++;
         }
+        //Cleanup.
+        Py_DECREF(blocktuple);
 
-    gettimeofday(&tv, &tz);
-    total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - total_time;
+        gettimeofday(&tv, &tz);
+        total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - total_time;
 
 
     }//End of the block method.
@@ -1433,7 +1437,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                                      i*views[j]->base->elsize));
 
                 //Call the python operator.
-                PyObject_CallObject(PyOp, arytuple);
+                Py_DECREF(PyObject_CallObject(PyOp, arytuple));
                 Py_DECREF(arytuple);
             }
 
