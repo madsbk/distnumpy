@@ -555,7 +555,7 @@ select_types(PyUFuncObject *self, int *arg_types,
     }
     *function = self->functions[i];
 
-    return 0;
+    return i;
 }
 
 #if USE_USE_DEFAULTS==1
@@ -1134,8 +1134,12 @@ construct_arrays(PyUFuncLoopObject *loop, PyObject *args, PyArrayObject **mps,
     }
 
     /* Select an appropriate function for these argument types. */
-    if (select_types(loop->ufunc, arg_types, &(loop->function),
-                     &(loop->funcdata), scalars, typetup) == -1) {
+    /* DISTNUMPY need to save the function and funcdata id*/
+    loop->appropriate_function = select_types(loop->ufunc, arg_types, 
+                                              &(loop->function), 
+                                              &(loop->funcdata), 
+                                              scalars, typetup);
+    if (loop->appropriate_function == -1) {
         return -1;
     }
     /*
@@ -1876,7 +1880,7 @@ PyUFunc_GenericFunction(PyUFuncObject *self, PyObject *args, PyObject *kwds,
         if(PyArray_ISDISTRIBUTED(mps[i]))
         {
             int ret = dnumpy_ufunc(mps, self->nargs, self->nout,
-                                   self->name);
+                                self->name, loop->appropriate_function);
             //Cleanup and return.
             ufuncloop_dealloc(loop);
             return ret;

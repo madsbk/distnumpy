@@ -1146,7 +1146,7 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
 
         PyArrayObject *arylist[3] = {src,scalar,dest};
         //TODO: create a specialized COPY function.
-        dnumpy_ufunc(arylist, 3, 1, "add");
+        dnumpy_ufunc(arylist, 3, 1, "add", -1);
 
         //Cleanup
         free(zero);

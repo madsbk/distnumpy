@@ -7,6 +7,35 @@
 
 /*===================================================================
  *
+ * ufunc definitions from numpy/ufuncobject.h. 
+ * They are include here to avoid compiler warnings.
+*/
+typedef void (*PyUFuncGenericFunction) 
+             (char **, npy_intp *, npy_intp *, void *);
+typedef struct {
+    PyObject_HEAD
+    int nin, nout, nargs;
+    int identity;
+    PyUFuncGenericFunction *functions;
+    void **data;
+    int ntypes;
+    int check_return;
+    char *name, *types;
+    char *doc;
+    void *ptr;
+    PyObject *obj;
+    PyObject *userloops;
+    int core_enabled;
+    int core_num_dim_ix;
+    int *core_num_dims;
+    int *core_dim_ixs;
+    int *core_offsets;
+    char *core_signature;
+} PyUFuncObject;
+/* end of ufunc definitions */
+
+/*===================================================================
+ *
  * MPI process variables.
 */
 static int myrank, worldsize;
@@ -23,6 +52,7 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
+
 
 /*===================================================================
  *
@@ -688,7 +718,7 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
         if(msgsize < 1)
             return NULL;
 
-        //printf("MPI_Type_create_subarray - dist_ndims: %d -> src_ndims: %d, ldims: [%d, %d],  bdims: [%d, %d], subary_coords: [%d, %d], msgsize: %ld\n", dest_ary->base->ndims, src_ary->base->ndims, ldims[0], ldims[1], bdims[0], bdims[1], subary_coords[0], subary_coords[1], msgsize);
+//        printf("MPI_Type_create_subarray - dist_ndims: %d -> src_ndims: %d, ldims: [%d, %d],  bdims: [%d, %d], subary_coords: [%d, %d], msgsize: %ld\n", dest_ary->base->ndims, src_ary->base->ndims, ldims[0], ldims[1], bdims[0], bdims[1], subary_coords[0], subary_coords[1], msgsize);
 
         //Setup a matching MPI datatype.
         MPI_Datatype arraytype, elementtype;
@@ -1036,11 +1066,11 @@ static void do_GET_ITEM(char *retdata, dndview *view,
 
 #include <sys/time.h>
 
+/*
 struct timeval tv;
 struct timezone tz;
-unsigned long long total_time, rget_time, comp_time;
-int niter;
-
+unsigned long long total_time, rget_time, comp_time, ccomp_time;
+*/
 
 /*===================================================================
  *
@@ -1048,7 +1078,8 @@ int niter;
  * Private.
  */
 static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
-                     int nout_arys, int scalar_dtype, int scalar_size,
+                     int nout_arys, int appropriate_function,
+                     int scalar_dtype, int scalar_size,
                      char* scalar, char* op)
 {
     int i, j;
@@ -1101,6 +1132,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         fprintf(stderr, "UFUNC : unknown operator: %s\n", op);
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
+    //ufinc's objects.
+    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
+    PyUFuncGenericFunction ufunc_function =
+                           ufunc_obj->functions[appropriate_function];
+    void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
+
 
     //Analyse if it is possible to use a simplified computation method.
     //* If all array have the same number of dimensions and if the views
@@ -1299,16 +1336,15 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             j++;
         }
         */
-
-//        gettimeofday(&tv, &tz);
-//        total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
-
-        PyObject *blocktuple = PyTuple_New(narys);
-        for(i=0; i<narys; i++)
-            PyTuple_SET_ITEM(blocktuple, i, NULL);
+/*
+        gettimeofday(&tv, &tz);
+        total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
+*/
+        PyObject *blocklist[NPY_MAXARGS];
+        for(j=0; j<narys; j++)
+            blocklist[j] = NULL;
         int notfinished = 1;
         npy_intp offset = 0;
-        niter = 0;
         while(notfinished)
         {/*
             printf("\nIteration (");
@@ -1316,9 +1352,10 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 printf(" %ld", coords[j]);
             printf(")\n");
         */
-//            gettimeofday(&tv, &tz);
-//            rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
-
+/*        
+            gettimeofday(&tv, &tz);
+            rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
+*/
 
             for(j=0; j<nin; j++)
             {
@@ -1362,20 +1399,20 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                         notfinished = 0;
                         break;
                     }
-                    Py_XDECREF(PyTuple_GET_ITEM(blocktuple, j));
-                    PyTuple_SET_ITEM(blocktuple, j, tmp);
+                    Py_XDECREF(blocklist[j]);
+                    blocklist[j] = tmp;
                 }
             }
-
-//            gettimeofday(&tv, &tz);
-//            rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - rget_time;
-
+/*
+            gettimeofday(&tv, &tz);
+            rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - rget_time;
+*/
             if(notfinished == 0)
                 break;
-
-//            gettimeofday(&tv, &tz);
-//            comp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
-
+/*
+            gettimeofday(&tv, &tz);
+            comp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
+*/
             //Compute a block's dims for the dest array.
             npy_intp bdims[NPY_MAXDIMS];
             npy_intp strides[NPY_MAXDIMS];
@@ -1405,21 +1442,64 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                                          lastary->base->elsize,
                                          NPY_WRITEABLE, NULL);
 
-            Py_XDECREF(PyTuple_GET_ITEM(blocktuple, narys-1));
-            PyTuple_SET_ITEM(blocktuple, narys-1, tmp);
+            Py_XDECREF(blocklist[narys-1]);
+            blocklist[narys-1] = tmp;
 
-            //Call the python operator.
-            Py_XDECREF(PyObject_CallObject(PyOp, blocktuple));
+            //Create broadcasted iterators.
+            PyObject *iters[NPY_MAXARGS];
+            for(j=0; j<narys; j++)
+                iters[j] = PyArray_BroadcastToShape(blocklist[j],
+                                       PyArray_DIMS(blocklist[narys-1]),
+                                       PyArray_NDIM(blocklist[narys-1]));
 
+            //The iterators should not iterate over the axis-dimension.
+            int axis = PyArray_NDIM(blocklist[narys-1])-1;
+            for(j=0; j<narys; j++)
+            {
+                PyArrayIterObject *it = (PyArrayIterObject *) iters[j];
+                it->contiguous = 0;
+                it->dims_m1[axis] = 0;
+                it->backstrides[axis] = 0;
+            }
 /*
-            PyObject_Print(tmp, stdout, 0);
-            printf("\n");
-
-            printf("Whole ret array :\n");
-            tmp = PyArray_SimpleNewFromData(views[2]->base->ndims, views[2]->base->dims, views[2]->base->dtype, views[2]->base->data);
-            PyObject_Print(tmp, stdout, 0);
-            printf("\n");
+            gettimeofday(&tv, &tz);
+            ccomp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
 */
+            //niters is the total array length without the axis-
+            //dimension.
+            npy_intp niters = 1;
+            for(j=0; j<lastary->base->ndims; j++)
+                niters *= (((PyArrayIterObject *)iters[narys-1])->
+                           dims_m1[j] + 1);
+
+            //'steps' is the axis-dimension's stride.
+            npy_intp steps[NPY_MAXARGS];
+            for(j=0; j<narys; j++)
+                steps[j] = ((PyArrayIterObject *) iters[j])->
+                            strides[axis];
+
+            //dims is the length of the axis-dimension.
+            npy_intp dims[1] = {PyArray_DIM(blocklist[narys-1],axis)};
+            char *tdata[NPY_MAXARGS];
+            while(niters-- > 0)
+            {
+                //Need data pointers in one char array.
+                for(j=0; j<narys; j++)
+                    tdata[j] = PyArray_ITER_DATA(iters[j]);
+
+                ufunc_function(tdata, dims, steps, ufunc_funcdata);
+
+                for(j=0; j<narys; j++)
+                    PyArray_ITER_NEXT(iters[j]);
+            }
+/*
+            gettimeofday(&tv, &tz);
+            ccomp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - ccomp_time;
+*/
+            //Cleanup
+            for(j=0; j<narys; j++)
+                Py_DECREF(iters[j]);
+
             //Iterate coords one block.
             for(j=0; j < lastary->base->ndims; j++)
             {
@@ -1438,17 +1518,18 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 else
                     break;
             }
-
-//            gettimeofday(&tv, &tz);
-//            comp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - comp_time;
-//            niter++;
+/*
+            gettimeofday(&tv, &tz);
+            comp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - comp_time;
+*/
         }
         //Cleanup.
-        Py_DECREF(blocktuple);
-
-//        gettimeofday(&tv, &tz);
-//        total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - total_time;
-
+        for(j=0; j<narys; j++)
+            Py_DECREF(blocklist[j]);
+/*
+        gettimeofday(&tv, &tz);
+        total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - total_time;
+*/
 
     }//End of the block method.
     else
@@ -1515,10 +1596,10 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         free(buffer[i]);
     }
 /*
-    printf("remote  get: %llu ms\n", rget_time);
-    printf("compute    : %llu ms\n", comp_time);
-    printf("num of iter: %d\n", niter);
-    printf("totaltime  : %llu ms\n", total_time);
+    printf("remote  get: %llu us\n", rget_time);
+    printf("pre-compute: %llu us\n", comp_time-ccomp_time);
+    printf("compute    : %llu us\n", ccomp_time);
+    printf("totaltime  : %llu us\n", total_time);
 */
 
 } /* do_UFUNC */
@@ -2090,15 +2171,16 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
  */
 static int
 dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
-             int nout_arys, char *op)
+             int nout_arys, char *op, int appropriate_function)
 {
     int i;
-    //Tell slaves about the destruction.
+    //Tell slaves about the ufunc operations.
     msg[0] = DNPY_UFUNC;
     msg[1] = narys;
     msg[2] = nout_arys;
-    msg[3] = 0; //Scalar datatype.
-    msg[4] = 0; //Scalar datasize, zero if no scalar is in arylist.
+    msg[3] = appropriate_function;
+    msg[4] = 0; //Scalar datatype.
+    msg[5] = 0; //Scalar datasize, zero if no scalar is in arylist.
 
     //Copy scalar if one is in the arylist.
     for(i=0; i<narys;i++)
@@ -2112,24 +2194,24 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
                                 "Scalars is allowed though.\n");
                 return -1;
             }
-            msg[3] = arylist[i]->descr->type_num;
-            msg[4] = arylist[i]->descr->elsize;
-            memcpy(msg+5, arylist[i]->data, msg[4]);
+            msg[4] = arylist[i]->descr->type_num;
+            msg[5] = arylist[i]->descr->elsize;
+            memcpy(msg+6, arylist[i]->data, msg[5]);
             break;
         }
 
     //Copy arylist's uid to msg.
     for(i=0; i<narys;i++)
-        memcpy(((char*)(msg+5))+msg[4]+i*sizeof(npy_intp),
+        memcpy(((char*)(msg+6))+msg[5]+i*sizeof(npy_intp),
                 &arylist[i]->dnduid, sizeof(npy_intp));
 
     //Copy the string op.
-    strcpy(((char*)(msg+5+msg[1]))+msg[4], op);
+    strcpy(((char*)(msg+6+msg[1]))+msg[5], op);
 
-    *(((char*)(msg+5+msg[1]))+msg[4]+strlen(op)+1) = DNPY_MSG_END;
+    *(((char*)(msg+6+msg[1]))+msg[5]+strlen(op)+1) = DNPY_MSG_END;
 
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, (6+msg[1])*sizeof(npy_intp) + msg[4] + strlen(op)+1,
+    MPI_Bcast(msg, (7+msg[1])*sizeof(npy_intp) + msg[5] + strlen(op)+1,
               MPI_BYTE, 0, MPI_COMM_WORLD);
 
     //The master should also do the operation.
@@ -2137,8 +2219,8 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC((npy_intp*)(((char*)(msg+5))+msg[4]), msg[1], msg[2], msg[3],
-            msg[4], (char*) (msg+5), op);
+    do_UFUNC((npy_intp*)(((char*)(msg+6))+msg[5]), msg[1], msg[2], msg[3],
+             msg[4], msg[5], (char*) (msg+6), op);
     return 0;
 } /* dnumpy_ufunc */
 
@@ -2292,6 +2374,7 @@ dnumpy_init(void)
             cart_dim_strides[i][j] = stride;
         }
     }
+
 } /* dnumpy_init */
 
 /*NUMPY_API
@@ -2378,7 +2461,7 @@ dnumpy_master_slave_split()
     while(shutdown == 0)//Work loop
     {
         char *t1, *t2, *t3;
-        npy_intp d1, d2, d3, d4;
+        npy_intp d1, d2, d3, d4, d5;
         dndview *ary;
         MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
@@ -2426,10 +2509,11 @@ dnumpy_master_slave_split()
                 d2 = *(((npy_intp*)msg_data)+1);
                 d3 = *(((npy_intp*)msg_data)+2);
                 d4 = *(((npy_intp*)msg_data)+3);
-                t1 = msg_data+sizeof(npy_intp)*4;
-                t2 = t1+d4;
+                d5 = *(((npy_intp*)msg_data)+4);
+                t1 = msg_data+sizeof(npy_intp)*5;
+                t2 = t1+d5;
                 t3 = t2+d1*sizeof(npy_intp);
-                do_UFUNC((npy_intp *)t2,d1,d2,d3,d4,t1,t3);
+                do_UFUNC((npy_intp *)t2,d1,d2,d3,d4,d5,t1,t3);
                 break;
             case DNPY_UFUNC_REDUCE:
                 d1 = *((npy_intp*)msg_data);
