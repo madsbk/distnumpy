@@ -790,6 +790,11 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
                           src_ary->base->data + offset,
                           src_ary->base->elsize,
                           NPY_WRITEABLE, NULL);
+        
+        //Force some progress in the MPI-layer.
+        int f=0;
+        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, 
+                   MPI_COMM_WORLD, &f,MPI_STATUS_IGNORE);
     }
 
 /*
@@ -1401,6 +1406,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     }
                     Py_XDECREF(blocklist[j]);
                     blocklist[j] = tmp;
+                }
+                else
+                {
+                    //Force some progress in the MPI-layer.
+                    int f=0;
+                    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, 
+                               MPI_COMM_WORLD, &f,MPI_STATUS_IGNORE);
                 }
             }
 /*
