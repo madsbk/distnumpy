@@ -7,10 +7,10 @@
 
 /*===================================================================
  *
- * ufunc definitions from numpy/ufuncobject.h. 
+ * ufunc definitions from numpy/ufuncobject.h.
  * They are include here to avoid compiler warnings.
 */
-typedef void (*PyUFuncGenericFunction) 
+typedef void (*PyUFuncGenericFunction)
              (char **, npy_intp *, npy_intp *, void *);
 typedef struct {
     PyObject_HEAD
@@ -741,8 +741,8 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
         printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
         printf("5 - Create array - ndims: %d, vdims: [%ld, %ld]\n", src_ary->ndims, vdims[0], vdims[1]);
     */
-        ret = PyArray_SimpleNewFromData(src_ary->ndims,
-                            vdims, src_ary->base->dtype, dest);
+        ret = PyArray_SimpleNewFromData(src_ary->ndims, vdims,
+                                        src_ary->base->dtype, dest);
     }
     else
     {
@@ -775,7 +775,9 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
                 return NULL;
 
             bdims[j] = src_ary->base->localdims[j] - subary_coords[j];
-            if(bdims[j] > blocksize)
+            if(bdims[j] == 0)
+                return NULL;
+            else if(bdims[j] > blocksize)
                 bdims[j] = blocksize;
 
             offset += stride * (subary_coords[j]);
@@ -790,17 +792,12 @@ static PyObject *remote_blockget(char *dest, dndview *src_ary,
                           src_ary->base->data + offset,
                           src_ary->base->elsize,
                           NPY_WRITEABLE, NULL);
-        
+
         //Force some progress in the MPI-layer.
         int f=0;
-        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, 
-                   MPI_COMM_WORLD, &f,MPI_STATUS_IGNORE);
+        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG,
+                   MPI_COMM_WORLD, &f, MPI_STATUS_IGNORE);
     }
-
-/*
-    PyObject_Print(ret, stdout, 0);
-    printf("\n");
-*/
 
     return ret;
 }/* remote_blockget */
@@ -1345,19 +1342,25 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         gettimeofday(&tv, &tz);
         total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
 */
+        //Coordinate of the next block we need to remote-get.
+        npy_intp next_get_coords[NPY_MAXARGS][NPY_MAXDIMS];
+        memset(next_get_coords, 0, NPY_MAXARGS*NPY_MAXDIMS*
+                                   sizeof(npy_intp));
+
         PyObject *blocklist[NPY_MAXARGS];
         for(j=0; j<narys; j++)
             blocklist[j] = NULL;
         int notfinished = 1;
         npy_intp offset = 0;
         while(notfinished)
-        {/*
+        {
+/*
             printf("\nIteration (");
             for(j=0; j<lastary->ndims; j++)
                 printf(" %ld", coords[j]);
             printf(")\n");
-        */
-/*        
+*/
+/*
             gettimeofday(&tv, &tz);
             rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
 */
@@ -1366,6 +1369,93 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             {
                 //Use the previous block if we are broadcasting.
                 int use_prev_block = 0;
+
+                //If coords is not equal to next_get_coords we
+                //should use the previous block.
+                for(i=0; i<lastary->ndims; i++)
+                    if(coords[i] != next_get_coords[j][i])
+                    {
+                        use_prev_block = 1;
+                        break;
+                    }
+
+                if(!use_prev_block)
+                {
+                    //Find next coordinate where we shouldn't use the
+                    //previously block.
+                    use_prev_block = 1;
+                    while(use_prev_block)
+                    {
+                        //Iterate coords one block.
+                        for(i=0; i < lastary->base->ndims; i++)
+                        {
+                            int o = dim_iter_order[i];
+
+                            if(++next_get_coords[j][o] >=
+                               ceil(lastary->base->localdims[o] /
+                                    (double) blocksize))
+                            {
+                                //We a finished, if wrapping around.
+                                if(i == lastary->base->ndims-1)
+                                    break;
+                                next_get_coords[j][o] = 0;
+                            }
+                            else
+                                break;
+                        }
+                        use_prev_block = 0;
+                        for(i=lastary->ndims-1; 0<=i; i--)
+                        {
+                            if(next_get_coords[j][i] > 0 &&
+                               lastary->base->dims[i] != 1)
+                            {
+                                int lastcount = i - (lastary->ndims -
+                                                     views[j]->ndims);
+                                int s, si=views[j]->ndims-1, gotdim=0;
+                                if(lastcount >= 0)
+                                {
+                                    for(s=views[j]->nslice-1; s>=0; s--)
+                                    {
+                                        if(views[j]->slice[s].nsteps !=
+                                           SingleIndex)
+                                            if(si-- == lastcount)
+                                            {
+                                                gotdim = 1;
+                                                break;
+                                            }
+                                    }
+                                }
+                                if(gotdim == 0 || //no more dims or
+                                                  //dim size is 1.
+                                   views[j]->slice[s].nsteps == 1)
+                                {
+                                    use_prev_block = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    //Now get the block.
+                    PyObject *tmp = remote_blockget(buffer[j], views[j],
+                                                    lastary, &win[j],
+                                                    coords);
+                    if(tmp == NULL)
+                    {
+                        notfinished = 0;
+                        break;
+                    }
+                    Py_XDECREF(blocklist[j]);
+                    blocklist[j] = tmp;
+                }
+                else
+                {
+                    //Force some progress in the MPI-layer.
+                    int f=0;
+                    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG,
+                               MPI_COMM_WORLD, &f,MPI_STATUS_IGNORE);
+                }
+/*
                 for(i=lastary->ndims-1; 0<=i; i--)
                 {
                     if(coords[i] > 0 && lastary->base->dims[i] != 1)
@@ -1394,6 +1484,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                         }
                     }
                 }
+
                 if(!use_prev_block)
                 {
                     PyObject *tmp = remote_blockget(buffer[j], views[j],
@@ -1411,15 +1502,16 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 {
                     //Force some progress in the MPI-layer.
                     int f=0;
-                    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, 
+                    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG,
                                MPI_COMM_WORLD, &f,MPI_STATUS_IGNORE);
                 }
+*/
             }
 /*
             gettimeofday(&tv, &tz);
             rget_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - rget_time;
 */
-            if(notfinished == 0)
+            if(!notfinished)
                 break;
 /*
             gettimeofday(&tv, &tz);
@@ -1460,9 +1552,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             //Create broadcasted iterators.
             PyObject *iters[NPY_MAXARGS];
             for(j=0; j<narys; j++)
+            {
                 iters[j] = PyArray_BroadcastToShape(blocklist[j],
                                        PyArray_DIMS(blocklist[narys-1]),
                                        PyArray_NDIM(blocklist[narys-1]));
+            }
 
             //The iterators should not iterate over the axis-dimension.
             int axis = PyArray_NDIM(blocklist[narys-1])-1;
@@ -1537,7 +1631,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         }
         //Cleanup.
         for(j=0; j<narys; j++)
-            Py_DECREF(blocklist[j]);
+            Py_XDECREF(blocklist[j]);
 /*
         gettimeofday(&tv, &tz);
         total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - total_time;
@@ -1641,6 +1735,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     //If output is a scalar we just use this simple method.
     if(in_ary->ndims == 1)
     {
+//        printf("Reduce to scalar\n");
         int out_dtype = out_ary_uid;
 
         //Print debug info.
@@ -1708,6 +1803,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
         Py_DECREF(local_scalar);
         return;
     }
+//    printf("Reduce to array\n");
 
     dndview *out_view = get_dndview(out_ary_uid);
     dndarray *out_ary = out_view->base;
