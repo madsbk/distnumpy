@@ -48,7 +48,7 @@ typedef struct
     //Number of local blocks (local to the MPI-process).
     //npy_intp nblocks;
     //Size of local block-dimensions (local to the MPI-process).
-    //npy_intp localblockdims[NPY_MAXDIMS];
+    npy_intp localblockdims[NPY_MAXDIMS];
     
 } dndarray;
 
