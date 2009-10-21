@@ -430,9 +430,9 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
         int size = lastary->base->ndims * sizeof(npy_intp);
         memcpy(PyArray_DIMS(arys[narys-1]), bdims, size);
         memcpy(PyArray_STRIDES(arys[narys-1]), strides, size);
-        PyArray_BYTES(arys[narys-1]) = lastary->base->data + offset;        
+        PyArray_BYTES(arys[narys-1]) = lastary->base->data + offset;
     }
-        
+
     npy_intp *lastdims = bdims;
     npy_intp lastndim = lastary->base->ndims;
 
@@ -501,7 +501,7 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
  * dimension will be removed.
  * The coordinates are in Row-major.
  * Private.
- */
+ *//*
 static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
                       int reduce_axis, MPI_Win *win,
                       npy_intp lcoords[NPY_MAXDIMS])
@@ -562,7 +562,107 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
     MPI_Win_unlock(rank, *win);
 
     return 0;
-}/* remote_put */
+}*//* remote_put */
+
+/*===================================================================
+ *
+ * Putting the block 'src' into the distributed array 'dest_ary' at
+ * block-coordinate 'lcoords' (local to the 'src_ary' array).
+ * No broadcasting, but if 'reduce_axis' >= 0, the 'reduce_axis'
+ * dimension will be removed.
+ * The coordinates are in Row-major.
+ * Private.
+ */
+static int remote_blockput(PyObject *src, dndarray *src_ary,
+                           dndarray *dest_ary,
+                           int reduce_axis, MPI_Win *win,
+                           npy_intp lcoords[NPY_MAXDIMS])
+{
+    int i, j, src_ndims = PyArray_NDIM(src);
+
+    //Find local block in src.
+    int bdims[NPY_MAXDIMS];
+    int ldims[NPY_MAXDIMS];
+    int subary_coords[NPY_MAXDIMS];
+    j=0;
+    for(i=0; j<src_ndims; i++)
+        if(reduce_axis != i)
+            subary_coords[j++] = lcoords[i] * blocksize;
+
+    //Convert npy_intp to int.
+    for(i=0; i<src_ndims; i++)
+    {
+        ldims[i] = PyArray_DIM(src,i);
+        bdims[i] = ldims[i] - subary_coords[i];
+        if(bdims[i] > blocksize)
+            bdims[i] = blocksize;
+    }
+
+    //Setup a matching MPI datatype for a block.
+    MPI_Datatype src_ary_type, elem_type, dest_ary_type;
+    MPI_Type_contiguous(PyArray_ITEMSIZE(src), MPI_BYTE, &elem_type);
+    MPI_Type_create_subarray(src_ndims,
+                             ldims,
+                             bdims,
+                             subary_coords,
+                             MPI_ORDER_C, elem_type, &src_ary_type);
+    MPI_Type_commit(&src_ary_type);
+
+    //Convert local coordinates to global coordinates.
+    npy_intp gcoords[NPY_MAXDIMS];
+    int *cdimsizes = cart_dim_sizes[src_ary->ndims-1];
+    j=0;
+    for(i=0; i<src_ary->ndims; i++)
+    {
+        int tcoords[NPY_MAXDIMS];
+        rank2cart(src_ary->ndims, myrank, tcoords);
+        if(reduce_axis != i)
+            gcoords[j++] = tcoords[i] +   //process offset
+                           lcoords[i] *   //block index
+                           cdimsizes[i];  //jump per block
+    }
+    if(j != dest_ary->ndims)
+    {
+        fprintf(stderr, "remote_put, the src_ary->ndims should be the "
+                        "same as dest_ary->ndims or one higher if "
+                        "reduce_axis >= 0\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    //Find process cartesian coords and dest block.
+    int pcoords[NPY_MAXDIMS];
+    cdimsizes = cart_dim_sizes[dest_ary->ndims-1];
+    for(i=0; i<dest_ary->ndims; i++)
+    {
+        subary_coords[i] = (gcoords[i] / cdimsizes[i]) * blocksize;
+        pcoords[i] = gcoords[i] % cdimsizes[i];
+        ldims[i] = dnumroc(dest_ary->dims[i], blocksize,
+                           pcoords[i], cdimsizes[i]);
+        bdims[i] = ldims[i] - subary_coords[i];
+        if(bdims[i] > blocksize)
+            bdims[i] = blocksize;
+    }
+    //Convert to a MPI rank number.
+    int rank = cart2rank(dest_ary->ndims, pcoords);
+
+    //Setup a matching MPI datatype for a block.
+    MPI_Type_create_subarray(dest_ary->ndims,
+                             ldims,
+                             bdims,
+                             subary_coords,
+                             MPI_ORDER_C, elem_type, &dest_ary_type);
+    MPI_Type_commit(&dest_ary_type);
+
+    //Transfer element.
+    MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
+    MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
+            dest_ary_type, *win);
+    MPI_Win_unlock(rank, *win);
+
+    return 0;
+} /* remote_blockput */
+
+
 
 /*===================================================================
  *
@@ -749,11 +849,11 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
 static int remote_blockget(char *dest, dndview *src_ary,
                            dndview *dest_ary, MPI_Win *win,
                            const npy_intp lcoords[NPY_MAXDIMS],
-                           int *locked_rank, 
+                           int *locked_rank,
                            PyObject **ret_ary)
 {
     int i, ai, bi, vi, rbi;
-#ifdef DNPY_TIME    
+#ifdef DNPY_TIME
     gettimeofday(&tv, &tz);
     tmp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
 #endif
@@ -939,7 +1039,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
     */
     //    *ret_ary = PyArray_SimpleNewFromData(src_ary->ndims, vdims,
     //                                         src_ary->base->dtype, dest);
-    
+
         if(*ret_ary == NULL)
         {
             *ret_ary = PyArray_New(&PyArray_Type,
@@ -956,7 +1056,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
             //Compute stride.
             npy_intp stride = src_ary->base->elsize;
             npy_intp strides[NPY_MAXDIMS];
-            for(i = src_ary->ndims-1; i >= 0; i--) 
+            for(i = src_ary->ndims-1; i >= 0; i--)
             {
                 strides[i] = stride;
                 stride *= vdims[i];
@@ -1654,7 +1754,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                                     next_get_coords[j],
                                     &locked_ranks[j],
                                     &obj_blocklist[j]);
-                    recv_blocklist[j] = obj_blocklist[j];                                                  
+                    recv_blocklist[j] = obj_blocklist[j];
                     obj_blocklist[j] = NULL;
                 }
 
@@ -1819,14 +1919,20 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
     if(PyOp == NULL)
     {
-        fprintf(stderr, "UFUNC : unknown operator: %s\n", op);
+        fprintf(stderr, "UFUNC_REDUCE: unknown operator: %s\n", op);
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    //At the moment we don't support views.
+    if(in_view->alterations != 0)
+    {
+        fprintf(stderr, "UFUNC_REDUCE: No view support\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
     //If output is a scalar we just use this simple method.
     if(in_ary->ndims == 1)
     {
-//        printf("Reduce to scalar\n");
         int out_dtype = out_ary_uid;
 
         //Print debug info.
@@ -1894,7 +2000,6 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
         Py_DECREF(local_scalar);
         return;
     }
-//    printf("Reduce to array\n");
 
     dndview *out_view = get_dndview(out_ary_uid);
     dndarray *out_ary = out_view->base;
@@ -1904,6 +2009,13 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
         printf("UFUNC_REDUCE (%s) on - in: %ld, out: %ld, axis: %d\n", op,
                (long)in_ary_uid, (long)out_ary_uid, axis);
     #endif
+
+    //At the moment we don't support views.
+    if(out_view->alterations != 0)
+    {
+        fprintf(stderr, "UFUNC_REDUCE: No view support\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
 
     //There is two kind of roles for MPI-processes. They can be
     //receivers or senders. The receivers are receiving the sub-results
@@ -1916,8 +2028,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     //First we creates are MPI window for the output array.
     MPI_Win win;
     MPI_Win_create(out_ary->data, out_ary->nelements *
-                       dtypesize(out_ary->dtype), 1, MPI_INFO_NULL,
-                       MPI_COMM_WORLD, &win);
+                   dtypesize(out_ary->dtype), 1, MPI_INFO_NULL,
+                   MPI_COMM_WORLD, &win);
 
     PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
                                               in_ary->localdims,
@@ -1927,9 +2039,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     //All MPI-processes computes its own sub-result.
     PyObject *subres = PyObject_CallMethod(PyOp, "reduce", "(O,i)",
                                            tmp, axis);
+    //Clean up.
     Py_DECREF(tmp);
-
-    int subres_dtypesize = dtypesize(PyArray_TYPE(subres));
 
     int cart_coords[NPY_MAXDIMS];
     rank2cart(in_ary->ndims, myrank, cart_coords);
@@ -1958,7 +2069,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
             PyObject *tmpres = PyArray_SimpleNew(out_ary->ndims,
                                recv_dims, out_ary->dtype);
             MPI_Recv(PyArray_DATA(tmpres), PyArray_SIZE(tmpres) *
-                     dtypesize(out_ary->dtype), MPI_BYTE, rank, 0,
+                     out_ary->elsize, MPI_BYTE, rank, 0,
                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
             //We use ufunc to "reduce" the two arrays over the
@@ -1968,34 +2079,44 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
             Py_DECREF(tmpres);
         }
 
-        //Reusing cart_coords.
         npy_intp lcoords[NPY_MAXDIMS];
         memset(lcoords, 0, in_ary->ndims * sizeof(npy_intp));
-        char *element = PyArray_DATA(subres);
-        for(i=0; i<PyArray_SIZE(subres); i++)
-        {
-            remote_put(element, in_ary, out_ary, axis, &win, lcoords);
-
-            //Iterate coords one element.
-            for(j=in_ary->ndims-1; j >= 0; j--)
+        int notfinished = 1;
+        if(PyArray_SIZE(subres) > 0)
+            while(notfinished)
             {
-                //We ignore the 'axis' dimension - it stays on zero.
-                if(j != axis && ++lcoords[j] >= in_ary->localdims[j])
-                        lcoords[j] = 0;
-                else if(j != axis)
-                    break;
+                remote_blockput(subres, in_ary, out_ary, axis, &win,
+                                lcoords);
+
+                //Iterate coords one element.
+                for(j=in_ary->ndims-1; j >= 0; j--)
+                {
+                    //We ignore the 'axis' dimension - it stays on zero.
+                    if(j != axis)
+                    {
+                        if(++lcoords[j] >= in_ary->localblockdims[j])
+                            lcoords[j] = 0;
+                        else
+                            break;
+                    }
+                }
+                notfinished = 0;
+                for(i=0; i<in_ary->ndims; i++)
+                    if(lcoords[i] > 0)
+                        notfinished = 1;
             }
-            element += subres_dtypesize;
-        }
     }
     else//MPI-process is a sender.
     {
         //Send subresult to receiver.
         cart_coords[axis] = 0;
-        MPI_Send(PyArray_DATA(subres), PyArray_SIZE(subres) *
-                 subres_dtypesize, MPI_BYTE, cart2rank(in_ary->ndims,
-                 cart_coords), 0, MPI_COMM_WORLD);
+        MPI_Send(PyArray_DATA(subres),
+                 PyArray_SIZE(subres) * PyArray_ITEMSIZE(subres),
+                 MPI_BYTE, cart2rank(in_ary->ndims, cart_coords), 0,
+                 MPI_COMM_WORLD);
     }
+
+    MPI_Barrier(MPI_COMM_WORLD);
 
     //Cleanup
     MPI_Win_free(&win);
