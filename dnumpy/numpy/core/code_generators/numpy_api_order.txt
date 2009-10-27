@@ -184,3 +184,4 @@ dnumpy_ufunc_reduce
 dnumpy_reg_ufunc_module
 dnumpy_master_slave_split
 dnumpy_zerofill
+dnumpy_diagonal

@@ -1750,6 +1750,13 @@ PyArray_Diagonal(PyArrayObject *self, int offset, int axis1, int axis2)
         return NULL;
     }
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(self))
+    {
+        return dnumpy_diagonal(PyArray_DNDUID(self), offset, axis1, 
+                               axis2);
+    }
+
     newaxes.len = n;
     /* insert at the end */
     newaxes.ptr[n-2] = axis1;

@@ -207,7 +207,7 @@ static void rank2cart(int ndims, int rank, int coords[NPY_MAXDIMS])
 {
     int i;
     int *strides = cart_dim_strides[ndims-1];
-    memset(coords, 0, NPY_MAXDIMS*sizeof(int));
+    memset(coords, 0, ndims*sizeof(int));
     for(i=0; i<cart_used_ndims[ndims-1]; i++)
     {
         coords[i] = rank / strides[i];
@@ -1204,10 +1204,10 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         printf("CREATE_ARRAY - uid: %ld, dtype: %s(%d),"
-               "localsize: %ld, nelem: %ld, ndims: %d, dims: {",
+               " nelem: %ld, ndims: %d, dims: {",
                (long) view->uid,
                types_numpy2str(ary->dtype), dtypesize(ary->dtype),
-               (long)localsize, (long)nelements, ndims);
+               (long)nelements, ndims);
         for(i=0; i<ndims-1; i++)
             printf("%ld ", (long)ary->dims[i]);
         printf("%ld}, localdims: {", (long)ary->dims[ndims-1]);
@@ -1335,7 +1335,7 @@ static void do_SET_ITEM(dndview *view, char* value,
                 MPI_BYTE, win);
         MPI_Win_unlock(rank, win);
     }
-    MPI_Win_free(&win);
+    MPI_Win_free(&win);//Incl. Barrier.
 } /* do_SET_ITEM */
 
 /*===================================================================
@@ -1403,8 +1403,7 @@ static void do_GET_ITEM(char *retdata, dndview *view,
                 MPI_BYTE, win);
         MPI_Win_unlock(rank, win);
     }
-
-    MPI_Win_free(&win);
+    MPI_Win_free(&win);//Incl. Barrier.
 
 } /* do_GET_ITEM */
 
@@ -2116,10 +2115,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
                  MPI_COMM_WORLD);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
     //Cleanup
-    MPI_Win_free(&win);
+    MPI_Win_free(&win);//Incl. Barrier.
     Py_DECREF(subres);
 
 } /* do_UFUNC_REDUCE */
@@ -2161,6 +2158,121 @@ static void do_ZEROFILL(dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 } /* do_ZEROFILL */
+
+/*===================================================================
+ *
+ * Message handler for DIAGONAL.
+ * Private.
+ */
+static void do_DIAGONAL(dndview *in, dndview *out, int offset,
+                        int axis1, int axis2)
+{
+    int mypcoord, pcoord[2];
+    npy_intp lcoord, gcoord, bsize;
+    MPI_Datatype arraytype, elementtype;
+    MPI_Win win;
+
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("DIAGONAL - in: %ld, out: %ld, offset: %d, axis: "
+               "(%d, %d)\n",(long)in->uid, (long)out->uid, offset,
+                            axis1, axis2);
+    #endif
+
+    //Element type.
+    MPI_Type_contiguous(in->base->elsize, MPI_BYTE, &elementtype);
+    MPI_Type_commit(&elementtype);
+
+    //Find process coord in output vector.
+    rank2cart(1, myrank, &mypcoord);
+
+    //Setup window for input.
+    MPI_Win_create(in->base->data,
+                   in->base->nelements * in->base->elsize, 1,
+                   MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+
+    //Iterate over the output vector.
+    npy_intp nblocks = out->base->localblockdims[0];
+    char *out_data = out->base->data;
+    npy_intp ldims[2], index[2];
+    for(lcoord=0; lcoord < nblocks; lcoord++)
+    {
+//        printf("Iteration - lcoord: %ld\n", lcoord);
+
+        //Convert local coord to global coord.
+        gcoord = mypcoord +           //process offset
+                 lcoord *             //block index
+                 cart_dim_sizes[0][0];//jump per block
+
+//        printf("gcoord: (%ld, %ld)\n", gcoord, gcoord);
+
+
+        //Find process cartesian coords of remote MPI process.
+        pcoord[0] = gcoord % cart_dim_sizes[1][0];
+        pcoord[1] = gcoord % cart_dim_sizes[1][1];
+
+//        printf("pcoord: (%d, %d)\n", pcoord[0], pcoord[1]);
+
+        //Find remote local size.
+        ldims[0] = dnumroc(in->base->dims[0], blocksize, pcoord[0],
+                           cart_dim_sizes[1][0]);
+        ldims[1] = dnumroc(in->base->dims[1], blocksize, pcoord[1],
+                           cart_dim_sizes[1][1]);
+
+//        printf("ldims: (%ld, %ld)\n", ldims[0], ldims[1]);
+
+        //Find remote index (non-block index).
+        index[0] = gcoord / cart_dim_sizes[1][0] * blocksize;
+        index[1] = gcoord / cart_dim_sizes[1][1] * blocksize;
+
+//        printf("index: (%ld, %ld)\n", index[0], index[1]);
+
+        //Find blocksize.
+        bsize = MIN(ldims[0] - index[0], ldims[1] - index[1]);
+        if(bsize > blocksize)
+            bsize = blocksize;
+        else if(bsize <= 0)
+        {
+//            printf("breaking bsize=%ld\n",bsize);
+            break;
+        }
+
+//        printf("bsize: %ld\n", bsize);
+
+        //Find remote offset from window start.
+        npy_intp offset = index[0] * ldims[1] + index[1];
+
+//        printf("offset: %ld\n", offset);
+
+        //Convert to a MPI rank number.
+        int rank = cart2rank(2, pcoord);
+
+//        if(rank != myrank)
+//            printf("rank: %d\n", rank);
+
+        //Setup a matching MPI datatype.
+        MPI_Type_vector(bsize, 1, ldims[1]+1, elementtype, &arraytype);
+        MPI_Type_commit(&arraytype);
+
+        //Transfer element.
+//        printf("in_data: %lf\n", ((double*) in->base->data)[offset]);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, win);
+        MPI_Get(out_data, bsize, elementtype, rank, offset * in->base->elsize, bsize, arraytype, win);
+        MPI_Win_unlock(rank, win);
+//        printf("out_data: %lf\n", ((double*) out_data)[0]);
+
+        //Clean up
+        MPI_Type_free(&arraytype);
+
+        //Iterate output data one block.
+        out_data += bsize * in->base->elsize;
+    }
+
+    //Clean up
+    MPI_Type_free(&elementtype);
+    MPI_Win_free(&win);//Incl. sync.
+}
+
 
 /*NUMPY_API
  *===================================================================
@@ -2646,6 +2758,93 @@ dnumpy_zerofill(intp ary_uid)
 
 
 /*NUMPY_API
+ *===================================================================
+ * Public
+ * Returns a new 1-dim dist array filled with the diagonal from 'uid'.
+ * Returns NULL on failure.
+ */
+static PyObject*
+dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
+{
+    PyObject *ret;
+    intp n1, n2, start, stop, step, count;
+    //Get arrray structs.
+    dndview *view = get_dndview(uid);
+
+    if(axis1 != 0 && axis2 != 1)
+    {
+        PyErr_Format(PyExc_ValueError, "axis1 and axis2 must be the "
+                     "defualt values 0 and 1 on a distributed array.");
+        return NULL;
+    }
+    if(view->ndims != 2)
+    {
+        PyErr_Format(PyExc_ValueError, "if array is distributed it "
+                     "must have exactly two dimensions.");
+        return NULL;
+    }
+
+    if(offset != 0)
+    {
+        PyErr_Format(PyExc_ValueError, "if array is distributed offset "
+                     "must be zero.");
+        return NULL;
+    }
+
+    if(view->alterations != 0)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "diagonal on a distributed "
+                        "array must be a whole array and not a "
+                        "partial view of a underlying array.");
+        return NULL;
+    }
+
+    //Compute the size of the diagonal.
+    n1 = view->base->dims[0];
+    n2 = view->base->dims[1];
+    step = n2 + 1;
+    if (offset < 0) {
+        start = -n2 * offset;
+        stop = MIN(n2, n1+offset)*(n2+1) - n2*offset;
+    }
+    else {
+        start = offset;
+        stop = MIN(n1, n2-offset)*(n2+1) + offset;
+    }
+    //count = ceil((stop-start)/step)
+    count = ((stop-start) / step) + (((stop-start) % step) != 0);
+
+    //Create the returning distributed vector.
+    ret = PyArray_New(&PyArray_Type, 1, &count, view->base->dtype,
+                      NULL, NULL, 0, NPY_WRITEABLE | DNPY_DISTRIBUTED,
+                      NULL);
+
+    //Tell slaves
+    msg[0] = DNPY_DIAGONAL;
+    msg[1] = view->uid;
+    msg[2] = PyArray_DNDUID(ret);
+    msg[3] = offset;
+    msg[4] = axis1;
+    msg[5] = axis2;
+    msg[6] = DNPY_MSG_END;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(msg, 7 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+
+
+    //The master should also do the operation.
+    #ifdef DISTNUMPY_DEBUG
+        printf("Rank 0 received msg: ");
+    #endif
+    do_DIAGONAL(view, get_dndview(PyArray_DNDUID(ret)), offset, axis1,
+                axis2);
+
+    return ret;
+} /* dnumpy_diagonal */
+
+
+/*NUMPY_API
  * ===================================================================
  * Public
  * Initialization of distnumpy.
@@ -2782,7 +2981,7 @@ dnumpy_master_slave_split()
     {
         char *t1, *t2, *t3;
         npy_intp d1, d2, d3, d4, d5;
-        dndview *ary;
+        dndview *ary, *ary2;
         MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
         MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -2845,6 +3044,14 @@ dnumpy_master_slave_split()
                 break;
             case DNPY_ZEROFILL:
                 do_ZEROFILL(get_dndview(*((npy_intp*)msg_data)));
+                break;
+            case DNPY_DIAGONAL:
+                ary  = get_dndview(((npy_intp*)msg_data)[0]);
+                ary2 = get_dndview(((npy_intp*)msg_data)[1]);
+                d1 = ((npy_intp*)msg_data)[2];
+                d2 = ((npy_intp*)msg_data)[3];
+                d3 = ((npy_intp*)msg_data)[4];
+                do_DIAGONAL(ary, ary2, d1, d2, d3);
                 break;
             default:
                 fprintf(stderr, "Unknown msg: %ld\n", (long)msg[0]);
