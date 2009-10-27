@@ -1,5 +1,4 @@
 #Test and demonstration of DistNumPy.
-
 import numpy as np
 import random
 
@@ -25,19 +24,19 @@ def array_equal(A,B):
 def random_list(dims):
     if len(dims) == 0:
         return random.randint(0,100000)
-    
+
     list = []
     for i in range(dims[-1]):
         list.append(random_list(dims[0:-1]))
-    return list        
-    
+    return list
+
 
 def ufunc(max_ndim=5):
     for i in range(1,max_ndim+1):
         src = random_list(random.sample(range(1, 10),i))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
-        
+
         ran = random.randint(0,i-1)
         if i > 1 and ran > 0:
             for j in range(0,ran):
@@ -45,6 +44,7 @@ def ufunc(max_ndim=5):
 
         Bd = np.array(src, dtype=float, dist=True)
         Bf = np.array(src, dtype=float, dist=False)
+
         Cd = Ad + Bd + 42 + Bd[-1]
         Cf = Af + Bf + 42 + Bf[-1]
         Cd = Cd[::2] + Cd[::2,...] + Cd[0,np.newaxis]
@@ -55,6 +55,7 @@ def ufunc(max_ndim=5):
         Df[1:] = Cf[:-1]
         Cd = Dd + Bd[np.newaxis,-1]
         Cf = Df + Bf[np.newaxis,-1]
+
         if not array_equal(Cd,Cf):
             print "Error in ufunc!"
             print Cd
@@ -79,13 +80,29 @@ def ufunc_reduce(max_ndim=6):
                 print "Error in ufunc_reduce!"
                 print Cd
                 print "The distributed array no equal to facit"
-                print Cf                
+                print Cf
+                print "Af:"
+                print Af
                 return False
     return True
 
-
-
-
+def diagonal(niters=10):
+    for i in range(niters):
+        src = random_list([random.randint(1, 20), \
+                           random.randint(1, 20)])
+        Ad = np.array(src, dtype=float, dist=True)
+        Af = np.array(src, dtype=float, dist=False)
+        Cd = Ad.diagonal()
+        Cf = Af.diagonal()
+        if not array_equal(Cd,Cf):
+            print "Error in diagonal!"
+            print Cd
+            print "The distributed array no equal to facit"
+            print Cf
+            print "Af:"
+            print Af
+            return False
+    return True
 
 print "*"*100
 print "Testing ufunc"
@@ -94,11 +111,18 @@ if ufunc(6):
 else:
     print "Fail!"
 
-
-
 print "*"*100
 print "Testing ufunc reduce (no views)"
 if ufunc_reduce(6):
     print "Succes"
 else:
     print "Fail!"
+
+print "*"*100
+print "Testing diagonal (no views)"
+if diagonal(100):
+    print "Succes"
+else:
+    print "Fail!"
+
+
