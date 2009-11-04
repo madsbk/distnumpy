@@ -410,23 +410,38 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
 	prior1 = prior2 = 0.0;
 	subtype = ap1->ob_type;
     }
+    
+    if((PyArray_ISDISTRIBUTED(ap1) && !PyArray_ISDISTRIBUTED(ap2)) ||
+       (!PyArray_ISDISTRIBUTED(ap1) && PyArray_ISDISTRIBUTED(ap2)))
+    {
+        PyErr_SetString(PyExc_RuntimeError,
+                "Mixing distributed and non-distributed arrays is "
+                "not allowed in a matrix multiplication.");       
+        goto fail;
+    }
 
     ret = (PyArrayObject *)PyArray_New(subtype, nd, dimensions,
-				       typenum, NULL, NULL, 0, 0,
+				       typenum, NULL, NULL, 0, 
+                       (PyArray_ISDISTRIBUTED(ap1))?DNPY_DISTRIBUTED:0,
 				       (PyObject *)
 				       (prior2 > prior1 ? ap2 : ap1));
 
     if (ret == NULL) {
         goto fail;
     }
+    
+    //Zero fill.
     numbytes = PyArray_NBYTES(ret);
-    memset(ret->data, 0, numbytes);
     if (numbytes==0 || l == 0) {
-	    Py_DECREF(ap1);
-	    Py_DECREF(ap2);
-	    return PyArray_Return(ret);
+        Py_DECREF(ap1);
+        Py_DECREF(ap2);
+        return PyArray_Return(ret);
     }
-
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(ret))
+        dnumpy_zerofill(PyArray_DNDUID(ret));
+    else       
+        memset(ret->data, 0, numbytes);
 
     if (ap2shape == _scalar) {
 	/*
@@ -712,78 +727,87 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
     else {
         /*
          * (ap1->nd == 2 && ap2->nd == 2)
-	 * Matrix matrix multiplication -- Level 3 BLAS
-	 *  L x M  multiplied by M x N
+         * Matrix matrix multiplication -- Level 3 BLAS
+         *  L x M  multiplied by M x N
+             */
+        enum CBLAS_ORDER Order;
+        enum CBLAS_TRANSPOSE Trans1, Trans2;
+        int M, N, L;
+
+        /* Optimization possible: */
+        /*
+             * We may be able to handle single-segment arrays here
+         * using appropriate values of Order, Trans1, and Trans2.
          */
-	enum CBLAS_ORDER Order;
-	enum CBLAS_TRANSPOSE Trans1, Trans2;
-	int M, N, L;
 
-	/* Optimization possible: */
-	/*
-         * We may be able to handle single-segment arrays here
-	 * using appropriate values of Order, Trans1, and Trans2.
-	 */
+        if (!PyArray_ISCONTIGUOUS(ap2)) {
+            PyObject *new = PyArray_Copy(ap2);
 
- 	if (!PyArray_ISCONTIGUOUS(ap2)) {
-	    PyObject *new = PyArray_Copy(ap2);
+            Py_DECREF(ap2);
+            ap2 = (PyArrayObject *)new;
+            if (new == NULL) {
+                    goto fail;
+                }
+        }
+        if (!PyArray_ISCONTIGUOUS(ap1)) {
+            PyObject *new = PyArray_Copy(ap1);
 
-	    Py_DECREF(ap2);
-	    ap2 = (PyArrayObject *)new;
-	    if (new == NULL) {
-                goto fail;
+            Py_DECREF(ap1);
+            ap1 = (PyArrayObject *)new;
+            if (new == NULL) {
+                    goto fail;
+                }
+        }
+        Order = CblasRowMajor;
+        Trans1 = CblasNoTrans;
+        Trans2 = CblasNoTrans;
+        L = ap1->dimensions[0];
+        N = ap2->dimensions[1];
+        M = ap2->dimensions[0];
+        lda = (ap1->dimensions[1] > 1 ? ap1->dimensions[1] : 1);
+        ldb = (ap2->dimensions[1] > 1 ? ap2->dimensions[1] : 1);
+        ldc = (ret->dimensions[1] > 1 ? ret->dimensions[1] : 1);
+       
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(ret))
+        {
+            dnumpy_matrix_multiplication(PyArray_DNDUID(ap1),
+                                         PyArray_DNDUID(ap2),
+                                         PyArray_DNDUID(ret));
+        }
+        else
+        {
+            NPY_BEGIN_ALLOW_THREADS;
+            if (typenum == PyArray_DOUBLE) {
+                cblas_dgemm(Order, Trans1, Trans2,
+                    L, N, M,
+                    1.0, (double *)ap1->data, lda,
+                    (double *)ap2->data, ldb,
+                    0.0, (double *)ret->data, ldc);
             }
-	}
-	if (!PyArray_ISCONTIGUOUS(ap1)) {
-	    PyObject *new = PyArray_Copy(ap1);
-
-	    Py_DECREF(ap1);
-	    ap1 = (PyArrayObject *)new;
-	    if (new == NULL) {
-                goto fail;
+            else if (typenum == PyArray_FLOAT) {
+                cblas_sgemm(Order, Trans1, Trans2,
+                    L, N, M,
+                    1.0, (float *)ap1->data, lda,
+                    (float *)ap2->data, ldb,
+                    0.0, (float *)ret->data, ldc);
             }
-	}
-
-	NPY_BEGIN_ALLOW_THREADS;
-
-	Order = CblasRowMajor;
-	Trans1 = CblasNoTrans;
-	Trans2 = CblasNoTrans;
-	L = ap1->dimensions[0];
-	N = ap2->dimensions[1];
-	M = ap2->dimensions[0];
-	lda = (ap1->dimensions[1] > 1 ? ap1->dimensions[1] : 1);
-	ldb = (ap2->dimensions[1] > 1 ? ap2->dimensions[1] : 1);
-	ldc = (ret->dimensions[1] > 1 ? ret->dimensions[1] : 1);
-	if (typenum == PyArray_DOUBLE) {
-	    cblas_dgemm(Order, Trans1, Trans2,
-			L, N, M,
-			1.0, (double *)ap1->data, lda,
-			(double *)ap2->data, ldb,
-			0.0, (double *)ret->data, ldc);
-	}
-	else if (typenum == PyArray_FLOAT) {
-	    cblas_sgemm(Order, Trans1, Trans2,
-			L, N, M,
-			1.0, (float *)ap1->data, lda,
-			(float *)ap2->data, ldb,
-			0.0, (float *)ret->data, ldc);
-	}
-	else if (typenum == PyArray_CDOUBLE) {
-	    cblas_zgemm(Order, Trans1, Trans2,
-			L, N, M,
-			oneD, (double *)ap1->data, lda,
-			(double *)ap2->data, ldb,
-			zeroD, (double *)ret->data, ldc);
-	}
-	else if (typenum == PyArray_CFLOAT) {
-	    cblas_cgemm(Order, Trans1, Trans2,
-			L, N, M,
-			oneF, (float *)ap1->data, lda,
-			(float *)ap2->data, ldb,
-			zeroF, (float *)ret->data, ldc);
-	}
-	NPY_END_ALLOW_THREADS;
+            else if (typenum == PyArray_CDOUBLE) {
+                cblas_zgemm(Order, Trans1, Trans2,
+                    L, N, M,
+                    oneD, (double *)ap1->data, lda,
+                    (double *)ap2->data, ldb,
+                    zeroD, (double *)ret->data, ldc);
+            }
+            else if (typenum == PyArray_CFLOAT) {
+                cblas_cgemm(Order, Trans1, Trans2,
+                    L, N, M,
+                    oneF, (float *)ap1->data, lda,
+                    (float *)ap2->data, ldb,
+                    zeroF, (float *)ret->data, ldc);
+            }
+            NPY_END_ALLOW_THREADS;
+        }
     }
 
 

@@ -6,6 +6,11 @@
 #include "mpi.h"
 
 
+#ifndef CBLAS_HEADER
+#define CBLAS_HEADER "cblas.h"
+#endif
+#include CBLAS_HEADER
+
 #ifdef DNPY_TIME
 #include <sys/time.h>
 struct timeval tv;
@@ -446,7 +451,8 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
     for(j=0; j<narys; j++)
         iters[j] = PyArray_BroadcastToShape(arys[j], lastdims, lastndim);
 
-    //The iterators should not iterate over the axis-dimension.
+    //The iterators should not iterate over the axis-dimension. That
+    //will be done inside the function call.
     int axis = lastndim-1;
     for(j=0; j<narys; j++)
     {
@@ -654,7 +660,7 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     MPI_Type_commit(&dest_ary_type);
 
     //Transfer element.
-    MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
+    MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, *win);
     MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
             dest_ary_type, *win);
     MPI_Win_unlock(rank, *win);
@@ -824,7 +830,7 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
     int rank = cart2rank(src_ary->base->ndims, pcoords);
 
     //Transfer element.
-    MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
+    MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, *win);
     MPI_Get(dest, src_ary->base->elsize, MPI_BYTE, rank,
             offset*src_ary->base->elsize,
             src_ary->base->elsize, MPI_BYTE, *win);
@@ -1028,7 +1034,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
 
         //Transfer element.
         *locked_rank = rank;
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, *win);
         MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, *win);
 
         MPI_Type_free(&arraytype);
@@ -1330,7 +1336,7 @@ static void do_SET_ITEM(dndview *view, char* value,
         int rank = cart2rank(base->ndims, pcoords);
 
         //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, win);
         MPI_Put(value, elsize, MPI_BYTE, rank, offset*elsize, elsize,
                 MPI_BYTE, win);
         MPI_Win_unlock(rank, win);
@@ -1398,7 +1404,7 @@ static void do_GET_ITEM(char *retdata, dndview *view,
         int rank = cart2rank(base->ndims, pcoords);
 
         //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, win);
         MPI_Get(retdata, elsize, MPI_BYTE, rank, offset*elsize, elsize,
                 MPI_BYTE, win);
         MPI_Win_unlock(rank, win);
@@ -2128,35 +2134,20 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
  */
 static void do_ZEROFILL(dndview *view)
 {
-    int i;
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         printf("ZEROFILL - uid: %ld\n", (long)view->uid);
     #endif
 
-    //Chech if the view covers the whole array.
-    int cover_whole = 1;
-    for(i=0; i<view->nslice;i++)
-    {
-        if(view->slice[i].nsteps == SingleIndex ||
-           view->slice[i].nsteps == PseudoIndex ||
-           view->slice[i].start != 0 || view->slice[i].step != 1 ||
-           view->slice[i].nsteps != view->base->dims[i])
-        {
-            cover_whole = 0;
-        }
-    }
-
-    if(cover_whole)
-    {
-        memset(view->base->data, 0, view->base->nelements *
-                                    dtypesize(view->base->dtype));
-    }
-    else
+    //Check if the view covers the whole array.
+    if(view->alterations != 0)
     {
         fprintf(stderr, "ZEROFILL with views not implemented\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
+
+    memset(view->base->data, 0, view->base->nelements *
+                                dtypesize(view->base->dtype));
 } /* do_ZEROFILL */
 
 /*===================================================================
@@ -2197,21 +2188,15 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
     npy_intp ldims[2], index[2];
     for(lcoord=0; lcoord < nblocks; lcoord++)
     {
-//        printf("Iteration - lcoord: %ld\n", lcoord);
 
         //Convert local coord to global coord.
         gcoord = mypcoord +           //process offset
                  lcoord *             //block index
                  cart_dim_sizes[0][0];//jump per block
 
-//        printf("gcoord: (%ld, %ld)\n", gcoord, gcoord);
-
-
         //Find process cartesian coords of remote MPI process.
         pcoord[0] = gcoord % cart_dim_sizes[1][0];
         pcoord[1] = gcoord % cart_dim_sizes[1][1];
-
-//        printf("pcoord: (%d, %d)\n", pcoord[0], pcoord[1]);
 
         //Find remote local size.
         ldims[0] = dnumroc(in->base->dims[0], blocksize, pcoord[0],
@@ -2219,47 +2204,31 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         ldims[1] = dnumroc(in->base->dims[1], blocksize, pcoord[1],
                            cart_dim_sizes[1][1]);
 
-//        printf("ldims: (%ld, %ld)\n", ldims[0], ldims[1]);
-
         //Find remote index (non-block index).
         index[0] = gcoord / cart_dim_sizes[1][0] * blocksize;
         index[1] = gcoord / cart_dim_sizes[1][1] * blocksize;
-
-//        printf("index: (%ld, %ld)\n", index[0], index[1]);
 
         //Find blocksize.
         bsize = MIN(ldims[0] - index[0], ldims[1] - index[1]);
         if(bsize > blocksize)
             bsize = blocksize;
         else if(bsize <= 0)
-        {
-//            printf("breaking bsize=%ld\n",bsize);
             break;
-        }
-
-//        printf("bsize: %ld\n", bsize);
 
         //Find remote offset from window start.
         npy_intp offset = index[0] * ldims[1] + index[1];
 
-//        printf("offset: %ld\n", offset);
-
         //Convert to a MPI rank number.
         int rank = cart2rank(2, pcoord);
-
-//        if(rank != myrank)
-//            printf("rank: %d\n", rank);
 
         //Setup a matching MPI datatype.
         MPI_Type_vector(bsize, 1, ldims[1]+1, elementtype, &arraytype);
         MPI_Type_commit(&arraytype);
 
         //Transfer element.
-//        printf("in_data: %lf\n", ((double*) in->base->data)[offset]);
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, win);
-        MPI_Get(out_data, bsize, elementtype, rank, offset * in->base->elsize, bsize, arraytype, win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, win);
+        MPI_Get(out_data, bsize, elementtype, rank, offset * in->base->elsize, 1, arraytype, win);
         MPI_Win_unlock(rank, win);
-//        printf("out_data: %lf\n", ((double*) out_data)[0]);
 
         //Clean up
         MPI_Type_free(&arraytype);
@@ -2272,6 +2241,160 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
     MPI_Type_free(&elementtype);
     MPI_Win_free(&win);//Incl. sync.
 }
+
+/*===================================================================
+ *
+ * Message handler for MATMUL.
+ * Private.
+ */
+static void do_MATMUL(dndview *A, dndview *B, dndview *C)
+{
+    int i, j;
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("do_MATMUL - A: %ld, B: %ld, C: %ld\n", (long)A->uid,
+                                                       (long)B->uid,
+                                                       (long)C->uid);
+    #endif
+
+    //Check if the views covers the whole array.
+    if(A->alterations != 0 || B->alterations != 0 ||
+       C->alterations != 0)
+    {
+        fprintf(stderr, "Matrix multiplication with views not "
+                        "implemented\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+    //We only support doubles at the moment.
+    if(A->base->dtype != NPY_DOUBLE || B->base->dtype != NPY_DOUBLE ||
+       C->base->dtype != NPY_DOUBLE)
+    {
+        fprintf(stderr, "At the moment matrix multiplication only "
+                        "supports doubles.\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    //Global index of row and column that hold current row and column
+    //for rank-1 update.
+    int icur[2] = {0,0};
+    //local index of row and column for rank-1 update
+    int ii = 0;
+    int jj = 0;
+    //Current blocksize.
+    int iwrk = MIN(blocksize, A->base->dims[1]);
+    int kk;
+
+    //Find by MPI-process coord.
+    int mycoord[2], tcoord[2];
+    rank2cart(2, myrank, mycoord);
+    int *cart_dim = cart_dim_sizes[1];
+
+    //malloc temp space
+    double *temp  = malloc(A->base->elsize);
+    double *work0 = malloc(A->base->localdims[0] * iwrk *
+                           A->base->elsize);
+    double *work1 = malloc(iwrk * B->base->localdims[1] *
+                           A->base->elsize);
+
+    //Leading dimensions.
+    int lda = MAX(A->base->localdims[1], 1);
+    int ldb = MAX(B->base->localdims[1], 1);
+    int ldc = MAX(C->base->localdims[1], 1);
+
+    //Setup a matching MPI datatype.
+    MPI_Datatype elementtype;
+    MPI_Type_contiguous(A->base->elsize, MPI_BYTE, &elementtype);
+    MPI_Type_commit(&elementtype);
+
+    for (kk=0; kk<A->base->dims[1]; kk+=iwrk)
+    {
+        iwrk = MIN(blocksize, A->base->dims[1] - kk);
+
+        //Copy iwrk'th column to work-array.
+        if(mycoord[1] == icur[1])
+        {
+            double *Adata = ((double *)A->base->data)+jj;
+            for(i=0; i<A->base->localdims[0]; i++)
+                for(j=0; j<iwrk; j++)
+                    work0[i*iwrk+j] = Adata[i*lda+j];
+        }
+        //Copy iwrk'th row to work-array.
+        if(mycoord[0] == icur[0])
+        {
+                double *Bdata = ((double *)B->base->data)+ldb*ii;
+                for(i=0; i<iwrk; i++)
+                    for(j=0; j<B->base->localdims[1]; j++)
+                        work1[i*B->base->localdims[1]+j] = Bdata[i*ldb+j];
+        }
+        if(cart_dim[1] > 1)
+        {
+            //Ring-broadcast horizontal.
+            if(mycoord[1] != icur[1])
+            {
+                //We have to recv since we are not icur.
+                tcoord[0] = mycoord[0];
+                tcoord[1] = (mycoord[1]-1+cart_dim[1])%cart_dim[1];
+                MPI_Recv(work0, A->base->localdims[0] * iwrk,
+                         elementtype, cart2rank(2,tcoord),
+                         MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            //Send the iwrk'th column to the right neighbour but
+            //make sure we don't wrap around.
+            if((mycoord[1]+1)%cart_dim[1] != icur[1])
+            {
+                tcoord[0] = mycoord[0];
+                tcoord[1] = (mycoord[1]+1)%cart_dim[1];
+                MPI_Send(work0, A->base->localdims[0] * iwrk,
+                         elementtype, cart2rank(2,tcoord), 0,
+                         MPI_COMM_WORLD);
+            }
+        }
+        if(cart_dim[0] > 1)
+        {
+            //Ring-broadcast vertical.
+            if(mycoord[0] != icur[0])
+            {
+                //We have to recv, since we a not icur.
+                tcoord[0] = (mycoord[0]-1+cart_dim[0])%cart_dim[0];
+                tcoord[1] = mycoord[1];
+                MPI_Recv(work1, iwrk * B->base->localdims[1],
+                         elementtype, cart2rank(2,tcoord),
+                         MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            //Send the iwrk'th row to the lower neighbour but
+            //make sure we don't wrap around.
+            if((mycoord[0]+1)%cart_dim[0] != icur[0])
+            {
+                tcoord[0] = (mycoord[0]+1)%cart_dim[0];
+                tcoord[1] = mycoord[1];
+                MPI_Send(work1, iwrk * B->base->localdims[1],
+                         elementtype, cart2rank(2,tcoord), 0,
+                         MPI_COMM_WORLD);
+            }
+        }
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    C->base->localdims[0], C->base->localdims[1],
+                    iwrk, 1.0,
+                    work0, iwrk,
+                    work1, MAX(B->base->localdims[1],1),
+                    1.0, (double *)C->base->data, ldc);
+
+        //Iterate indexes.
+        if(mycoord[0] == icur[0])
+            ii += iwrk;
+        if(mycoord[1] == icur[1])
+            jj += iwrk;
+        icur[0] = (icur[0]+1)%cart_dim[0];
+        icur[1] = (icur[1]+1)%cart_dim[1];
+    }
+
+    //Cleanup
+    free(work0);
+    free(work1);
+    free(temp);
+
+} /* do_MATMUL */
 
 
 /*NUMPY_API
@@ -2896,6 +3019,39 @@ dnumpy_init(void)
 
 } /* dnumpy_init */
 
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * C = A * B.
+ */
+static void
+dnumpy_matrix_multiplication(intp Auid, intp Buid, intp Cuid)
+{
+    //Get arrray structs.
+    dndview *A = get_dndview(Auid);
+    dndview *B = get_dndview(Buid);
+    dndview *C = get_dndview(Cuid);
+
+    //Tell slaves
+    msg[0] = DNPY_MATMUL;
+    msg[1] = Auid;
+    msg[2] = Buid;
+    msg[3] = Cuid;
+    msg[4] = DNPY_MSG_END;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(msg, 5 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    //The master should also do the operation.
+    #ifdef DISTNUMPY_DEBUG
+        printf("Rank 0 received msg: ");
+    #endif
+
+    do_MATMUL(A, B, C);
+} /* dnumpy_matrix_multiplication */
+
+
 /*NUMPY_API
  * ===================================================================
  * Public
@@ -2981,7 +3137,7 @@ dnumpy_master_slave_split()
     {
         char *t1, *t2, *t3;
         npy_intp d1, d2, d3, d4, d5;
-        dndview *ary, *ary2;
+        dndview *ary, *ary2, *ary3;
         MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
         MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
@@ -3052,6 +3208,12 @@ dnumpy_master_slave_split()
                 d2 = ((npy_intp*)msg_data)[3];
                 d3 = ((npy_intp*)msg_data)[4];
                 do_DIAGONAL(ary, ary2, d1, d2, d3);
+                break;
+            case DNPY_MATMUL:
+                ary  = get_dndview(((npy_intp*)msg_data)[0]);
+                ary2 = get_dndview(((npy_intp*)msg_data)[1]);
+                ary3 = get_dndview(((npy_intp*)msg_data)[2]);
+                do_MATMUL(ary, ary2, ary3);
                 break;
             default:
                 fprintf(stderr, "Unknown msg: %ld\n", (long)msg[0]);
