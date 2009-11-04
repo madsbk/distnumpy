@@ -1477,12 +1477,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         fprintf(stderr, "UFUNC : unknown operator: %s\n", op);
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
-    //ufinc's objects.
+    //ufunc's objects.
     PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
-    PyUFuncGenericFunction ufunc_function =
-                           ufunc_obj->functions[appropriate_function];
-    void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
-
 
     //Analyse if it is possible to use a simplified computation method.
     //* If all array have the same number of dimensions and if the views
@@ -1593,7 +1589,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             }
         return;
     }//End of the simple method.
-
+    
     MPI_Win win[NPY_MAXARGS];
     for(i=0; i<nin; i++)
         MPI_Win_create(views[i]->base->data, views[i]->base->nelements *
@@ -1604,6 +1600,18 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     memset(coords, 0, NPY_MAXDIMS * sizeof(npy_intp));
     if(block_method)
     {
+        if(appropriate_function < 0)
+        {
+            fprintf(stderr, "do_UFUNC was called on a view but no "
+                            "appropriate_function was provided\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+
+        //ufunc objects.
+        PyUFuncGenericFunction ufunc_function =
+                               ufunc_obj->functions[appropriate_function];
+        void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
+            
         //Receive buffers. Two buffers per array (double buffering).
         char *buffer[2][NPY_MAXARGS];
 
