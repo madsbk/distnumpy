@@ -104,6 +104,24 @@ def diagonal(niters=10):
             return False
     return True
 
+def matmul(niter=2):
+    for m in range(2,niter+2):
+        for n in range(2,niter+2):
+            for k in range(2,niter+2):
+                Asrc = random_list([k,m])
+                Bsrc = random_list([m,k])
+                Ad = np.array(Asrc, dtype=float, dist=True)
+                Af = np.array(Asrc, dtype=float, dist=False)
+                Bd = np.array(Bsrc, dtype=float, dist=True)
+                Bf = np.array(Bsrc, dtype=float, dist=False)
+                Cd = np.dot(Ad,Bd)
+                Cf = np.dot(Af,Bf)
+                if not array_equal(Cd,Cf):
+                    print "Error in matrix multiplication!"
+                    return False
+    return True
+
+
 print "*"*100
 print "Testing ufunc"
 if ufunc(6):
@@ -125,4 +143,9 @@ if diagonal(100):
 else:
     print "Fail!"
 
-
+print "*"*100
+print "Testing matrix multiplication (no views)"
+if matmul(6):
+    print "Succes"
+else:
+    print "Fail!"
