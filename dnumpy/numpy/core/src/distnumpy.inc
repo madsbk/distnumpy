@@ -2985,8 +2985,7 @@ dnumpy_init(void)
 {
     int i,j,s;
     //Initilization of MPI.
-    int argc = 0; char** argv;
-    MPI_Init(&argc, &argv);
+    MPI_Init(NULL, NULL);
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &worldsize);
