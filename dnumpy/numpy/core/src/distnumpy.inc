@@ -168,7 +168,7 @@ static int dtypesize(int dtype)
 static npy_intp dnumroc(npy_intp nelem_in_dim, npy_intp block_size,
                         int proc_dim_rank, int nproc_in_dim)
 {
-    int first_process = 0; //Assume array begins at pracess 0.
+    int first_process = 0; //Assume array begins at process 0.
 
     //Figure process's distance from source process.
     int mydist = (nproc_in_dim + proc_dim_rank - first_process) %
@@ -232,7 +232,7 @@ static dndview *get_dndview(npy_intp uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
                 return &dndviews[i];
-    fprintf(stderr, "get_dndview, uid %ld does not exist\n", uid);
+    fprintf(stderr, "get_dndview, uid %ld does not exist\n", (long) uid);
     MPI_Abort(MPI_COMM_WORLD, -1);
     return NULL;
 }
@@ -271,6 +271,29 @@ static void rm_dndview(npy_intp uid)
     MPI_Abort(MPI_COMM_WORLD, -1);
     return;
 }/* Put, get & rm dndview */
+
+
+/*===================================================================
+ *
+ * Sends a message to all slaves.
+ * msgsize is in bytes.
+ * Private.
+ */
+static void msg2slaves(npy_intp *msg, int msgsize)
+{
+    if(msgsize > DNPY_MAX_MSG_SIZE)
+    {
+        fprintf(stderr, "msg2slaves, the messages is greater "
+                        "than DNPY_MAX_MSG_SIZE\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }   
+    
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
+    
+} /* msg2slaves */
+ 
+
 
 
 /*===================================================================
@@ -562,7 +585,7 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
 
     //Transfer element.
     int itemsize = dest_ary->elsize;
-    MPI_Win_lock(MPI_LOCK_SHARED, rank, 0, *win);
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, *win);
     MPI_Put(src, itemsize, MPI_BYTE, rank, offset*dest_ary->elsize,
             dest_ary->elsize, MPI_BYTE, *win);
     MPI_Win_unlock(rank, *win);
@@ -660,14 +683,20 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     MPI_Type_commit(&dest_ary_type);
 
     //Transfer element.
-    MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, *win);
+    //A exclusive lock is required since two put updates must not 
+    //concurrently access nonoverlapping locations in a window 
+    //(MPI-2.1 s. 351).
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, *win);
     MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
             dest_ary_type, *win);
     MPI_Win_unlock(rank, *win);
 
+    //Clean up
+    MPI_Type_free(&src_ary_type);
+    MPI_Type_free(&dest_ary_type);
+
     return 0;
 } /* remote_blockput */
-
 
 
 /*===================================================================
@@ -1194,7 +1223,7 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
 
     //Allocate local data.
     if(MPI_Alloc_mem(nelements * ary->elsize, MPI_INFO_NULL,
-                     &ary->data) == MPI_ERR_NO_MEM)
+                     &ary->data) != MPI_SUCCESS)
     {
         fprintf(stderr, "Out of memory!\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
@@ -1234,7 +1263,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
 {
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
-        printf("DESTROY_ARRAY - uid: %ld\n", uid);
+        printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
     rm_dndview(uid);
 
@@ -2468,9 +2497,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype)
 
     *(((char *) &msg[1])+sizeof(dndarray)+sizeof(dndview)) = DNPY_MSG_END;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 2*sizeof(npy_intp) + sizeof(dndarray) + sizeof(dndview),
-              MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg,2*sizeof(npy_intp)+sizeof(dndarray)+sizeof(dndview));
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -2500,9 +2527,7 @@ dnumpy_destroy_dndarray(intp uid)
     msg[0] = DNPY_DESTROY_ARRAY;
     msg[1] = ary->uid;
     msg[2] = DNPY_MSG_END;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg,3 * sizeof(npy_intp));
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -2626,9 +2651,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
     memcpy(&msg[2], &newview, sizeof(dndview));
     *(((char *) &msg[2])+sizeof(dndview)) = DNPY_MSG_END;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(npy_intp) + sizeof(dndview), MPI_BYTE, 0,
-              MPI_COMM_WORLD);
+    msg2slaves(msg, 3 * sizeof(npy_intp) + sizeof(dndview));
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -2676,9 +2699,8 @@ dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
            sizeof(npy_intp) * ndims);
     *(((char *) &msg[2]) + elsize + sizeof(npy_intp) * ndims) = DNPY_MSG_END;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(npy_intp) + elsize + ndims * sizeof(npy_intp),
-              MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg, 3 * sizeof(npy_intp) + elsize + 
+                    ndims * sizeof(npy_intp));
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -2713,9 +2735,7 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
     memcpy(&msg[2], coordinate, sizeof(npy_intp) * ndims);
     *(((char *) &msg[2]) + sizeof(npy_intp) * ndims) = DNPY_MSG_END;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(npy_intp) + ndims * sizeof(npy_intp),
-              MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg, 3 * sizeof(npy_intp) + ndims * sizeof(npy_intp));
 
     //The master will retrive the whole array.
     #ifdef DISTNUMPY_DEBUG
@@ -2773,9 +2793,7 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
 
     *(((char*)(msg+6+msg[1]))+msg[5]+strlen(op)+1) = DNPY_MSG_END;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, (7+msg[1])*sizeof(npy_intp) + msg[5] + strlen(op)+1,
-              MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg, (7+msg[1])*sizeof(npy_intp)+msg[5]+strlen(op)+1);
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -2848,9 +2866,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
 
     *(((char*)(msg+4))+strlen(op)+1) = DNPY_MSG_END;
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 5*sizeof(npy_intp)+strlen(op)+1, MPI_BYTE, 0,
-              MPI_COMM_WORLD);
+    msg2slaves(msg, 5*sizeof(npy_intp)+strlen(op)+1);
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -2876,9 +2892,7 @@ dnumpy_zerofill(intp ary_uid)
     msg[0] = DNPY_ZEROFILL;
     msg[1] = view->uid;
     msg[2] = DNPY_MSG_END;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 3 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg, 3 * sizeof(npy_intp));
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -2958,11 +2972,7 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
     msg[4] = axis1;
     msg[5] = axis2;
     msg[6] = DNPY_MSG_END;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 7 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-
+    msg2slaves(msg, 7 * sizeof(npy_intp));
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -3046,9 +3056,7 @@ dnumpy_matrix_multiplication(intp Auid, intp Buid, intp Cuid)
     msg[2] = Buid;
     msg[3] = Cuid;
     msg[4] = DNPY_MSG_END;
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, 5 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+    msg2slaves(msg, 5 * sizeof(npy_intp));
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -3073,8 +3081,7 @@ dnumpy_exit()
         //Shutdown slaves
         msg[0] = DNPY_SHUTDOWN;
         msg[1] = DNPY_MSG_END;
-        MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Bcast(msg, 2 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+        msg2slaves(msg, 2 * sizeof(npy_intp));
         #ifdef DISTNUMPY_DEBUG
             printf("Rank 0 received msg: SHUTDOWN\n");
         #endif
@@ -3128,9 +3135,7 @@ dnumpy_master_slave_split()
         msg[0] = DNPY_INIT_BLOCKSIZE;
         msg[1] = blocksize;
         msg[2] = DNPY_MSG_END;
-
-        MPI_Barrier(MPI_COMM_WORLD);
-        MPI_Bcast(msg, 3 * sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
+        msg2slaves(msg, 3 * sizeof(npy_intp));
 
         #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
