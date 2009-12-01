@@ -3,10 +3,6 @@ import numpy as np
 import random
 import sys
 
-def MonteCarlo_num_Mflops(Num_samples):
-    # 3 flops in x^2+y^2 and 1 flop in random routine
-    return  (Num_samples* 4.0)/10E6
-
 def MC_int(c, s, dist):
     x = np.empty([s], dtype=np.double, dist=dist)
     y = np.empty([s], dtype=np.double, dist=dist)
@@ -18,21 +14,20 @@ def MC_int(c, s, dist):
         np.square(x,x)
         np.square(y,y)
         np.add(x,y,x)
-        #z = np.less_equal(x, 1)
-        sum += np.add.reduce(x)*4.0/s
+        z = np.less_equal(x, 1)
+        sum += np.add.reduce(z)*4.0/s
+    sum = sum / c
     stop=time.time()
-    print 'Pi: ', sum, ' in sec: ', stop-start,
+    print 'Pi: ', sum, ' with ', s,' samples in sec: ', stop-start,
     if dist:
-        print "(Distributed)"
+        print "(Dist) notes: %s"%sys.argv[4]
     else:
-        print "(Not distributed)"
-		    
+        print "(Non-Dist) notes: %s"%sys.argv[4]
+                    
 
-N=int(sys.argv[1])
-C=int(sys.argv[2])
+D=int(sys.argv[1])
+N=int(sys.argv[2])
+C=int(sys.argv[3])
 
-MC_int(C, N, True)
-MC_int(C, N, False)
-MC_int(C, N, True)
-MC_int(C, N, False)
+MC_int(C, N, D)
 
