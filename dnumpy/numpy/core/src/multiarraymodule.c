@@ -3832,6 +3832,29 @@ PyArray_MatrixProduct(PyObject *op1, PyObject *op2)
     if (ret == NULL) {
         goto fail;
     }
+
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(ret))
+    {
+        typenum = PyArray_TYPE(ret);
+        if ((typenum != PyArray_DOUBLE && typenum != PyArray_CDOUBLE &&
+             typenum != PyArray_FLOAT && typenum != PyArray_CFLOAT) || 
+            ap1->nd != 2 || ap2->nd != 2) 
+        {
+            PyErr_SetString(PyExc_ValueError, "only 2-dim distributed "
+                            "arrays of type float, double, cfloat & "
+                            "cdouble are supported");
+            goto fail;   
+        }
+        dnumpy_zerofill(PyArray_DNDUID(ret));
+        dnumpy_matrix_multiplication(PyArray_DNDUID(ap1), 
+                                     PyArray_DNDUID(ap2),
+                                     PyArray_DNDUID(ret));
+        Py_DECREF(ap1);
+        Py_DECREF(ap2);
+        return (PyObject *)ret;
+    }
+
     /* Ensure that multiarray.dot(<Nx0>,<0xM>) -> zeros((N,M)) */
     if (PyArray_SIZE(ap1) == 0 && PyArray_SIZE(ap2) == 0) {
         memset(PyArray_DATA(ret), 0, PyArray_NBYTES(ret));
@@ -8377,6 +8400,9 @@ static struct PyMethodDef array_module_methods[] = {
     {"test_interrupt",
         (PyCFunction)test_interrupt,
         METH_VARARGS, NULL},
+    {"dnumpy_init",
+        (PyCFunction)dnumpy_master_slave_split,
+        METH_VARARGS, NULL},        
     {NULL, NULL, 0, NULL}                /* sentinel */
 };
 

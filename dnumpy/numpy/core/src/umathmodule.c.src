@@ -261,7 +261,6 @@ PyMODINIT_FUNC initumath(void) {
 
     /* DISTNUMPY */
     dnumpy_reg_ufunc_module(m);
-    dnumpy_master_slave_split();
 
     return;
 

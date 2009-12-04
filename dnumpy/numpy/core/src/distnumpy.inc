@@ -5,9 +5,8 @@
 #include <math.h>
 #include "mpi.h"
 
-
 #ifndef CBLAS_HEADER
-#define CBLAS_HEADER "cblas.h"
+#define CBLAS_HEADER "../blasdot/cblas.h"
 #endif
 #include CBLAS_HEADER
 
@@ -65,6 +64,13 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
+
+//Pointers to the cblas functions.
+typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
+static cblas_func_type *cblas_dgemm_func = NULL;
+static cblas_func_type *cblas_sgemm_func = NULL;
+static cblas_func_type *cblas_zgemm_func = NULL;
+static cblas_func_type *cblas_cgemm_func = NULL;
 
 
 /*===================================================================
@@ -286,13 +292,13 @@ static void msg2slaves(npy_intp *msg, int msgsize)
         fprintf(stderr, "msg2slaves, the messages is greater "
                         "than DNPY_MAX_MSG_SIZE\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
-    }   
-    
+    }
+
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
-    
+
 } /* msg2slaves */
- 
+
 
 
 
@@ -683,8 +689,8 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     MPI_Type_commit(&dest_ary_type);
 
     //Transfer element.
-    //A exclusive lock is required since two put updates must not 
-    //concurrently access nonoverlapping locations in a window 
+    //A exclusive lock is required since two put updates must not
+    //concurrently access nonoverlapping locations in a window
     //(MPI-2.1 s. 351).
     MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, *win);
     MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
@@ -1618,7 +1624,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             }
         return;
     }//End of the simple method.
-    
+
     MPI_Win win[NPY_MAXARGS];
     for(i=0; i<nin; i++)
         MPI_Win_create(views[i]->base->data, views[i]->base->nelements *
@@ -1640,7 +1646,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         PyUFuncGenericFunction ufunc_function =
                                ufunc_obj->functions[appropriate_function];
         void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
-            
+
         //Receive buffers. Two buffers per array (double buffering).
         char *buffer[2][NPY_MAXARGS];
 
@@ -2409,13 +2415,33 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                          MPI_COMM_WORLD);
             }
         }
-
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                    C->base->localdims[0], C->base->localdims[1],
-                    iwrk, 1.0,
-                    work0, iwrk,
-                    work1, MAX(B->base->localdims[1],1),
-                    1.0, (double *)C->base->data, ldc);
+        
+        //If available we use the BLAS library else we fall back to the
+        //dot-function in numpy.
+        if(cblas_dgemm_func != NULL)
+        {
+            cblas_dgemm_func(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                             C->base->localdims[0],C->base->localdims[1],
+                             iwrk, 1.0,
+                             work0, iwrk,
+                             work1, MAX(B->base->localdims[1],1),
+                             1.0, (double *)C->base->data, ldc);
+        }
+        else
+        {
+            PyArray_Descr *descr = PyArray_DescrFromType(C->base->dtype);
+            PyArray_DotFunc *dot = descr->f->dotfunc;
+            npy_intp m,n;
+            for(n=0; n < C->base->localdims[0]; n++)
+                for(m=0; m < C->base->localdims[1]; m++)
+                {
+                    double tmp;
+                    dot(work0 + n * iwrk, sizeof(double), work1 + m, 
+                        MAX(B->base->localdims[1],1) * sizeof(double), 
+                        &tmp, iwrk, NULL);
+                    ((double *)C->base->data)[m+n*C->base->localdims[1]] += tmp;
+                }
+        }
 
         //Iterate indexes.
         if(mycoord[0] == icur[0])
@@ -2699,7 +2725,7 @@ dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
            sizeof(npy_intp) * ndims);
     *(((char *) &msg[2]) + elsize + sizeof(npy_intp) * ndims) = DNPY_MSG_END;
 
-    msg2slaves(msg, 3 * sizeof(npy_intp) + elsize + 
+    msg2slaves(msg, 3 * sizeof(npy_intp) + elsize +
                     ndims * sizeof(npy_intp));
 
     //The master should also do the operation.
@@ -3041,6 +3067,7 @@ dnumpy_init(void)
  *===================================================================
  * Public
  * C = A * B.
+ * All elements in C must be zero.
  */
 static void
 dnumpy_matrix_multiplication(intp Auid, intp Buid, intp Cuid)
@@ -3111,7 +3138,7 @@ dnumpy_exit()
  * From this point on the master will continue with the pyton code
  * and the slaves will stay in C.
  */
-static void
+static PyObject *
 dnumpy_master_slave_split()
 {
     if(myrank == 0)
@@ -3141,7 +3168,7 @@ dnumpy_master_slave_split()
         printf("Rank 0 received msg: ");
         #endif
         do_INIT_BLOCKSIZE(msg[1]);
-        return;
+        return Py_None;
     }
 
     int shutdown = 0;
@@ -3234,8 +3261,8 @@ dnumpy_master_slave_split()
     }
     dnumpy_exit();
     exit(0);
+    return Py_None;
 } /* dnumpy_master_slave_split */
-
 
 /*NUMPY_API
  * ===================================================================
@@ -3249,3 +3276,16 @@ dnumpy_reg_ufunc_module(PyObject *module)
     ufunc_module = module;
 } /* dnumpy_reg_ufunc_module */
 
+/*NUMPY_API
+ * ===================================================================
+ * Public
+ * Registrete cblas. Used in _dotblas.c
+ */
+static void
+dnumpy_reg_cblas(void *dgemm, void *sgemm, void *zgemm, void *cgemm)
+{
+    cblas_dgemm_func = dgemm;
+    cblas_sgemm_func = sgemm;
+    cblas_zgemm_func = zgemm;
+    cblas_cgemm_func = cgemm;
+} /* dnumpy_reg_Xgemm */

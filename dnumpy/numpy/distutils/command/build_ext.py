@@ -385,7 +385,7 @@ class build_ext (old_build_ext):
 
         #DISTNUMPY hack.
         if(self.compiler.compiler_so[0] == 'mpicc'):
-            self.compiler.linker_so[0] = 'mpicc -lf77blas -lcblas -latlas'
+            self.compiler.linker_so[0] = 'mpicc'
         
         # Always use system linker when using MSVC compiler.
         if self.compiler.compiler_type=='msvc':

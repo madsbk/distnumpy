@@ -410,18 +410,18 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
         prior1 = prior2 = 0.0;
         subtype = ap1->ob_type;
     }
-    
+
     if((PyArray_ISDISTRIBUTED(ap1) && !PyArray_ISDISTRIBUTED(ap2)) ||
        (!PyArray_ISDISTRIBUTED(ap1) && PyArray_ISDISTRIBUTED(ap2)))
     {
         PyErr_SetString(PyExc_RuntimeError,
                 "Mixing distributed and non-distributed arrays is "
-                "not allowed in dot.");       
+                "not allowed in dot.");
         goto fail;
     }
 
     ret = (PyArrayObject *)PyArray_New(subtype, nd, dimensions,
-                                       typenum, NULL, NULL, 0, 
+                                       typenum, NULL, NULL, 0,
                        (PyArray_ISDISTRIBUTED(ap1))?DNPY_DISTRIBUTED:0,
                                        (PyObject *)
                                        (prior2 > prior1 ? ap2 : ap1));
@@ -429,7 +429,7 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
     if (ret == NULL) {
         goto fail;
     }
-    
+
     //Zero fill.
     numbytes = PyArray_NBYTES(ret);
     if (numbytes==0 || l == 0) {
@@ -440,7 +440,7 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
     /* DISTNUMPY */
     if(PyArray_ISDISTRIBUTED(ret))
         dnumpy_zerofill(PyArray_DNDUID(ret));
-    else       
+    else
         memset(ret->data, 0, numbytes);
 
     if (ap2shape == _scalar) {
@@ -449,7 +449,7 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
          * if ap1shape is a matrix and we are not contiguous, then we can't
          * just blast through the entire array using a single striding factor
          */
-        
+
         /* DISTNUMPY */
         if(PyArray_ISDISTRIBUTED(ret))
         {
@@ -601,7 +601,7 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
             {
                 PyErr_SetString(PyExc_RuntimeError,
                                 "dot vector-vector on distributed arrays"
-                                " are not implemented.");       
+                                " are not implemented.");
                 goto fail;
             }
             dnumpy_matrix_multiplication(PyArray_DNDUID(ap1),
@@ -609,7 +609,7 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
                                          PyArray_DNDUID(ret));
         }
         else
-        {        
+        {
             NPY_BEGIN_ALLOW_THREADS;
 
             ap2s = ap2->strides[0] / ap2->descr->elsize;
@@ -664,15 +664,15 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
         {
             PyErr_SetString(PyExc_RuntimeError,
                             "dot matrix-vector on distributed arrays"
-                            " are not implemented.");       
+                            " are not implemented.");
             goto fail;
         }
         dnumpy_matrix_multiplication(PyArray_DNDUID(ap1),
                                      PyArray_DNDUID(ap2),
                                      PyArray_DNDUID(ret));
-    }  
+    }
     else
-    {    
+    {
         NPY_BEGIN_ALLOW_THREADS
         if (PyArray_ISCONTIGUOUS(ap1)) {
                 Order = CblasRowMajor;
@@ -734,15 +734,15 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
         {
             PyErr_SetString(PyExc_RuntimeError,
                             "dot vector-matrix on distributed arrays"
-                            " are not implemented.");       
+                            " are not implemented.");
             goto fail;
         }
         dnumpy_matrix_multiplication(PyArray_DNDUID(ap1),
                                      PyArray_DNDUID(ap2),
                                      PyArray_DNDUID(ret));
-    }    
+    }
     else
-    {    
+    {
         NPY_BEGIN_ALLOW_THREADS
         if (PyArray_ISCONTIGUOUS(ap2)) {
             Order = CblasRowMajor;
@@ -828,7 +828,7 @@ dotblas_matrixproduct(PyObject *NPY_UNUSED(dummy), PyObject *args)
         lda = (ap1->dimensions[1] > 1 ? ap1->dimensions[1] : 1);
         ldb = (ap2->dimensions[1] > 1 ? ap2->dimensions[1] : 1);
         ldc = (ret->dimensions[1] > 1 ? ret->dimensions[1] : 1);
-       
+
         /* DISTNUMPY */
         if(PyArray_ISDISTRIBUTED(ret))
         {
@@ -1273,5 +1273,9 @@ PyMODINIT_FUNC init_dotblas(void) {
     s = dotblas_alterdot(NULL, d);
     Py_DECREF(d);
     Py_DECREF(s);
+
+    /* DISTNUMPY registrete cblas's Xgemm which makes it possible to
+     * call the cblas functions directly from distnumpy */
+    dnumpy_reg_cblas(cblas_dgemm, cblas_sgemm, cblas_zgemm, cblas_cgemm);
 
 }

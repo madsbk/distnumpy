@@ -186,3 +186,4 @@ dnumpy_master_slave_split
 dnumpy_zerofill
 dnumpy_diagonal
 dnumpy_matrix_multiplication
+dnumpy_reg_cblas
