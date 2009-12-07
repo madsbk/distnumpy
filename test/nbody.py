@@ -42,33 +42,35 @@ for i in range(k):
     Fx = dot(OnesCol, PxT) - dot(Px, OnesRow)
     Fy = dot(OnesCol, PyT) - dot(Py, OnesRow)
     Fz = dot(OnesCol, PzT) - dot(Pz, OnesRow)
+
     Dsq = Fx * Fx + Fy * Fy + Fx * Fz #+ Identity
     D = sqrt(Dsq)
 
     #mutual forces between all pairs of objects
     F = G * dot(M, MT) / Dsq
+    
     #F = F - diag(diag(F))#set 'self attraction' to 0
-    Fx = Fx / D * F
-    Fy = Fy / D * F
-    Fz = Fz / D * F
-
+    Fx = (Fx / D) * F
+    Fy = (Fy / D) * F
+    Fz = (Fz / D) * F
+    
     #net force on each body
-    Fnet_x = Fx * OnesCol
-    Fnet_y = Fy * OnesCol
-    Fnet_z = Fz * OnesCol
+    Fnet_x = dot(Fx, OnesCol)
+    Fnet_y = dot(Fy, OnesCol)
+    Fnet_z = dot(Fz, OnesCol)
 
     #change in velocity:
-    dVx = Fnet_x * dT / M
-    dVy = Fnet_y * dT / M
-    dVz = Fnet_z * dT / M
-
-    Vx = Vx + dVx
-    Vy = Vy + dVy
-    Vz = Vz + dVz
+    Vx += Fnet_x * dT / M
+    Vy += Fnet_y * dT / M
+    Vz += Fnet_z * dT / M
 
     #change in position
-    Px = Px + Vx * dT
-    Py = Py + Vy * dT
-    Pz = Pz + Vz * dT
+    Px += Vx * dT
+    Py += Vy * dT
+    Pz += Vz * dT
 
-print "Time: ", time.time() - stime
+print 'nbody with #bodies: ', n,', iter: ', i, 'in sec: ', time.time() - stime,
+if d:
+    print " (Dist) notes: %s"%sys.argv[4]
+else:
+    print " (Non-Dist) notes: %s"%sys.argv[4]
