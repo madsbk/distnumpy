@@ -55,9 +55,9 @@ for i in range(k):
     Fz = (Fz / D) * F
     
     #net force on each body
-    Fnet_x = dot(Fx, OnesCol)
-    Fnet_y = dot(Fy, OnesCol)
-    Fnet_z = dot(Fz, OnesCol)
+    Fnet_x = add.reduce(Fx,1)
+    Fnet_x = add.reduce(Fy,1)
+    Fnet_x = add.reduce(Fz,1)
 
     #change in velocity:
     Vx += Fnet_x * dT / M
@@ -69,7 +69,7 @@ for i in range(k):
     Py += Vy * dT
     Pz += Vz * dT
 
-print 'nbody with #bodies: ', n,', iter: ', i, 'in sec: ', time.time() - stime,
+print 'nbody with #bodies: ', n,', iter: ', i+1, 'in sec: ', time.time() - stime,
 if d:
     print " (Dist) notes: %s"%sys.argv[4]
 else:
