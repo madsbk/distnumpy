@@ -1,0 +1,722 @@
+\documentclass[conference]{IEEEtran}
+% Add the compsoc option for Computer Society conferences.
+%
+% If IEEEtran.cls has not been installed into the LaTeX system files,
+% manually specify the path to it like:
+% \documentclass[conference]{../sty/IEEEtran}
+
+% Some very useful LaTeX packages include:
+% (uncomment the ones you want to load)
+
+% *** MISC UTILITY PACKAGES ***
+%
+%\usepackage{ifpdf}
+% Heiko Oberdiek's ifpdf.sty is very useful if you need conditional
+% compilation based on whether the output is pdf or dvi.
+% usage:
+% \ifpdf
+%   % pdf code
+% \else
+%   % dvi code
+% \fi
+% The latest version of ifpdf.sty can be obtained from:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/oberdiek/
+% Also, note that IEEEtran.cls V1.7 and later provides a builtin
+% \ifCLASSINFOpdf conditional that works the same way.
+% When switching from latex to pdflatex and vice-versa, the compiler may
+% have to be run twice to clear warning/error messages.
+
+% *** CITATION PACKAGES ***
+%
+%\usepackage{cite}
+% cite.sty was written by Donald Arseneau
+% V1.6 and later of IEEEtran pre-defines the format of the cite.sty package
+% \cite{} output to follow that of IEEE. Loading the cite package will
+% result in citation numbers being automatically sorted and properly
+% "compressed/ranged". e.g., [1], [9], [2], [7], [5], [6] without using
+% cite.sty will become [1], [2], [5]--[7], [9] using cite.sty. cite.sty's
+% \cite will automatically add leading space, if needed. Use cite.sty's
+% noadjust option (cite.sty V3.8 and later) if you want to turn this off.
+% cite.sty is already installed on most LaTeX systems. Be sure and use
+% version 4.0 (2003-05-27) and later if using hyperref.sty. cite.sty does
+% not currently provide for hyperlinked citations.
+% The latest version can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/cite/
+% The documentation is contained in the cite.sty file itself.
+
+% *** GRAPHICS RELATED PACKAGES ***
+%
+\ifCLASSINFOpdf
+   \usepackage[pdftex]{graphicx}
+  % declare the path(s) where your graphic files are
+  % \graphicspath{{../pdf/}{../jpeg/}}
+  % and their extensions so you won't have to specify these with
+  % every instance of \includegraphics
+   \DeclareGraphicsExtensions{.pdf,.jpeg,.png}
+\else
+  % or other class option (dvipsone, dvipdf, if not using dvips). graphicx
+  % will default to the driver specified in the system graphics.cfg if no
+  % driver is specified.
+   \usepackage[dvips]{graphicx}
+  % declare the path(s) where your graphic files are
+  % \graphicspath{{../eps/}}
+  % and their extensions so you won't have to specify these with
+  % every instance of \includegraphics
+   \DeclareGraphicsExtensions{.eps, .ps}
+\fi
+% graphicx was written by David Carlisle and Sebastian Rahtz. It is
+% required if you want graphics, photos, etc. graphicx.sty is already
+% installed on most LaTeX systems. The latest version and documentation can
+% be obtained at: 
+% http://www.ctan.org/tex-archive/macros/latex/required/graphics/
+% Another good source of documentation is "Using Imported Graphics in
+% LaTeX2e" by Keith Reckdahl which can be found as epslatex.ps or
+% epslatex.pdf at: http://www.ctan.org/tex-archive/info/
+%
+% latex, and pdflatex in dvi mode, support graphics in encapsulated
+% postscript (.eps) format. pdflatex in pdf mode supports graphics
+% in .pdf, .jpeg, .png and .mps (metapost) formats. Users should ensure
+% that all non-photo figures use a vector format (.eps, .pdf, .mps) and
+% not a bitmapped formats (.jpeg, .png). IEEE frowns on bitmapped formats
+% which can result in "jaggedy"/blurry rendering of lines and letters as
+% well as large increases in file sizes.
+%
+% You can find documentation about the pdfTeX application at:
+% http://www.tug.org/applications/pdftex
+
+% *** MATH PACKAGES ***
+%
+%\usepackage[cmex10]{amsmath}
+% A popular package from the American Mathematical Society that provides
+% many useful and powerful commands for dealing with mathematics. If using
+% it, be sure to load this package with the cmex10 option to ensure that
+% only type 1 fonts will utilized at all point sizes. Without this option,
+% it is possible that some math symbols, particularly those within
+% footnotes, will be rendered in bitmap form which will result in a
+% document that can not be IEEE Xplore compliant!
+%
+% Also, note that the amsmath package sets \interdisplaylinepenalty to 10000
+% thus preventing page breaks from occurring within multiline equations. Use:
+%\interdisplaylinepenalty=2500
+% after loading amsmath to restore such page breaks as IEEEtran.cls normally
+% does. amsmath.sty is already installed on most LaTeX systems. The latest
+% version and documentation can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/required/amslatex/math/
+
+% *** SPECIALIZED LIST PACKAGES ***
+%
+%\usepackage{algorithmic}
+% algorithmic.sty was written by Peter Williams and Rogerio Brito.
+% This package provides an algorithmic environment for describing algorithms.
+% You can use the algorithmic environment in-text or within a figure
+% environment to provide for a floating algorithm. Do NOT use the algorithm
+% floating environment provided by algorithm.sty (by the same authors) or
+% algorithm2e.sty (by Christophe Fiorio) as IEEE does not use dedicated
+% algorithm float types and packages that provide these will not provide
+% correct IEEE style captions. The latest version and documentation of
+% algorithmic.sty can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/algorithms/
+% There is also a support site at:
+% http://algorithms.berlios.de/index.html
+% Also of interest may be the (relatively newer and more customizable)
+% algorithmicx.sty package by Szasz Janos:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/algorithmicx/
+
+% *** ALIGNMENT PACKAGES ***
+%
+%\usepackage{array}
+% Frank Mittelbach's and David Carlisle's array.sty patches and improves
+% the standard LaTeX2e array and tabular environments to provide better
+% appearance and additional user controls. As the default LaTeX2e table
+% generation code is lacking to the point of almost being broken with
+% respect to the quality of the end results, all users are strongly
+% advised to use an enhanced (at the very least that provided by array.sty)
+% set of table tools. array.sty is already installed on most systems. The
+% latest version and documentation can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/required/tools/
+
+
+%\usepackage{mdwmath}
+%\usepackage{mdwtab}
+% Also highly recommended is Mark Wooding's extremely powerful MDW tools,
+% especially mdwmath.sty and mdwtab.sty which are used to format equations
+% and tables, respectively. The MDWtools set is already installed on most
+% LaTeX systems. The lastest version and documentation is available at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/mdwtools/
+
+
+% IEEEtran contains the IEEEeqnarray family of commands that can be used to
+% generate multiline equations as well as matrices, tables, etc., of high
+% quality.
+
+
+%\usepackage{eqparbox}
+% Also of notable interest is Scott Pakin's eqparbox package for creating
+% (automatically sized) equal width boxes - aka "natural width parboxes".
+% Available at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/eqparbox/
+
+
+% *** SUBFIGURE PACKAGES ***
+%\usepackage[caption=false]{caption}
+%\usepackage[font=footnotesize]{subfig}
+% subfig.sty, also written by Steven Douglas Cochran, is the modern
+% replacement for subfigure.sty. However, subfig.sty requires and
+% automatically loads Axel Sommerfeldt's caption.sty which will override
+% IEEEtran.cls handling of captions and this will result in nonIEEE style
+% figure/table captions. To prevent this problem, be sure and preload
+% caption.sty with its "caption=false" package option. This is will preserve
+% IEEEtran.cls handing of captions. Version 1.3 (2005/06/28) and later 
+% (recommended due to many improvements over 1.2) of subfig.sty supports
+% the caption=false option directly:
+\usepackage[caption=false,font=footnotesize]{subfig}
+%
+% The latest version and documentation can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/subfig/
+% The latest version and documentation of caption.sty can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/caption/
+
+
+% *** FLOAT PACKAGES ***
+%
+%\usepackage{fixltx2e}
+% fixltx2e, the successor to the earlier fix2col.sty, was written by
+% Frank Mittelbach and David Carlisle. This package corrects a few problems
+% in the LaTeX2e kernel, the most notable of which is that in current
+% LaTeX2e releases, the ordering of single and double column floats is not
+% guaranteed to be preserved. Thus, an unpatched LaTeX2e can allow a
+% single column figure to be placed prior to an earlier double column
+% figure. The latest version and documentation can be found at:
+% http://www.ctan.org/tex-archive/macros/latex/base/
+
+
+%\usepackage{stfloats}
+% stfloats.sty was written by Sigitas Tolusis. This package gives LaTeX2e
+% the ability to do double column floats at the bottom of the page as well
+% as the top. (e.g., "\begin{figure*}[!b]" is not normally possible in
+% LaTeX2e). It also provides a command:
+%\fnbelowfloat
+% to enable the placement of footnotes below bottom floats (the standard
+% LaTeX2e kernel puts them above bottom floats). This is an invasive package
+% which rewrites many portions of the LaTeX2e float routines. It may not work
+% with other packages that modify the LaTeX2e float routines. The latest
+% version and documentation can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/sttools/
+% Documentation is contained in the stfloats.sty comments as well as in the
+% presfull.pdf file. Do not use the stfloats baselinefloat ability as IEEE
+% does not allow \baselineskip to stretch. Authors submitting work to the
+% IEEE should note that IEEE rarely uses double column equations and
+% that authors should try to avoid such use. Do not be tempted to use the
+% cuted.sty or midfloat.sty packages (also by Sigitas Tolusis) as IEEE does
+% not format its papers in such ways.
+
+% *** PDF, URL AND HYPERLINK PACKAGES ***
+%
+\usepackage{url}
+% url.sty was written by Donald Arseneau. It provides better support for
+% handling and breaking URLs. url.sty is already installed on most LaTeX
+% systems. The latest version can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/misc/
+% Read the url.sty source comments for usage information. Basically,
+% \url{my_url_here}.
+
+
+% *** Do not adjust lengths that control margins, column widths, etc. ***
+% *** Do not use packages that alter fonts (such as pslatex).         ***
+% There should be no need to do such things with IEEEtran.cls V1.6 and later.
+% (Unless specifically asked to do so by the journal or conference you plan
+% to submit to, of course. )
+
+%listings\lstset{numbers=left, numberstyle=\tiny, stepnumber=2, numbersep=5pt}
+\usepackage{listings}
+\lstset{ %
+language=Python,                % choose the language of the code
+basicstyle=\ttfamily\footnotesize,  % the size of the fonts that are used for the code
+keywordstyle=\bfseries,
+frame=single,	                % adds a frame around the code
+tabsize=4,   	                % sets default tabsize to 2 spaces
+captionpos=b,                   % sets the caption-position to bottom
+breaklines=true,                % sets automatic line breaking
+breakatwhitespace=false,        % sets if automatic breaks should only happen at whitespace
+escapeinside={\%*}{*)},          % if you want to add a comment within your code
+xleftmargin=5mm,                % indent listing slightly to get line numbers back onto page
+xrightmargin=5mm,
+numbers=left, numberstyle=\ttfamily\bfseries\footnotesize
+}
+
+% correct bad hyphenation here
+\hyphenation{Dist-Num-Py}
+
+
+\begin{document}
+%
+% paper title
+% can use linebreaks \\ within to get better formatting as desired
+\title{Distributed memory version of NumPy}
+
+% author names and affiliations
+% use a multiple column layout for up to three different
+% affiliations
+\author{\IEEEauthorblockN{Mads Ruben Burgdorff Kristensen}
+\IEEEauthorblockA{eScience Centre\\
+University of Copenhagen\\
+Denmark}
+\and
+\IEEEauthorblockN{Brian Vinter}
+\IEEEauthorblockA{eScience Centre\\
+University of Copenhagen\\
+Denmark}}
+
+% conference papers do not typically use \thanks and this command
+% is locked out in conference mode. If really needed, such as for
+% the acknowledgment of grants, issue a \IEEEoverridecommandlockouts
+% after \documentclass
+
+% for over three affiliations, or if they all won't fit within the width
+% of the page, use this alternative format:
+% 
+%\author{\IEEEauthorblockN{Michael Shell\IEEEauthorrefmark{1},
+%Homer Simpson\IEEEauthorrefmark{2},
+%James Kirk\IEEEauthorrefmark{3}, 
+%Montgomery Scott\IEEEauthorrefmark{3} and
+%Eldon Tyrell\IEEEauthorrefmark{4}}
+%\IEEEauthorblockA{\IEEEauthorrefmark{1}School of Electrical and Computer Engineering\\
+%Georgia Institute of Technology,
+%Atlanta, Georgia 30332--0250\\ Email: see http://www.michaelshell.org/contact.html}
+%\IEEEauthorblockA{\IEEEauthorrefmark{2}Twentieth Century Fox, Springfield, USA\\
+%Email: homer@thesimpsons.com}
+%\IEEEauthorblockA{\IEEEauthorrefmark{3}Starfleet Academy, San Francisco, California 96678-2391\\
+%Telephone: (800) 555--1212, Fax: (888) 555--1212}
+%\IEEEauthorblockA{\IEEEauthorrefmark{4}Tyrell Inc., 123 Replicant Street, Los Angeles, California 90210--4321}}
+
+% use for special paper notices
+%\IEEEspecialpapernotice{(Invited Paper)}
+
+% make the title area
+\maketitle
+
+\begin{abstract}
+In this work, we introduce DistNumPy, which is a library for doing numerical computation in Python that targets distributed memory architectures. DistNumPy extends the popular NumPy-module to make it possible for a sequential written Python program to utilize distributed memory architectures. In order to accomplish this we introduce a new backend for NumPy-arrays. All operations with this new array-backend will utilize all available processors and the array itself is distributed between multiple processors making it possible to have larger arrays than otherwise possible.
+
+Performance measurements show an 88\% CPU utilization on an 64 CPU-cores cluster running a Monte Carlo simulation and 63\% CPU utilization on a N-body simulation. We therefore conclude that it is possible to obtain significant speedup when using our new array-backend without changing the original Python code.
+
+\end{abstract}
+% IEEEtran.cls defaults to using nonbold math in the Abstract.
+% This preserves the distinction between vectors and scalars. However,
+% if the conference you are submitting to favors bold math in the abstract,
+% then you can use LaTeX's standard command \boldmath at the very start
+% of the abstract to achieve this. Many IEEE journals/conferences frown on
+% math in the abstract anyway.
+
+% no keywords
+
+% For peer review papers, you can put extra information on the cover
+% page as needed:
+% \ifCLASSOPTIONpeerreview
+% \begin{center} \bfseries EDICS Category: 3-BBND \end{center}
+% \fi
+%
+% For peerreview papers, this IEEEtran command inserts a page break and
+% creates the second title. It will be ignored for other modes.
+\IEEEpeerreviewmaketitle
+
+% An example of a floating figure using the graphicx package.
+% Note that \label must occur AFTER (or within) \caption.
+% For figures, \caption should occur after the \includegraphics.
+% Note that IEEEtran v1.7 and later has special internal code that
+% is designed to preserve the operation of \label within \caption
+% even when the captionsoff option is in effect. However, because
+% of issues like this, it may be the safest practice to put all your
+% \label just after \caption rather than within \caption{}.
+%
+% Reminder: the "draftcls" or "draftclsnofoot", not "draft", class
+% option should be used if it is desired that the figures are to be
+% displayed while in draft mode.
+%
+%\begin{figure}[!t]
+%\centering
+%\includegraphics[width=2.5in]{myfigure}
+% where an .eps filename suffix will be assumed under latex, 
+% and a .pdf suffix will be assumed for pdflatex; or what has been declared
+% via \DeclareGraphicsExtensions.
+%\caption{Simulation Results}
+%\label{fig_sim}
+%\end{figure}
+
+% Note that IEEE typically puts floats only at the top, even when this
+% results in a large percentage of a column being occupied by floats.
+
+
+% An example of a double column floating figure using two subfigures.
+% (The subfig.sty package must be loaded for this to work.)
+% The subfigure \label commands are set within each subfloat command, the
+% \label for the overall figure must come after \caption.
+% \hfil must be used as a separator to get equal spacing.
+% The subfigure.sty package works much the same way, except \subfigure is
+% used instead of \subfloat.
+%
+%\begin{figure*}[!t]
+%\centerline{\subfloat[Case I]\includegraphics[width=2.5in]{subfigcase1}%
+%\label{fig_first_case}}
+%\hfil
+%\subfloat[Case II]{\includegraphics[width=2.5in]{subfigcase2}%
+%\label{fig_second_case}}}
+%\caption{Simulation results}
+%\label{fig_sim}
+%\end{figure*}
+%
+% Note that often IEEE papers with subfigures do not employ subfigure
+% captions (using the optional argument to \subfloat), but instead will
+% reference/describe all of them (a), (b), etc., within the main caption.
+
+
+% An example of a floating table. Note that, for IEEE style tables, the 
+% \caption command should come BEFORE the table. Table text will default to
+% \footnotesize as IEEE normally uses this smaller font for tables.
+% The \label must come after \caption as always.
+%
+%\begin{table}[!t]
+%% increase table row spacing, adjust to taste
+%\renewcommand{\arraystretch}{1.3}
+% if using array.sty, it might be a good idea to tweak the value of
+% \extrarowheight as needed to properly center the text within the cells
+%\caption{An Example of a Table}
+%\label{table_example}
+%\centering
+%% Some packages, such as MDW tools, offer better commands for making tables
+%% than the plain LaTeX2e tabular which is used here.
+%\begin{tabular}{|c||c|}
+%\hline
+%One & Two\\
+%\hline
+%Three & Four\\
+%\hline
+%\end{tabular}
+%\end{table}
+
+
+% Note that IEEE does not put floats in the very first column - or typically
+% anywhere on the first page for that matter. Also, in-text middle ("here")
+% positioning is not used. Most IEEE journals/conferences use top floats
+% exclusively. Note that, LaTeX2e, unlike IEEE journals/conferences, places
+% footnotes above bottom floats. This can be corrected via the \fnbelowfloat
+% command of the stfloats package.
+
+
+% trigger a \newpage just before the given reference
+% number - used to balance the columns on the last page
+% adjust value as needed - may need to be readjusted if
+% the document is modified later
+%\IEEEtriggeratref{8}
+% The "triggered" command can be changed if desired:
+%\IEEEtriggercmd{\enlargethispage{-5in}}
+
+% references section
+
+% can use a bibliography generated by BibTeX as a .bbl file
+% BibTeX documentation can be easily obtained at:
+% http://www.ctan.org/tex-archive/biblio/bibtex/contrib/doc/
+% The IEEEtran BibTeX style support page is at:
+% http://www.michaelshell.org/tex/ieeetran/bibtex/
+%\bibliographystyle{IEEEtran}
+% argument is your BibTeX string definitions and bibliography database(s)
+%\bibliography{IEEEabrv,/home/madsbk/papers/main}
+%
+% <OR> manually copy in the resultant .bbl file
+% set second argument of \begin to the number of references
+% (used to reserve space for the reference number labels box)
+%\begin{thebibliography}{1}
+
+%\bibitem{IEEEhowto:kopka}
+%H.~Kopka and P.~W. Daly, \emph{A Guide to \LaTeX}, 3rd~ed.\hskip 1em plus
+%  0.5em minus 0.4em\relax Harlow, England: Addison-Wesley, 1999.
+
+%\end{thebibliography}
+
+
+\section{Introduction}
+In many scientific and engineering areas, there is a need to solve numerical problems. Researchers and engineers behind these applications often prefer a very high level programming language like Python\cite{Python} or Matlab when developing new algorithms. SciPy\cite{SciPy}, which is a collection of Python modules, has become a popular numerical framework amongst researchers. It supports a broad range of very high-level computation operations and when experimenting with an application the user gets immediately feedback due to the interactive execution support in Python. 
+
+SciPy depends on the numerical computation module called NumPy\cite{NumPy}, which is the fundamental module needed for scientific computing with Python. It is mainly implemented in C and introduces a powerful N-dimensional array object that supports a broad range of numerical operations. The performance of NumPy is significantly increased by using array-operations instead of scalar-operations on the arrays.
+
+To some degree NumPy supports parallelization but only in a shared memory environment. However, many scientific computations are computed on large distributed memory machines because of the computation and memory demand. In these cases, the communication between processes has to be implemented by the programmer manually. The result is a significant difference between the sequential program and the parallelized program. We have eliminated this difference by introducing a distributed version of the N-dimensional array object. All operations with this new array will utilize all available processors and the array itself is distributed between multiple processors making it possible to have larger arrays than otherwise possible.
+
+
+\section{Target architectures}
+NumPy supports a long range of architectures from the widespread x86 to the specialized Blue Gene architecture. However, NumPy is incapable of utilizing distributed memory architectures like Blue Gene supercomputers or clusters of x86 machines. The target of DistNumPy is to close this gap and fully support and utilizing distributed memory architectures. 
+
+
+\section{Related work}
+Libraries and programming languages that support parallelization on distributed memory architectures is not a new idea. The main goal of many libraries and programming languages is to ease parallel programming by providing a high level of abstraction. 
+
+The library ScaLAPACK\cite{Blackford96} is a parallel version of the linear algebra library LAPACK\cite{lapack90}. It introduces efficient parallel operations on distributed matrices and vectors. To use ScaLAPACK, the user-program must be programmed using MPI\cite{mpi} and it is the responsibility of the user to make sure that the matrices and vectors comply with the distribution layout specified by ScaLAPACK.
+
+Another library, Global Arrays\cite{Nieplocha96}, introduces a distributed data object (global array), which makes the data distribution transparent for the user. It also supports efficient parallel operations and provides a higher level of abstraction than ScaLAPACK. However, the user still needs to be aware of the fact that multiple processes are involved in the computation. The user must specify which subpart of the global arrays is relevant for a given process.
+
+Both ScaLAPACK and Global Arrays are available in Python and can even be combined with NumPy. However, it is only possible to use NumPy locally and not as distributed operations. A more closely integrated Python project IPython\cite{PER-GRA:2007} supports parallelized NumPy operations. IPython introduce, among other things, a distributed NumPy array much like the distributed array we are introducing in this paper. However, the user-program must be programmed using MPI and the user may still have to differentiate between the running MPI-processes.
+
+An even higher level of abstraction is found in projects where the execution, seen from the perspective of the user, is sequential. The High Performance Fortran (HPF)\cite{Loveman93} programming languages provides that level of abstraction. However, HPF still requires the user to specify parallelizable regions in the code and which data distribution scheme to use. 
+
+The Simple Parallel R INTerface (SPRINT)\cite{Hill08} is a parallel framework for the programming language R. The abstraction level in SPRINT is identical with DistNumPy in the sense that the distribution and parallelization is completely transparent to the user.
+
+
+\section{NumPy}
+Python has become a popular language for high performance computing even though the computational performance of Python is insufficient. This is because Python is used as the coordinating language for computational intensive tasks, which are then implemented in a high performance language.
+
+NumPy\cite{NumPy} is a computation library for Python implemented in the language C. NumPy introduces an N-dimensional array object with a whole range of supported functions. By using these operations NumPy takes advantage of the performance of C while retaining the high abstraction level of Python.
+
+
+\subsection{Universal functions}
+An important mechanism in NumPy is a concept called “Universal function”. A universal function (ufunc) is a function that operates on arrays in an element-by-element fashion. That is, a ufunc is a “vectorized” wrapper for a function that takes a fixed number of scalar inputs and produces a fixed number of scalar outputs. Using ufunc can give a significant performance boost compared to native Python because the computation-loop is executed in C.
+
+\subsubsection{Function broadcasting}
+To make ufunc more flexible, it is possible to use arrays with different number of dimensions. To allow this, the length of each dimension must either be identical or have the length one. When applying the ufunc, all dimensions with a size of one will be \emph{broadcasted}. That is, the first data entry in the dimension will be used for all calculations along that dimension. For example, the following statement will produce a new matrix $C$ in which the vector $A$ is added element-by-element to every row in the matrix $B$: \[C_{MxN} = A_N+B_{MxN}\]
+It is possible to implement a great diversity of algorithms efficiently in Python when combining NumPy's ufunc with more traditional numerical functions like matrix multiplication, factorization etc.
+
+
+\subsection{Basic Linear Algebra Subprograms}
+NumPy make use of the numerical library Basic Linear Algebra Subprograms (BLAS) \cite{blas79}. A highly optimized BLAS implementation exists for almost any HPC platforms and NumPy exploits this whenever possible. Operations like vector-vector, matrix-vector and matrix-matrix (BLAS level 1, 2 and 3 respectively) all use BLAS in NumPy. 
+
+
+\section{DistNumPy}
+DistNumPy\cite{distnumpy09} is a new version of NumPy that can use multiple processors through the communication library Message Passing Interface (MPI)\cite{mpi}. The main idea is to parallelize array operations in a manner completely transparent to the user - from the perspective of the user, the difference between NumPy and DistNumPy should be minimal. We have therefore chosen not to follow the standard MPI approach in which the user-program is executed on all MPI-processes and it is left to the user to differentiate between the MPI-processes, e.g. sequential areas in the user-program must be guarded with a branch based on the process' MPI-rank. In DistNumPy MPI communication must be full transparent and the user need no knowledge in MPI or any parallel program model.
+
+The only difference between the API of NumPy and DistNumPy is in the array creation routines. Since we allow distributed and non-distributed arrays to co-exist, the user can specify, as an optional parameter, if the array should be distributed. The following illustrates the only difference between the creation of a standard array and a distributed array:
+\lstset{frame=none, xleftmargin=0mm, numbers=none}
+\begin{lstlisting}
+A = numpy.array([1,2,3])#Non-Distributed
+B = numpy.array([1,2,3], dist=True)#Distributed
+\end{lstlisting}
+\lstset{frame=single, xleftmargin=5mm, numbers=left}
+
+
+\subsection{Operation dispatching}
+We have an MPI-process hierarchy with one MPI-process (master) placed above the others (slaves). All MPI-processes run the Python interpreter but only the master execute the user-program, the others will block at the \texttt{import numpy} statement. 
+
+The following describes the flow of the dispatching:
+\begin{enumerate}
+\item The master is the dispatcher and will, when the user applies a python command on a distributed array, compose a message with meta-data describing the command. 
+\item The message is then broadcast from the master to the slaves with a blocking MPI-broadcast. It is important to note that the message only consist of meta-data and not any actual array data.
+\item After the broadcast, all MPI-processes will apply the command on the sub-array they own and exchange array elements as required (Point-to-Point communication).
+\item When the command is applyed, the slaves will wait for the next command from the master and the master will return to the user's python program. The master will return even though some slaves may still be working on the command, synchronization is therefore required before the next command broadcast.
+\end{enumerate}
+
+
+\subsection{Data layout}
+\begin{figure}%
+  \begin{center}%
+    \subfloat[\label{fig:datalayoutA}]{\includegraphics[width=110px]{gfx/datalayout_global}}
+    \qquad
+    \subfloat[\label{fig:datalayoutB}]{\includegraphics[width=110px]{gfx/datalayout_local}}
+    \caption{Two-Dimensional Block Cyclic Distribution. A matrix with 12 x 12 blocks is distributed over a 2 x 3 processor grid. (a) The shaded and unshaded areas represent different grids. (b) It is easier to see the distribution from the processor point-of-view. Each processor has 6 x 4 blocks.}%
+    \label{fig:datalayout}%
+  \end{center}
+\end{figure}
+
+Two-Dimensional Block Cyclic Distribution is a very popular distribution scheme and it is used in numerical libraries like ScaLAPACK\cite{Blackford96} and LINPACK\cite{linpack79}. It supports matrices and vectors and has a good load balance in numerical problems like Gaussian elimination that have a diagonal workflow. The distribution scheme works by arranging all MPI-processes in a two dimensional grid and then distributes data-blocks in a round-robin fashion either along one or both grid dimensions (Figure \ref {fig:datalayout}); the result is a well-balanced distribution.
+
+However, NumPy is not limited to matrices and vectors as it supports arrays with an arbitrary number of dimensions. We therefore use a more generalized N-Dimensional Block Cyclic Distribution inspired by High Performance Fortran\cite{Loveman93}, which supports an arbitrary number of dimensions. Instead of using a fixed process-grid, we have a process-grid for every array dimensionality. This works well when operating on arrays with identical dimensionality but causes problems otherwise. For instance in a BLAS level-2 operation, e.g. matrix-vector multiplication the two arrays are distributed on different process-grid and may therefore require more communication. One solution is to do like in ScaLAPACK and distribute vectors on two-dimensional process-grids but then vector operations will not utilize all processes. Another solution is to redistribute the data between a series of identical leveled BLAS operations using a fast runtime redistribution algorithm like \cite{PrylliT97}.
+
+
+\subsection{Views}
+A distributed array is represented by two data structures in DistNumPy:
+\begin{itemize}
+\item \textbf{Array-base} is the base of an array and has direct access to the content of the array in main memory. An array-base is created with all related meta-data when the user allocates a new distributed array but the user will never access the array directly through the array-base. The array-base always describes the whole array and its meta-data like size, data type will never change.
+\item \textbf{Array-view} is a view of one array-base. It can be ``viewing'' the whole array or only a sub-part of the array. It contains its own meta-data that describe which part of the array-base is visible and it can even add non-existing 1-length dimensions to the array-base. The array-view is manipulated directly by the user and from the users perspective the array-view is the array.
+\end{itemize}
+Array-views are not allowed to refer to each other, which mean that the hierarchy is very flat with only three levels: main memory, array-base and array-view. However, multiple array-views are allowed to refer to the same array-base. This hierarchy is illustrated in figure \ref{fig:views}. 
+
+\begin{figure}
+ \centering
+ \includegraphics[width=150px]{gfx/views}
+ \caption{Reference hierarchy between the three array data structures. The main memory is in the bottom, array-bases is in the middle and array-view is in the top.}
+ \label{fig:views}
+\end{figure}
+
+\subsection{Optimizations}
+The performance impact when optimizing a NumPy operation in the general case is very limited. It is far easier to optimize and make computational shortcuts if we have some predefined simplifications. We therefore introduce a hierarchy of implementations all optimized for specific operation scenarios. When applying an operation, a search through the hierarchy determines the most optimized implementation for that particular operation. At the bottom of the hierarchy, we have a non-optimized implementation that can handle all operation scenarios.
+
+Most simplifications are related to the use of partial views, which are array-views that represents a sub-part of the underlying array-base. It is much simpler to handle array-views that represent the whole array-base 1-to-1 rather than handle arbitrary array-views. For instance, blocking communication together in large MPI-messages becomes difficult and introduces a significant overhead when using non-continuously array-views. The problem is the data distribution scheme (N-Dimensional Block Cyclic Distribution). It becomes hard for an MPI-process to determine which part of its local data the array-view covers. By introducing a simplified scenario that only includes continuously array-views we have implemented a very efficient blocked universal function.
+
+
+\subsection{Distributed BLAS}
+As previously mentioned NumPy supports BLAS operations on vectors and matrices. DistNumPy therefore implements a distributed version of BLAS inspired by PBLAS from the ScaLAPACK library. Since DistNumPy uses the same data-layout as ScaLAPACK, it would be straightforward to use PBLAS for all distributed BLAS operations. However to simplify the installation and maintenance of DistNumPy we have chosen to implement our own distributed version of BLAS. Like PBLAS, we use SUMMA\cite{SUMMA_GeijnW97} for matrix multiplication, which enable us to use the, already available, BLAS library locally on the MPI-processes. Using SUMMA is only applicable on non-partial array-views and we therefore use a straightforward implementation that computes one element at a time if partial array-views are involved in the computation. 
+
+\subsection{Universal function}
+In DistNumPy, the implementation of ufunc uses three different scenarios.
+\begin{enumerate}
+\item In the simplest scenario, applying an ufunc does not require any communication between MPI-processes. The scenario is applicable when the ufunc is applied on non-partial array-views with identical shape since we then have a perfect match between all elements in the array-views.
+\item In the second scenario, we use blocked asynchronous communication and computation. The array-views must represent a continuously part of the underlying array-base for the scenario to be applicable. The computation is parallelized by the data distribution of the output array and data blocks from the input arrays are fetched when needed. We use non-blocking one-side communication (\texttt{MPI\_Get}) when fetching data blocks, which makes it possible to compute one block while fetching the next block.
+\item The final scenario does not use any simplifications and works with any kind of array-views. It also uses non-blocking one-side communication but only one element at a time.
+\end{enumerate}
+
+
+\section{Examples}
+To evaluate DistNumPy we have implemented three Python programs that all make use of NumPy’s vector-operations (ufunc). They are all optimized for a sequential execution on a single CPU and the only program change we make, when going from the original NumPy to our DistNumPy, is the array creation argument \texttt{dist}. 
+A walk-through of a Monte Carlo simulation is presented as an example of how DistNumPy handles Python executions.
+
+
+\subsection{Monte Carlo simulation}
+\begin{figure}
+\begin{lstlisting}
+from numpy import *
+(x, y) = (empty([S], dist=True), \
+		  empty([S], dist=True))
+(x, y) = (ufunc_random(x), ufunc_random(y))
+(x, y) = (square(x), square(y))
+z = (x + y) < 1
+print add.reduce(z) * 4.0 / S #The result
+\end{lstlisting}
+ \caption{Computing Pi using Monte Carlo simulation. \texttt{S} is the number of samples used. We have defined a new ufunc (\texttt{ufunc\_random}) to make sure that we use an identical random number generator in all benchmarks. The ufunc uses "\texttt{rand()/(double)RAND\_MAX}" from the ANSI C standard library (\texttt{stdlib.h}) to generate numbers.}
+ \label{lst:montecarlo}
+\end{figure}
+
+We have implemented an efficient Monte Carlo Pi simulation using NumPy’s ufunc. The implementation is a translation of the Monte Carlo simulation in Java benchmark SciMark 2.0\cite{SciMark}. It is very simple and uses two vectors with length equal the number of samples used in the calculation. Because of the memory requirements, this drastically reduces maximum number of samples. Combining multiple simulations will allow more samples but we will only use one simulation. The implementation is included in its full length (Fig. \ref{lst:montecarlo}) and the following is an walk-through of a simulation (the bullet-numbers represents line numbers):
+
+\begin{enumerate}
+\item[\textbf{1:}] All MPI-processes interprets the \texttt{import} statement and initiate DistNumPy. Beside calling \texttt{MPI\_Init()} the initialization is identical with the original NumPy but instead of returning from the import statement, the slaves, MPI-processes with rank greater than zero, listen for a command messages from the master, the MPI-process with rank zero.
+\item[\textbf{2-3:}] The master, sends two \texttt{CREATE\_ARRAY} messages to all slaves. The two messages contain an array shape and unique identifier (UID), which in this case identifies \texttt{x} and \texttt{y}, respectively. All MPI-processes allocates memory for the arrays and stores the array information.
+\item[\textbf{4:}] The master sends two \texttt{UFUNC} messages to all slaves. Each message contains a UID and a function name \texttt{ufunx\_random}. All MPI-processes apply the function on the array with the specified UID. A pointer to the function is found by calling \texttt{PyObject\_GetAttrString} with the function name. It is thereby possible to support all ufuncs from NumPy.
+\item[\textbf{5:}] Again the master sends two \texttt{UFUNC} messages to all slave but this time with function name \texttt{square}.
+\item[\textbf{6:}] The master sends a \texttt{UFUNC} messages with function name \texttt{add} followed by a \texttt{UFUNC} messages with function name \texttt{less\_than}. The scalar \texttt{1} is also in the message.
+\item[\textbf{7:}] The master sends a \texttt{UFUNC\_REDUCE} messages with function name \texttt{add}. The result is a scalar, which is not distributed, and the master therefore solely computes the remainder of the computation and print the result. When the master is done a \texttt{SHUTDOWN} message is send to the slaves and the slaves call \texttt{exit(0)}.
+\end{enumerate}
+
+
+\subsection{Jacobi method}
+\begin{figure}
+\begin{lstlisting}
+h = zeros(shape(B), float, dist=True)
+dmax = 1.0
+AD = A.diagonal()
+while(dmax > tol):
+  hnew = h + (B - add.reduce(A * h, 1)) / AD
+  tmp = absolute((h - hnew) / h)
+  dmax = maximum.reduce(tmp)
+  h = hnew
+print h #The result
+\end{lstlisting}
+ \caption{Iteratively Jacobi solver for matrix \texttt{A} with solution vector \texttt{B} both are distributed arrays. The \texttt{import} statement and the creation of \texttt{A} and \texttt{B} is not included here.
+ \texttt{tol} is the maximum tolerated value of the diagonal-element with the highest value (\texttt{dmax}).}
+ \label{lst:jocobi}
+\end{figure}
+
+The Jacobi method is an algorithm for determining the solutions of a system of linear equations with largest absolute values in each row and column dominated by the diagonal element. Each diagonal element is solved for, and an approximate value plugged in. The process is then iterated until it converges.
+
+Our implementation uses ufunc operations in a while-loop until it converges. Most of the implementation is included here(Fig. \ref{lst:jocobi}).
+
+
+%\begin{enumerate}
+%\item[1)] The master, sends a \texttt{CREATE\_ARRAY} messages followed by a \texttt{ZEROFILL} message to all slaves. All MPI-processes allocates memory for the arrays and stores the array information.
+%\item[3)] The master, sends a \texttt{CREATE\_ARRAY} messages followed by a \texttt{DIAGONAL} message, which copy the diagonal of \texttt{A} to a new distributed array.
+%\item[5)]
+%\end{enumerate}
+
+\subsection{Newtonian N-body simulation}
+An Newtonian N-body simulation is one that studies how bodies, represented by a mass, a location, and a velocity, move in space according to the laws of Newtonian physics. We use a straightforward algorithm computing all body-body interactions. The NumPy implementation is a direct translation of a Matlab program\cite{assignmentNbody}. The implementation is too big to include in this paper, but the implementation is straightforward and use universal functions and matrix multiplications.
+
+
+\section{Experiments}
+In this section, we will conduct perform performance benchmarks on DistNumPy and NumPy\footnote{NumPy version 1.3.0}. We will benchmark the three Python program presented in the previous section. All benchmarks are executed on two different Linux clusters. (Table \ref{tab:specs}).
+
+Our experiments consist of a speedup benchmark which we define as a comparison between a sequential execution with NumPy and a parallelized execution with DistNumPy. The input is the same in all executions.
+
+%We define a strong-scale benchmark as a comparison between a sequential execution with NumPy and a parallelized execution with DistNumPy where the input size is fixed. We define a weak-scale benchmark similar but with an input that scales linearly with the number of CPU-cores.
+
+\begin{table}
+\centering
+\begin{tabular}{|lll|}
+\hline
+CPU & Intel Core 2 Quad Q9400 & Intel Nehalem E5520\\
+CPU Frequency & 2.26 GHz & 2.66 GHz\\
+CPU per node & 1 & 2\\
+Cores per CPU & 4 & 4\\
+Memory per node & 8 GB @ 6.5 GB/s & 24 GB @ 25.6 GB/s\\
+Network & Gigabit Ethernet & Gigabit Ethernet\\
+\hline
+\end{tabular}
+\caption{Hardware specifications}
+\label{tab:specs}
+\end{table}
+%Core 2 Quad: http://ark.intel.com/Product.aspx?id=35365
+%Nehalem: http://ark.intel.com/Product.aspx?id=40200
+
+
+\subsection{Monte Carlo simulation}
+A Distributed Monte Carlo simulation is embarrassing parallel and requires a minimum of communication.  This is also the case when using DistNumPy because ufuncs are only applied on identical shaped arrays and it is therefore the simplest ufuncs scenario.
+
+The result of the speedup benchmark is illustrated in figure \ref{fig:MonteCarlo}. We see a close to linear speedup both for the Core 2 and the Nehalem cluster. A CPU utilization of 88\% is achieved on 64 Nehalem CPU-cores.
+
+
+\begin{figure*}%
+  \begin{center}%
+    \subfloat[\label{fig:MonteCarloStrong}]{\includegraphics[width=200px]{gfx/benchmarks/MonteCarloStrong}}
+    \qquad
+    \subfloat[\label{fig:MonteCarloStrongZoomed}]{\includegraphics[width=200px]{gfx/benchmarks/MonteCarloStrongZoomed}}
+    \caption{Speedup of the Monte Carlo simulation. The right graph is a zoomed in version of the left graph.}%
+    \label{fig:MonteCarlo}%
+  \end{center}
+\end{figure*}
+
+
+\subsection{Jacobi method}
+The dominating part of the Jacobi method, performance wise, is the element-by-element multiplication of \texttt{A} and \texttt{h} (Fig. \ref{lst:jocobi} line 5). It consists of $O(n^2)$ operations where as all the other operations only consist $O(n)$ operations. 
+
+%The operations involves two different shaped process grids since DistNumPy use different process grids for every dimensionality.
+
+The result of the speedup benchmark is illustrated in figure \ref{fig:JacobiScale}. We see a good speedup with 8 CPU-cores and to some degree also with 16 Nehalem CPU-cores. However, the CPU utilization when using more than 16 CPU-cores is very poor. The problem is memory bandwidth because our implementation is memory bound. Since we use multiple CPU-cores per node when using more than 8 CPU-cores, the aggregated memory bandwidth of the Core 2 cluster does only increase up to 8 CPU-cores. The Nehalem cluster is a bit better because it has two memory buses per node, but using more than 16 CPU-cores will not increase the aggregated memory bandwidth.
+
+\begin{figure*}%
+  \begin{center}%
+    \subfloat[\label{fig:JacobiStrong}]{\includegraphics[width=200px]{gfx/benchmarks/JacobiStrong}}
+    \qquad
+    \subfloat[\label{fig:JacobiStrongZoomed}]{\includegraphics[width=200px]{gfx/benchmarks/JacobiStrongZoomed}}
+    \caption{Speedup of the Jacobi solver. The right graph is a zoomed in version of the left graph.}%
+    \label{fig:JacobiScale}%
+  \end{center}
+\end{figure*}
+
+
+\subsection{Newtonian N-body simulation}
+The result of the speedup benchmark is illustrated in figure \ref{fig:NbodyScale}. Compared to the Jacobi method we see a similar speedup and CPU utilization. This is expected because the dominating operations are, like in the Jacobi method, ufuncs. Even though there are some matrix-multiplications, which have a great scalability, it is not enough to significantly boost the overall scalability.
+
+\begin{figure*}%
+  \begin{center}%
+    \subfloat[\label{fig:NbodyStrong}]{\includegraphics[width=200px]{gfx/benchmarks/NbodyStrong}}
+    \qquad
+    \subfloat[\label{fig:NbodyStrongZoomed}]{\includegraphics[width=200px]{gfx/benchmarks/NbodyStrongZoomed}}
+    \caption{Speedup of Newtonian N-body simulation. The right graph is a zoomed in version of the left graph.}%
+    \label{fig:NbodyScale}%
+  \end{center}
+\end{figure*}
+
+
+\subsection{Summary}
+The benchmarks clearly show that DistNumPy has both good performance and scalability when the executing is not bound by the memory bandwidth, which is evident if looking at the speedup from one to eight CPU-cores (all the right speedup graphs). As expected the scalability of the Monte Carlo simulation is better than the Jacobi and the N-body computation simply because of the reduced communication requirement. 
+
+The scalability of the Jacobi and the N-body computation is drastically reduced when using all available CPU-cores. The problem is the complexity of the ufunc operations. As opposed to the Monte Carlo simulation, which makes use of a complex ufunc, the Jacobi and the N-body computation only use simple ufuncs e.g. add and multiplication. 
+
+
+\section{Future work}
+In its current state DistNumPy does not implement the NumPy API completely. Many specialized operations like Fast Fourier transform or LU factorization is not implemented, but it is our intention to implement the complete NumPy API overtime.
+
+Another important future work is improvement of performance and scalability. As showed by the benchmarks, applications that are dominated by non-complex ufuncs easily becomes memory bounded. One solutions it to block ufuncs, that operates on common arrays, together in one joint operation and thereby making the joint operation more CPU-intensive. If it is possible to join enough ufuncs together the application may become CPU bound rather than memory bound.
+
+
+\section{Conclusions}
+In this work we have successfully shown that it is possible to implement a parallelized version of NumPy in a fully transparent manner. The developed implementation, DistNumPy, supports distributed memory environments, using MPI, completely transparent to the user.
+
+Performance measurements of three Python program, which make use of DistNumPy, shows very good performance and scalability. A CPU utilization of 88\% is achieved on an 64 CPU-cores Nehalem cluster running a CPU-intensive Monte Carlo simulation. A more memory-intensive N-body simulation achieves a CPU utilization of 91\% on 16 CPU-cores but only 63\% on 64 CPU-cores. We therefore conclude that further work is needed if shared memory machines are to be fully utilized.
+
+
+\section*{Acknowledgements}
+
+
+
+\bibliographystyle{IEEEtran}
+\bibliography{/home/madsbk/repos/priv/diku/phd/paper_archive/main}
+
+
+\end{document}
+
+
