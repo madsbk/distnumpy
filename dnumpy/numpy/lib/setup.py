@@ -12,6 +12,10 @@ def configuration(parent_package='',top_path=None):
                          sources=[join('src','_compiled_base.c')]
                          )
 
+    config.add_extension('_distio',
+                         sources=[join('src','_distio.c')]
+                         )
+
     config.add_data_dir('benchmarks')
     config.add_data_dir('tests')
 

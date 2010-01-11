@@ -72,6 +72,30 @@ static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 
+/*===================================================================
+ *
+ * Debug vector init.
+ * Private
+ */
+static void print_v_init(char *fname)
+{
+    printf("(rank %d) In function '%s':\n", myrank, fname);
+} /* print_v_begin */
+
+/*===================================================================
+ *
+ * Debug vector.
+ * Private
+ */
+static void print_v(char *msg, int n, int *data)
+{
+    int i;
+
+    printf("  %s = ( ", msg);
+    for(i = 0; i < n; i++)
+        printf("%d ", data[i]);
+    printf(")\n");
+} /* print_v */
 
 /*===================================================================
  *
@@ -536,7 +560,8 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
  * dimension will be removed.
  * The coordinates are in Row-major.
  * Private.
- *//*
+ */
+ /*
 static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
                       int reduce_axis, MPI_Win *win,
                       npy_intp lcoords[NPY_MAXDIMS])
@@ -597,7 +622,8 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
     MPI_Win_unlock(rank, *win);
 
     return 0;
-}*//* remote_put */
+}*/
+/* remote_put */
 
 /*===================================================================
  *
@@ -2195,6 +2221,139 @@ static void do_ZEROFILL(dndview *view)
 
 /*===================================================================
  *
+ * Message handler for DATAFILL.
+ * Private.
+ */
+static void do_DATAFILL(dndview *view, const char *filename, long filepos)
+{
+    /* Get cartesian coords */
+    int coords[NPY_MAXDIMS];
+    rank2cart(view->base->ndims, myrank, coords);
+    int *stride = cart_dim_sizes[view->base->ndims-1];
+
+    /* Counters */
+    int b, i, j, n, extent;
+
+    /* Debug string buffer */
+    char dbuf[1024];
+
+    /* Convenience */
+    int ndims = view->base->ndims;
+
+    /* Holds arrays of displacements and blocklengths for each dimension */
+    int *displacements[ndims];
+    int *blocklengths[ndims];
+
+    /* Copies for reverse enumeration */
+    int mydims[ndims];
+    int mylocalblockdims[ndims];
+    int mycoords[ndims];
+    int mystride[ndims];
+
+    /* We want to reverse the dimension enumeration for convenience */
+    i = 0;
+    for(n = ndims-1; n >= 0; n--) {
+        mydims[i] = view->base->dims[n];
+        mylocalblockdims[i] = view->base->localblockdims[n];
+        mycoords[i] = coords[n];
+        mystride[i++] = stride[n];
+    }
+
+    /* Allocate room for mylocalblockdims[n] elements in each dimension */
+    for(n = 0; n < ndims; n++) {
+        displacements[n] = malloc(sizeof(int)*mylocalblockdims[n]);
+        blocklengths[n] = malloc(sizeof(int)*mylocalblockdims[n]);
+    }
+
+    /* Iterate over dimensions */
+    for(n = 0; n < ndims; n++) {
+        j = 0; // Reset internal counter
+
+        /* Iterate over a dimension to calculate displacements */
+        for(i = mycoords[n]*blocksize; i < mydims[n]; ) {
+            displacements[n][j] = i;
+
+            if(blocksize+i > mydims[n]) {
+                blocklengths[n][j] = mydims[n] % blocksize;
+            } else {
+                blocklengths[n][j] = blocksize;
+            }
+
+            i += mystride[n]*blocksize;
+            j++;
+        }
+    }
+
+#if 0
+    /* Print debug information for all processes
+     * MPI_Barrier is used to stop output from being interleaved */
+    for(j = 0; j < worldsize; j++) {
+
+        if(myrank == j) {
+            print_v_init("do_DATAFILL");
+            print_v("coords", ndims, coords);
+            print_v("stride", ndims, stride);
+            print_v("mycoords", ndims, mycoords);
+            print_v("mystride", ndims, mystride);
+            print_v("mylocalblockdims", ndims, mylocalblockdims);
+            print_v("mydims", ndims, mydims);
+
+            for(n = 0; n < ndims; n++) {
+                sprintf(dbuf, "displacements[%d]", n);
+                print_v(dbuf, mylocalblockdims[n], displacements[n]);
+                sprintf(dbuf, "blocklengths[%d]", n);
+                print_v(dbuf, mylocalblockdims[n], blocklengths[n]);
+            }
+
+            printf("\n");
+        }
+
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+#endif
+
+    /* Stores derived data types */
+    MPI_Datatype derived_type[ndims+1];
+    MPI_Datatype tmp_type;
+
+    /* Setup derived data type for elements */
+    MPI_Type_contiguous(view->base->elsize, MPI_BYTE, &derived_type[0]);
+
+    /* Setup derived data types for rest of dimensions */
+    for(n = 1; n < ndims+1; n++) {
+        extent = view->base->elsize;
+        for(i = 0; i < n; i++) {
+            extent *= mydims[i];
+        }
+
+        MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
+                         displacements[n-1], derived_type[n-1], &tmp_type);
+        MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
+    }
+
+    /* Setup file handle */
+    MPI_File fh;
+    MPI_File_open(MPI_COMM_WORLD, (char *)filename, // MPI_File_open discards
+                                                    // const
+                  MPI_MODE_RDONLY, MPI_INFO_NULL, &fh);
+
+    /* Set file view with final derived data type */
+    MPI_File_set_view(fh, filepos, derived_type[0], derived_type[ndims],
+                      "native", MPI_INFO_NULL);
+
+    /* Now, just read */
+    MPI_Status status;
+    MPI_File_read(fh, view->base->data, view->base->nelements, derived_type[0],
+                  &status);
+
+    /* Free allocated data */
+    for(n = 0; n < ndims; n++) {
+        free(displacements[n]);
+    }
+} /* do_DATAFILL */
+
+/*===================================================================
+ *
  * Message handler for DIAGONAL.
  * Private.
  */
@@ -2927,6 +3086,31 @@ dnumpy_zerofill(intp ary_uid)
     do_ZEROFILL(view);
 } /* dnumpy_zerofill */
 
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Fill the distributed array/view with data from file.
+ */
+static void
+dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
+{
+    //Get arrray structs.
+    dndview *view = get_dndview(ary_uid);
+
+    //Get filename length
+    int filename_length = strlen(filename);
+
+    //Tell slaves
+    msg[0] = DNPY_DATAFILL;
+    msg[1] = view->uid;
+    memcpy(&msg[2], &datapos, sizeof(long));
+    strcpy((char*)&msg[2]+sizeof(long), filename);
+    *(&msg[2]+sizeof(long)+(filename_length+1)*sizeof(char)) = DNPY_MSG_END;
+    msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
+
+    //The master should also do the operation.
+    do_DATAFILL(view, filename, datapos);
+} /* dnumpy_datafill */
 
 /*NUMPY_API
  *===================================================================
@@ -3176,6 +3360,7 @@ dnumpy_master_slave_split()
     {
         char *t1, *t2, *t3;
         npy_intp d1, d2, d3, d4, d5;
+        long l1;
         dndview *ary, *ary2, *ary3;
         MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
@@ -3240,6 +3425,12 @@ dnumpy_master_slave_split()
             case DNPY_ZEROFILL:
                 do_ZEROFILL(get_dndview(*((npy_intp*)msg_data)));
                 break;
+            case DNPY_DATAFILL:
+                d1 = ((npy_intp*)msg_data)[0]; // view uid
+                l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
+                strcpy(t1, msg_data+sizeof(npy_intp)+sizeof(long)); // get filename
+                do_DATAFILL(get_dndview(d1), t1, l1);
+                break;               
             case DNPY_DIAGONAL:
                 ary  = get_dndview(((npy_intp*)msg_data)[0]);
                 ary2 = get_dndview(((npy_intp*)msg_data)[1]);

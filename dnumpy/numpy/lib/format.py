@@ -61,6 +61,9 @@ import cPickle
 import numpy
 from numpy.lib.utils import safe_eval
 
+# DISTNUMPY
+from _distio import dist_load
+
 
 MAGIC_PREFIX = '\x93NUMPY'
 MAGIC_LEN = len(MAGIC_PREFIX) + 2
@@ -325,7 +328,7 @@ def write_array(fp, array, version=(1,0)):
             # arrayterator.
             fp.write(array.tostring('C'))
 
-def read_array(fp):
+def read_array(fp, dist=False):
     """
     Read an array from an NPY file.
 
@@ -358,9 +361,18 @@ def read_array(fp):
 
     # Now read the actual data.
     if dtype.hasobject:
+        # DISTNUMPY
+        if dist:
+            msg = "distnumpy doesn't support pickled objects when loading from file"
+            raise ValueError(msg)
+
         # The array contained Python objects. We need to unpickle the data.
         array = cPickle.load(fp)
     else:
+        # DISTNUMPY
+        if dist:
+            return dist_load(filename=fp.name, datapos=fp.tell(), shape=shape, order=fortran_order, dtype=dtype) 
+
         if isinstance(fp, file):
             # We can use the fast fromfile() function.
             array = numpy.fromfile(fp, dtype=dtype, count=count)
