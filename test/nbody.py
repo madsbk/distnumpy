@@ -56,13 +56,21 @@ for i in range(k):
     
     #net force on each body
     Fnet_x = add.reduce(Fx,1)
-    Fnet_x = add.reduce(Fy,1)
-    Fnet_x = add.reduce(Fz,1)
+    Fnet_y = add.reduce(Fy,1)
+    Fnet_z = add.reduce(Fz,1)
+
+    Fnet_x = Fnet_x[:,newaxis]
+    Fnet_y = Fnet_y[:,newaxis]
+    Fnet_z = Fnet_z[:,newaxis]
+
+    Fnet_x *= dT
+    Fnet_y *= dT
+    Fnet_z *= dT  
 
     #change in velocity:
-    Vx += Fnet_x * dT / M
-    Vy += Fnet_y * dT / M
-    Vz += Fnet_z * dT / M
+    Vx += Fnet_x / M
+    Vy += Fnet_y / M
+    Vz += Fnet_z / M
 
     #change in position
     Px += Vx * dT
@@ -74,3 +82,39 @@ if d:
     print " (Dist) notes: %s"%sys.argv[4]
 else:
     print " (Non-Dist) notes: %s"%sys.argv[4]
+
+
+
+
+"""Paper version:
+    #distance between all pairs of objects
+    Fx = dot(OnesCol, PxT) - dot(Px, OnesRow)
+    Fy = dot(OnesCol, PyT) - dot(Py, OnesRow)
+    Fz = dot(OnesCol, PzT) - dot(Pz, OnesRow)
+
+    Dsq = Fx * Fx + Fy * Fy + Fx * Fz #+ Identity
+    D = sqrt(Dsq)
+
+    #mutual forces between all pairs of objects
+    F = G * dot(M, MT) / Dsq
+    
+    #F = F - diag(diag(F))#set 'self attraction' to 0
+    Fx = (Fx / D) * F
+    Fy = (Fy / D) * F
+    Fz = (Fz / D) * F
+    
+    #net force on each body
+    Fnet_x = add.reduce(Fx,1)
+    Fnet_x = add.reduce(Fy,1)
+    Fnet_x = add.reduce(Fz,1)
+
+    #change in velocity:
+    Vx += Fnet_x[:,newaxis] * dT / M
+    Vy += Fnet_y[:,newaxis] * dT / M
+    Vz += Fnet_z[:,newaxis] * dT / M
+
+    #change in position
+    Px += Vx * dT
+    Py += Vy * dT
+    Pz += Vz * dT
+"""
