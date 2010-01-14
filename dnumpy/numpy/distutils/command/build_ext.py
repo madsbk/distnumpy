@@ -384,8 +384,8 @@ class build_ext (old_build_ext):
         linker = self.compiler.link_shared_object
 
         #DISTNUMPY hack.
-        if(self.compiler.compiler_so[0] == 'mpicc'):
-            self.compiler.linker_so[0] = 'mpicc'
+        if(self.compiler.compiler_so[0].find('mpi') != -1):
+            self.compiler.linker_so[0] = self.compiler.compiler_so[0]
         
         # Always use system linker when using MSVC compiler.
         if self.compiler.compiler_type=='msvc':
