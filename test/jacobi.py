@@ -31,7 +31,7 @@ def jacobi(A, B, tol=0.005, forcedIter=0):
     t1 = time.time() - t1
 
     print 'Iter: ', n, ' size: ', shape(B),' time: ', t1,
-    if A.dist:
+    if A.dist():
         print "(Dist) notes: %s"%sys.argv[4]
     else:
         print "(Non-Dist) notes: %s"%sys.argv[4]
