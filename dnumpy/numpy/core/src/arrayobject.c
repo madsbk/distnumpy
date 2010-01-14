@@ -6088,16 +6088,16 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
     self->data = NULL;
     if (data == NULL) {
         self->flags = DEFAULT;
-        if (flags) {
+        if (flags & FORTRAN) {
             self->flags |= FORTRAN;
-            /* DISTNUMPY */
-            self->flags |= flags & DNPY_DISTRIBUTED;
             if (nd > 1) {
                 self->flags &= ~CONTIGUOUS;
             }
             /* DISTNUMPY */
             flags = FORTRAN | (flags & DNPY_DISTRIBUTED);
         }
+        /* DISTNUMPY */
+        self->flags |= flags & DNPY_DISTRIBUTED;
     }
     else {
         self->flags = (flags & ~UPDATEIFCOPY);
