@@ -15,32 +15,50 @@ static PyObject *ErrorObject;
 { PyErr_SetString(ErrorObject, message); goto fail; }
 
 static PyObject *
+distio_save(PyObject *NPY_UNUSED(ignored), PyObject *args)
+{
+    PyArrayObject *ary; 
+    char *filename;
+    long datapos;
+    
+    if(!PyArg_ParseTuple(args, "O&sl", PyArray_Converter, &ary, &filename, &datapos)) 
+        return NULL;
+
+    dnumpy_datadump(PyArray_DNDUID(ary), filename, datapos);
+
+    Py_XDECREF(ary);
+
+    return Py_None;
+}
+
+static PyObject *
 distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 {
     /* DISTNUMPY */
-    static char *kwlist[] = {"filename","datapos","shape","order","dtype",NULL}; /* XXX ? */
+    static char *kwlist[] = {"filename","datapos","shape","fortran_order","dtype",NULL}; 
     char *filename;
     long datapos;
     PyArray_Descr *typecode = NULL;
     PyArray_Dims shape = {NULL, 0};
-    NPY_ORDER order = PyArray_CORDER;
+    int fortran_order = 0;
     PyObject *ret = NULL;
     int flags = DNPY_DISTRIBUTED;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "slO&O&O&",
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "slO&iO&",
                                      kwlist, &filename, &datapos, 
                                      PyArray_IntpConverter,
                                      &shape,
-                                     PyArray_OrderConverter,
-                                     &order,
+                                     &fortran_order,
                                      PyArray_DescrConverter,
                                      &typecode)) {
         printf("Failed!\n");
         goto fail;
     }
 
-    if (order == PyArray_FORTRANORDER) {
-        flags |= NPY_FORTRAN;
+    if (fortran_order) {
+        flags |= PyArray_FORTRANORDER;
+    } else {
+        flags |= PyArray_CORDER;
     }
 
     if (!typecode) {
@@ -72,6 +90,8 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 static struct PyMethodDef methods[] = {
     {"dist_load",  (PyCFunction)distio_load, METH_VARARGS | METH_KEYWORDS, 
      "Load binary file into distributed array."},
+    {"dist_save",  (PyCFunction)distio_save, METH_VARARGS, 
+     "Save distributed array into binary file."},
     {NULL, NULL}    /* sentinel */
 };
 

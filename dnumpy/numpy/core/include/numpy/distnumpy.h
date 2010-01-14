@@ -4,7 +4,7 @@
 //#define DISTNUMPY_DEBUG
 
 //Easy retrieval of dnduid
-#define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)                                
+#define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
 
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*10
@@ -19,7 +19,7 @@
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_SET_ITEM, DNPY_GET_ITEM,
           DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL, DNPY_DATAFILL,
-          DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL};
+          DNPY_DATADUMP, DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL};
 
 //dndslice constants.
 #define PseudoIndex -1//Adds a extra 1-dim - 'A[1,newaxis]'
@@ -49,7 +49,7 @@ typedef struct
     //npy_intp nblocks;
     //Size of local block-dimensions (local to the MPI-process).
     npy_intp localblockdims[NPY_MAXDIMS];
-    
+
 } dndarray;
 
 //Type describing a slice of a dimension.
