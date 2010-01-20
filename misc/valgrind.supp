@@ -1,408 +1,557 @@
-#
-# This is a valgrind suppression file that should be used when using valgrind.
-#
-#  Here's an example of running valgrind:
-#
-#	cd python/dist/src
-#	valgrind --tool=memcheck --suppressions=Misc/valgrind-python.supp \
-#		./python -E -tt ./Lib/test/regrtest.py -u bsddb,network
-#
-# You must edit Objects/obmalloc.c and uncomment Py_USING_MEMORY_DEBUGGER
-# to use the preferred suppressions with Py_ADDRESS_IN_RANGE.
-#
-# If you do not want to recompile Python, you can uncomment
-# suppressions for PyObject_Free and PyObject_Realloc.
-#
-# See Misc/README.valgrind for more information.
-
-# all tool names: Addrcheck,Memcheck,cachegrind,helgrind,massif
+# These are unfreed memory (still reachable blocks) detected in python
 {
-   ADDRESS_IN_RANGE/Invalid read of size 4
-   Memcheck:Addr4
-   fun:Py_ADDRESS_IN_RANGE
+  Python leak
+  Memcheck:Leak
+  fun:malloc
+  fun:*
+  fun:PyString_InternInPlace
 }
-
 {
-   ADDRESS_IN_RANGE/Invalid read of size 4
-   Memcheck:Value4
-   fun:Py_ADDRESS_IN_RANGE
+  Python leak
+  Memcheck:Leak
+  fun:malloc
+  fun:*
+  fun:PyEval_EvalFrameEx
 }
-
 {
-   ADDRESS_IN_RANGE/Invalid read of size 8 (x86_64 aka amd64)
-   Memcheck:Value8
-   fun:Py_ADDRESS_IN_RANGE
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  fun:PyDict_Merge
 }
-
 {
-   ADDRESS_IN_RANGE/Conditional jump or move depends on uninitialised value
-   Memcheck:Cond
-   fun:Py_ADDRESS_IN_RANGE
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  fun:PyObject_GenericSetAttr
 }
-
-#
-# Leaks (including possible leaks)
-#    Hmmm, I wonder if this masks some real leaks.  I think it does.
-#    Will need to fix that.
-#
-
 {
-   Suppress leaking the GIL.  Happens once per process, see comment in ceval.c.
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  obj:*_gobject.so*
+  obj:*atk.so*
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  obj:*_gobject.so*
+  obj:*pango.so*
+  fun:initpango
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  obj:*_gobject.so*
+  obj:*gio.so*
+  fun:init_gio
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:realloc
+  fun:g_realloc
+  fun:g_type_set_qdata
+  obj:*_gobject.so*
+  fun:init_gobject
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  obj:*_gobject.so
+  obj:*_gtk.so
+  fun:init_gtk
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  fun:_PyInt_Init
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  fun:PyType_Ready
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  fun:PyString_FromStringAndSize
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  obj:*libpython*
+  fun:PyObject_Call
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  fun:PyInt_FromLong
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  fun:_PyObject_GC_Malloc
+}
+{
+  From opensuse 11.2 (python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  obj:*libpython*
+  obj:*libpython*
+  fun:PyEval_EvalFrameEx
+}
+{
+  Python leak
+  Memcheck:Leak
+  fun:malloc
+  fun:*
+  fun:PyDict_SetItemString
+}
+{                                                                               
+   Python leak (ignore all memory allocated by python itself....)
+   Memcheck:Leak                                                                
+   fun:malloc                                                                   
+   fun:_PyObject_GC_Malloc                                                      
+   fun:PyType_GenericAlloc  
+}
+{
+  Python leak (ignore all memory allocated by python itself....)
+  Memcheck:Leak
+  fun:malloc
+  fun:PyObject_Malloc
+}
+{
+  Python leak (ignore all memory allocated by python itself....)
+  Memcheck:Leak
+  fun:realloc
+  fun:_PyObject_GC_Resize
+}
+{
+  Python leak (ignore all memory allocated by python itself....)
+  Memcheck:Leak
+  fun:realloc
+  fun:_PyObject_GC_NewVar
+}
+{
+  Python leak (ignore all memory allocated by python itself....)
+  Memcheck:Leak
+  fun:malloc
+  fun:_PyObject_GC_NewVar
+}
+{
+  Python leak
+  Memcheck:Leak
+  fun:malloc
+  fun:_PyObject_GC_NewVar
+  fun:PyFrame_New
+  fun:PyEval_EvalCodeEx
+  fun:function_call
+}
+{
+  Python leak (Python 2.6)
+  Memcheck:Leak
+  fun:malloc
+  fun:_PyObject_GC_Malloc
+  fun:_PyObject_GC_NewVar
+  fun:PyFrame_New
+}
+{
+  GNAT does not release the secondary stack
+  Memcheck:Leak
+  fun:malloc
+  fun:__gnat_malloc
+  fun:system__secondary_stack__ss_allocate
+}
+{
+   Python 2.6 leak
    Memcheck:Leak
-   fun:malloc
-   fun:PyThread_allocate_lock
-   fun:PyEval_InitThreads
-}
-
-{
-   Suppress leaking the GIL after a fork.
-   Memcheck:Leak
-   fun:malloc
-   fun:PyThread_allocate_lock
-   fun:PyEval_ReInitThreads
-}
-
-{
-   Suppress leaking the autoTLSkey.  This looks like it shouldn't leak though.
-   Memcheck:Leak
-   fun:malloc
-   fun:PyThread_create_key
-   fun:_PyGILState_Init
+   ...
    fun:Py_InitializeEx
+   fun:Py_Initialize
    fun:Py_Main
 }
-
 {
-   Hmmm, is this a real leak or like the GIL?
+   From NumPy 1.3.0 (python 2.6) - PyAST_*
+   Memcheck:Leak
+   ...
+   fun:PyAST_*
+}
+{
+   From NumPy 1.3.0 (python 2.6)
    Memcheck:Leak
    fun:malloc
-   fun:PyThread_ReInitTLS
+   ...
+   fun:build_class
 }
-
 {
-   Handle PyMalloc confusing valgrind (possibly leaked)
+   From NumPy 1.3.0 (python 2.6)
    Memcheck:Leak
+   ...
    fun:realloc
-   fun:_PyObject_GC_Resize
-#   fun:COMMENT_THIS_LINE_TO_DISABLE_LEAK_WARNING
+   fun:list_resize
+   fun:app1
 }
-
 {
-   Handle PyMalloc confusing valgrind (possibly leaked)
+   From NumPy 1.3.0 (python 2.6)
    Memcheck:Leak
-   fun:malloc
-   fun:_PyObject_GC_New
-#   fun:COMMENT_THIS_LINE_TO_DISABLE_LEAK_WARNING
-}
-
-{
-   Handle PyMalloc confusing valgrind (possibly leaked)
-   Memcheck:Leak
-   fun:malloc
-   fun:_PyObject_GC_NewVar
-   fun:COMMENT_THIS_LINE_TO_DISABLE_LEAK_WARNING
-}
-
-#
-# Non-python specific leaks
-#
-
-{
-   Handle pthread issue (possibly leaked)
-   Memcheck:Leak
-   fun:calloc
-   fun:allocate_dtv
-   fun:_dl_allocate_tls_storage
-   fun:_dl_allocate_tls
-}
-
-{
-   Handle pthread issue (possibly leaked)
-   Memcheck:Leak
-   fun:memalign
-   fun:_dl_allocate_tls_storage
-   fun:_dl_allocate_tls
-}
-
-{
-   ADDRESS_IN_RANGE/Invalid read of size 4
-   Memcheck:Addr4
-   fun:PyObject_Free
-}
-
-{
-   ADDRESS_IN_RANGE/Invalid read of size 8
-   Memcheck:Value8
-   fun:PyObject_Free
-}
-
-{
-   ADDRESS_IN_RANGE/Conditional jump or move depends on uninitialised value
-   Memcheck:Cond
-   fun:PyObject_Free
-}
-
-{
-   ADDRESS_IN_RANGE/Invalid read of size 4
-   Memcheck:Addr4
-   fun:PyObject_Realloc
-}
-
-{
-   ADDRESS_IN_RANGE/Invalid read of size 8
-   Memcheck:Value8
-   fun:PyObject_Realloc
-}
-
-{
-   ADDRESS_IN_RANGE/Conditional jump or move depends on uninitialised value
-   Memcheck:Cond
-   fun:PyObject_Realloc
-}
-
-###
-### All the suppressions below are for errors that occur within libraries
-### that Python uses.  The problems to not appear to be related to Python's
-### use of the libraries.
-###
-
-{
-   Generic ubuntu ld problems
-   Memcheck:Addr8
-   obj:/lib/ld-2.4.so
-   obj:/lib/ld-2.4.so
-   obj:/lib/ld-2.4.so
-   obj:/lib/ld-2.4.so
-}
-
-{
-   Generic gentoo ld problems
-   Memcheck:Cond
-   obj:/lib/ld-2.3.4.so
-   obj:/lib/ld-2.3.4.so
-   obj:/lib/ld-2.3.4.so
-   obj:/lib/ld-2.3.4.so
-}
-
-{
-   DBM problems, see test_dbm
-   Memcheck:Param
-   write(buf)
-   fun:write
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   fun:dbm_close
-}
-
-{
-   DBM problems, see test_dbm
-   Memcheck:Value8
-   fun:memmove
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   fun:dbm_store
-   fun:dbm_ass_sub
-}
-
-{
-   DBM problems, see test_dbm
-   Memcheck:Cond
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   fun:dbm_store
-   fun:dbm_ass_sub
-}
-
-{
-   DBM problems, see test_dbm
-   Memcheck:Cond
-   fun:memmove
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   obj:/usr/lib/libdb1.so.2
-   fun:dbm_store
-   fun:dbm_ass_sub
-}
-
-{
-   GDBM problems, see test_gdbm
-   Memcheck:Param
-   write(buf)
-   fun:write
-   fun:gdbm_open
-
-}
-
-{
-   ZLIB problems, see test_gzip
-   Memcheck:Cond
-   obj:/lib/libz.so.1.2.3
-   obj:/lib/libz.so.1.2.3
-   fun:deflate
-}
-
-{
-   Avoid problems w/readline doing a putenv and leaking on exit
-   Memcheck:Leak
-   fun:malloc
-   fun:xmalloc
-   fun:sh_set_lines_and_columns
-   fun:_rl_get_screen_size
-   fun:_rl_init_terminal_io
-   obj:/lib/libreadline.so.4.3
-   fun:rl_initialize
-}
-
-###
-### These occur from somewhere within the SSL, when running
-###  test_socket_sll.  They are too general to leave on by default.
-###
-###{
-###   somewhere in SSL stuff
-###   Memcheck:Cond
-###   fun:memset
-###}
-###{
-###   somewhere in SSL stuff
-###   Memcheck:Value4
-###   fun:memset
-###}
-###
-###{
-###   somewhere in SSL stuff
-###   Memcheck:Cond
-###   fun:MD5_Update
-###}
-###
-###{
-###   somewhere in SSL stuff
-###   Memcheck:Value4
-###   fun:MD5_Update
-###}
-
-#
-# All of these problems come from using test_socket_ssl
-#
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:BN_bin2bn
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:BN_num_bits_word
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Value4
-   fun:BN_num_bits_word
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:BN_mod_exp_mont_word
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:BN_mod_exp_mont
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Param
-   write(buf)
-   fun:write
-   obj:/usr/lib/libcrypto.so.0.9.7
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:RSA_verify
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Value4
-   fun:RSA_verify
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Value4
-   fun:DES_set_key_unchecked
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Value4
-   fun:DES_encrypt2
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   obj:/usr/lib/libssl.so.0.9.7
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Value4
-   obj:/usr/lib/libssl.so.0.9.7
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:BUF_MEM_grow_clean
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:memcpy
-   fun:ssl3_read_bytes
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Cond
-   fun:SHA1_Update
-}
-
-{
-   from test_socket_ssl
-   Memcheck:Value4
-   fun:SHA1_Update
-}
-
-{
-   Python init (possibly leaked)
-   Memcheck:Leak
-   fun:malloc
-   fun:_PyObject_GC_NewVar
-   fun:PyFrame_New
-}
-
-{
-   NumPy init (possibly leaked)
-   Memcheck:Leak
-   fun:malloc
-   fun:PyString_FromStringAndSize
+   ...
    fun:PyEval_EvalFrameEx
    fun:PyEval_EvalCodeEx
+   fun:fast_function
+}
+{
+   From NumPy 1.3.0 (python 2.6) - PyMarshal_*
+   Memcheck:Leak
+   fun:malloc
+   ...
+   fun:PyMarshal_*
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   ...
+   fun:import_submodule
+   
+}
+{
+   From NumPy 1.3.0 (python 2.6) - dictresize on init of NumPy.
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   ...
+   fun:load_module
+}
+
+
+###
+### All the suppressions below are special cases.
+###
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:realloc
+   fun:_PyString_Resize
+   fun:string_concatenate
+   fun:PyEval_EvalFrameEx
+   fun:fast_function
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:fast_function
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:PyEval_EvalCode
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:realloc
+   fun:_PyString_Resize
+   fun:PyString_Format
+   fun:string_mod
+   fun:binary_op1
+   fun:binary_op
+   fun:PyNumber_Remainder
+   fun:PyEval_EvalFrameEx
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:type_new
+   fun:tp_new_wrapper
+   fun:PyCFunction_Call
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:function_call
+   fun:PyObject_Call
+   fun:slot_tp_new
+   fun:type_call
+   fun:PyObject_Call
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:realloc
+   fun:_PyString_Resize
+   fun:PyString_FromFormatV
+   fun:PyString_FromFormat
+   fun:ufunc_get_doc
+   fun:getset_get
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:PyObject_GetAttrString
+   fun:arr_add_docstring
+   fun:PyCFunction_Call
+   fun:call_function
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyType_GenericAlloc
+   fun:s_new
+   fun:type_call
+   fun:PyObject_Call
+   fun:PyObject_CallFunctionObjArgs
+   fun:cache_struct
+   fun:calcsize
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:PyEval_EvalCode
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:prepare_s
+   fun:s_init
+   fun:type_call
+   fun:PyObject_Call
+   fun:PyObject_CallFunctionObjArgs
+   fun:cache_struct
+   fun:calcsize
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:PyEval_EvalCode
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyMem_Malloc
+   fun:alloc_format_string
+   fun:PointerType_new
+   fun:type_call
+   fun:PyObject_Call
+   fun:call_function_tail
+   fun:PyObject_CallFunction
+   fun:POINTER
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   fun:PyString_InternFromString
+   fun:new_identifier
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   fun:PyString_InternFromString
+   fun:descr_new
+   fun:PyDescr_NewGetSet
+   fun:add_getset
+   fun:PyType_Ready
+   fun:type_new
+   fun:type_call
+   fun:PyObject_Call
+   fun:call_function_tail
+   fun:PyObject_CallFunction
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   fun:PyString_InternFromString
+   fun:descr_new
+   fun:PyDescr_NewGetSet
+   fun:add_getset
+   fun:PyType_Ready
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:PyObject_GetAttrString
+   fun:PyObject_CallMethod
+   fun:Py_InitializeEx
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   fun:PyString_InternFromString
+   fun:descr_new
+   fun:PyDescr_NewMethod
+   fun:add_methods
+   fun:PyType_Ready
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:PyObject_GetAttrString
+   fun:PyObject_CallMethod
+   fun:Py_InitializeEx
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   fun:PyType_Ready
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:builtin_getattr
+   fun:PyCFunction_Call
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:gen_send_ex
+   fun:gen_iternext
+   fun:PyIter_Next
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:PyString_FromString
+   fun:method_get_doc
+   fun:getset_get
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:PyEval_EvalFrameEx
+   fun:fast_function
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:function_call
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   fun:PyDict_SetItemString
+   fun:add_tp_new_wrapper
+   fun:add_operators
+   fun:PyType_Ready
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:PyImport_Import
+   fun:PyImport_ImportModule
+   fun:_PyExc_Init
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   fun:PyDict_SetItemString
+   fun:type_set_abstractmethods
+   fun:getset_set
+   fun:PyObject_GenericSetAttr
+   fun:type_setattro
+   fun:PyObject_SetAttr
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:function_call
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   fun:PyDict_SetItemString
+   fun:add_methods
+   fun:PyType_Ready
+   fun:PyObject_GenericGetAttr
+   fun:PyObject_GetAttr
+   fun:PyObject_GetAttrString
+   fun:PyObject_CallMethod
+   fun:Py_InitializeEx
+   fun:Py_Initialize
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   fun:PyObject_GenericSetAttr
+   fun:type_setattro
+   fun:PyObject_SetAttr
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:function_call
+   fun:PyObject_Call
+   fun:slot_tp_new
+   fun:type_call
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   fun:PyDict_SetItemString
+   fun:add_getset
+   fun:PyType_Ready
+   fun:type_new
+   fun:tp_new_wrapper
+   fun:PyCFunction_Call
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_Merge
+   fun:PyDict_Copy
+   fun:type_new
+   fun:tp_new_wrapper
+   fun:PyCFunction_Call
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:function_call
+   fun:PyObject_Call
+}
+{
+   From NumPy 1.3.0 (python 2.6)
+   Memcheck:Leak
+   fun:malloc
+   fun:dictresize
+   fun:PyDict_SetItem
+   fun:dict_ass_sub
+   fun:PyObject_SetItem
+   fun:PyEval_EvalFrameEx
+   fun:fast_function
+   fun:call_function
    fun:PyEval_EvalFrameEx
    fun:PyEval_EvalCodeEx
    fun:PyEval_EvalCode
