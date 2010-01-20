@@ -457,7 +457,7 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
                                     strides,
                                     lastary->base->data + offset,
                                     lastary->base->elsize,
-                                    NPY_WRITEABLE, NULL);
+                                    NPY_WRITEABLE | NPY_CARRAY, NULL);
     }
     else
     {
@@ -1090,7 +1090,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
                        NULL,
                        dest,
                        src_ary->base->elsize,
-                       NPY_WRITEABLE, NULL);
+                       NPY_WRITEABLE | NPY_CARRAY, NULL);
         }
         else
         {
@@ -1156,7 +1156,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
                                    strides,
                                    src_ary->base->data + offset,
                                    src_ary->base->elsize,
-                                   NPY_WRITEABLE, NULL);
+                                   NPY_WRITEABLE | NPY_CARRAY, NULL);
         }
         else
         {
@@ -1556,7 +1556,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 //        printf("UFUNC - nocomm_method\n");
         npy_intp dims[NPY_MAXDIMS];
         npy_intp strides[NPY_MAXDIMS];
-
         PyObject *arytuple = PyTuple_New(narys);
         for(i=0; i < narys; i++)
         {
@@ -1607,15 +1606,17 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             PyTuple_SET_ITEM(arytuple, i, PyArray_New(&PyArray_Type,
                              views[i]->ndims, dims,
                              views[i]->base->dtype, strides, data,
-                             views[i]->base->elsize, NPY_WRITEABLE,
-                             NULL));
+                             views[i]->base->elsize, 
+                             NPY_WRITEABLE | NPY_CARRAY, NULL));
         }
-
+        
         //Call the python operator.
-        Py_DECREF(PyObject_CallObject(PyOp, arytuple));
+        PyObject *t = PyObject_CallObject(PyOp, arytuple);
+        Py_XDECREF(t);
 
         //Clean up
         Py_DECREF(arytuple);
+        Py_DECREF(PyOp);
         for(i=0; i<narys; i++)
             if(views[i]->base->ndims == 0)//Scalar dummy.
             {
@@ -1925,6 +1926,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     }
 
     //Clean up
+    Py_DECREF(ufunc_obj);
     for(i=0; i<narys; i++)
     {
         if(views[i]->base->ndims == 0)//Scalar dummy.
@@ -2469,26 +2471,8 @@ static intp
 dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype)
 {
     int i;
-    #ifdef DISTNUMPY_DEBUG
-        if(ndims > NPY_MAXDIMS)
-        {
-            fprintf(stderr,
-                "dnumpy_create_dndarray failed: ndims > NPY_MAXDIMS\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
-        if(ndims <= 0)
-        {
-            fprintf(stderr,
-                "dnumpy_create_dndarray failed: ndims <= 0\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
-        if(myrank != 0)
-        {
-            fprintf(stderr,
-                "dnumpy_create_dndarray failed: myrank != 0\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
-    #endif
+    assert(ndims > 0);
+    assert(ndims < NPY_MAXDIMS);
 
     //Create dndarray.
     dndarray *newarray = malloc(sizeof(dndarray));
@@ -2987,7 +2971,8 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
 
     //Create the returning distributed vector.
     ret = PyArray_New(&PyArray_Type, 1, &count, view->base->dtype,
-                      NULL, NULL, 0, NPY_WRITEABLE | DNPY_DISTRIBUTED,
+                      NULL, NULL, 0, 
+                      NPY_WRITEABLE | NPY_CARRAY | DNPY_DISTRIBUTED,
                       NULL);
 
     //Tell slaves
