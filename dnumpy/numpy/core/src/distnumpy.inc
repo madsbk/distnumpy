@@ -78,6 +78,7 @@ static cblas_func_type *cblas_cgemm_func = NULL;
  * Returns a string describing dtype.
  * Private
  */
+#ifdef DISTNUMPY_DEBUG
 static char *types_numpy2str(int dtype)
 {
     switch(dtype)
@@ -134,35 +135,7 @@ static char *types_numpy2str(int dtype)
             return "\"Unknown data type\"";
     }
 } /* types_numpy2str */
-
-/*===================================================================
- *
- * Return size of dtype in bytes.
- * Private
- */
-static int dtypesize(int dtype)
-{
-    switch(dtype)
-    {
-        case NPY_BOOL:
-            return sizeof(npy_bool);
-        case NPY_FLOAT:
-            return sizeof(npy_float);
-        case NPY_DOUBLE:
-            return sizeof(npy_double);
-        case NPY_CFLOAT:
-            return sizeof(npy_cfloat);
-        case NPY_CDOUBLE:
-            return sizeof(npy_cdouble);
-        case NPY_LONG:
-            return sizeof(npy_long);
-        default:
-            fprintf(stderr, "typesize of %s is not implemented\n",
-                    types_numpy2str(dtype));
-            MPI_Abort(MPI_COMM_WORLD, -1);
-            return 0;
-    }
-} /* typesize */
+#endif
 
 /*===================================================================
  *
@@ -1246,7 +1219,7 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
         printf("CREATE_ARRAY - uid: %ld, dtype: %s(%d),"
                " nelem: %ld, ndims: %d, dims: {",
                (long) view->uid,
-               types_numpy2str(ary->dtype), dtypesize(ary->dtype),
+               types_numpy2str(ary->dtype), ary->elsize,
                (long)nelements, ndims);
         for(i=0; i<ndims-1; i++)
             printf("%ld ", (long)ary->dims[i]);
@@ -1322,7 +1295,7 @@ static void do_SET_ITEM(dndview *view, char* value,
     int i;
 
     //Get element size.
-    int elsize = dtypesize(base->dtype);
+    int elsize = base->elsize;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -1957,8 +1930,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
  * out_ary_uid is the output array uid or scalar datatype.
  * Private.
  */
-static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
-                            char* out_scalar_address, int axis, char* op)
+static void do_UFUNC_REDUCE(npy_intp in_ary_uid, 
+                            npy_intp out_ary_uid,
+                            int out_scalar_dtype, 
+                            int out_scalar_dtypesize,
+                            char* out_scalar_address, 
+                            int axis, char* op)
 {
     int i,j;
     dndview *in_view = get_dndview(in_ary_uid);
@@ -1983,8 +1960,6 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     //If output is a scalar we just use this simple method.
     if(in_ary->ndims == 1)
     {
-        int out_dtype = out_ary_uid;
-
         //Print debug info.
         #ifdef DISTNUMPY_DEBUG
             printf("UFUNC_REDUCE (%s) on - in: %ld, axis: %d, "
@@ -1995,9 +1970,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
         //The master should use the final output address.
         if(myrank == 0)
             local_scalar = PyArray_SimpleNewFromData(0, NULL,
-                           out_dtype, out_scalar_address);
+                           out_scalar_dtype, out_scalar_address);
         else//And the rest just use a new location.
-            local_scalar = PyArray_SimpleNew(0, NULL, out_dtype);
+            local_scalar = PyArray_SimpleNew(0, NULL, out_scalar_dtype);
 
         if(in_ary->localdims[0] > 0)
         {
@@ -2013,7 +1988,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
             //Send local output scalar to the master process.
             if(myrank > 0)
                 MPI_Send(PyArray_DATA(local_scalar),
-                         dtypesize(out_dtype), MPI_BYTE, 0, 0,
+                         out_scalar_dtypesize, MPI_BYTE, 0, 0,
                          MPI_COMM_WORLD);
             Py_DECREF(tmpobj);
         }
@@ -2025,13 +2000,13 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
             {
                 int zero = 0;
                 MPI_Recv(PyArray_DATA(local_scalar),
-                         dtypesize(out_dtype), MPI_BYTE,
+                         out_scalar_dtypesize, MPI_BYTE,
                          cart2rank(1, &zero), 0, MPI_COMM_WORLD,
                          MPI_STATUS_IGNORE);
             }
 
             //We need a tmp scalar for receiving scalars.
-            tmp_scalar = PyArray_SimpleNew(0, NULL, out_dtype);
+            tmp_scalar = PyArray_SimpleNew(0, NULL, out_scalar_dtype);
 
             //For all ranks in dimension 'axis', we reduces the scalars
             //to local_scalar at the master.
@@ -2041,11 +2016,14 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
                                 i, cart_dim_sizes[0][0]))
                     continue;
 
-                MPI_Recv(PyArray_DATA(tmp_scalar), dtypesize(out_dtype),
+                MPI_Recv(PyArray_DATA(tmp_scalar), out_scalar_dtypesize,
                          MPI_BYTE, cart2rank(1, &i), 0, MPI_COMM_WORLD,
                          MPI_STATUS_IGNORE);
-                PyObject_CallFunction(PyOp, "(O,O,O)", local_scalar,
-                                      tmp_scalar, local_scalar);
+                PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)", 
+                                                    local_scalar, 
+                                                    tmp_scalar, 
+                                                    local_scalar);
+                Py_DECREF(t);
             }
             Py_DECREF(tmp_scalar);
         }
@@ -2081,7 +2059,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     //First we creates are MPI window for the output array.
     MPI_Win win;
     MPI_Win_create(out_ary->data, out_ary->nelements *
-                   dtypesize(out_ary->dtype), 1, MPI_INFO_NULL,
+                   out_ary->elsize, 1, MPI_INFO_NULL,
                    MPI_COMM_WORLD, &win);
 
     PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
@@ -2127,8 +2105,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
 
             //We use ufunc to "reduce" the two arrays over the
             //non-existing 'axis' dimension.
-            PyObject_CallFunction(PyOp, "(O,O,O)", subres, tmpres,
-                                  subres);
+            PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)", subres, 
+                                                tmpres, subres);
+            Py_DECREF(t);
             Py_DECREF(tmpres);
         }
 
@@ -2196,7 +2175,7 @@ static void do_ZEROFILL(dndview *view)
     }
 
     memset(view->base->data, 0, view->base->nelements *
-                                dtypesize(view->base->dtype));
+                                view->base->elsize);
 } /* do_ZEROFILL */
 
 /*===================================================================
@@ -2474,7 +2453,8 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
  * Public
  */
 static intp
-dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype)
+dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype, 
+                       intp dtypesize)
 {
     int i;
     assert(ndims > 0);
@@ -2484,7 +2464,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype)
     dndarray *newarray = malloc(sizeof(dndarray));
 
     newarray->dtype = dtype;
-    newarray->elsize = dtypesize(dtype);
+    newarray->elsize = dtypesize;
     newarray->ndims = ndims;
     newarray->refcount = 1;
     for(i=0; i<ndims; i++)
@@ -2693,7 +2673,7 @@ dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
     //Get arrray structs.
     dndview *view = get_dndview(uid);
     int ndims = view->base->ndims;
-    int elsize = dtypesize(view->base->dtype);
+    int elsize = view->base->elsize;
 
     //Convert item to a compatible type.
     PyObject *item2 = PyArray_FROM_O(item);
@@ -2852,44 +2832,40 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
     if(out_ary->dnduid > 0)
     {
         dndview *out = get_dndview(out_ary->dnduid);
-        for(i=0; i<out->nslice;i++)
+        //Check if the views covers the whole array.
+        if(in->alterations != 0 || out->alterations != 0)
         {
-            if(out->slice[i].nsteps == SingleIndex ||
-               out->slice[i].nsteps == PseudoIndex ||
-               out->slice[i].start != 0 || out->slice[i].step != 1 ||
-               out->slice[i].nsteps != out->base->dims[i])
-            {
-                PyErr_SetString(PyExc_RuntimeError,
-                                "reduce on distributed arrays must"
-                                "be whole arrays and not a partial"
-                                " view of a underlying array.");
-                return -1;
-            }
+            PyErr_SetString(PyExc_RuntimeError,
+                            "reduce on distributed arrays must"
+                            "be whole arrays and not a partial"
+                            " view of a underlying array.");
+            return -1;
         }
     }
 
-    //Tell slaves about the destruction
+    //Tell slaves
     msg[0] = DNPY_UFUNC_REDUCE;
     msg[1] = in_ary->dnduid;
     msg[2] = out_ary->dnduid;
-    msg[3] = axis;
+    //If out_ary is a scalar we will send the datatype and datatypesize.
+    if(out_ary->dnduid == 0)
+    {
+        msg[3] = PyArray_TYPE(out_ary);
+        msg[4] = PyArray_ITEMSIZE(out_ary);
+    }
+    msg[5] = axis;       
+    strcpy((char*)(msg+6), op);
+    *(((char*)(msg+6))+strlen(op)+1) = DNPY_MSG_END;
 
-    //If out_ary is a scalar we will send the datatype instead of uid.
-    if(msg[2] == 0)
-        msg[2] = out_ary->descr->type_num;
-
-    strcpy((char*)(msg+4), op);
-
-    *(((char*)(msg+4))+strlen(op)+1) = DNPY_MSG_END;
-
-    msg2slaves(msg, 5*sizeof(npy_intp)+strlen(op)+1);
+    msg2slaves(msg, 7*sizeof(npy_intp)+strlen(op)+1);
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC_REDUCE(msg[1], msg[2], out_ary->data, axis, op);
+    do_UFUNC_REDUCE(msg[1], msg[2], msg[3], msg[4], 
+                    out_ary->data, axis, op);
     return 0;
 } /* dnumpy_ufunc_reduce */
 
@@ -3201,7 +3177,7 @@ dnumpy_master_slave_split()
             case DNPY_SET_ITEM:
                 ary = get_dndview(*((npy_intp*)msg_data));
                 t1 = msg_data+sizeof(npy_intp);
-                t2 = t1+dtypesize(ary->base->dtype);
+                t2 = t1+ary->base->elsize;
                 do_SET_ITEM(ary, t1, (npy_intp*) t2);
                 break;
             case DNPY_GET_ITEM:
@@ -3224,9 +3200,10 @@ dnumpy_master_slave_split()
                 d1 = *((npy_intp*)msg_data);
                 d2 = *(((npy_intp*)msg_data)+1);
                 d3 = *(((npy_intp*)msg_data)+2);
-                t1 = msg_data+sizeof(npy_intp)*3;
-                //3. arg: msg_data is just used as a non-NULL pointer.
-                do_UFUNC_REDUCE(d1, d2, NULL, d3, t1);
+                d4 = *(((npy_intp*)msg_data)+3);
+                d5 = *(((npy_intp*)msg_data)+4);
+                t1 = msg_data+sizeof(npy_intp)*5;
+                do_UFUNC_REDUCE(d1, d2, d3, d4, NULL, d5, t1);
                 break;
             case DNPY_ZEROFILL:
                 do_ZEROFILL(get_dndview(*((npy_intp*)msg_data)));
