@@ -1,6 +1,29 @@
 #Test and demonstration of DistNumPy.
 import numpy as np
 import random
+import sys
+
+pydebug = True
+try:
+    sys.gettotalrefcount()
+except AttributeError:
+    pydebug = False
+
+def funtest(fun, str):
+    print "*"*100
+    print "Testing %s"%str
+    if pydebug:
+        r1 = sys.gettotalrefcount()
+        out = fun(6)
+        r2 = sys.gettotalrefcount()
+        if r2-2 != r1:
+            print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
+    else:
+        out = fun(6)
+    if out:
+        print "Succes"
+    else:
+        print "Fail!"
 
 def array_equal(A,B):
     if type(A) is not type(B):
@@ -30,13 +53,12 @@ def random_list(dims):
         list.append(random_list(dims[0:-1]))
     return list
 
-
 def ufunc(max_ndim=5):
-    for i in range(1,max_ndim+1):
-        src = random_list(random.sample(range(1, 10),i))
+    for i in xrange(1,max_ndim+1):
+        src = random_list(random.sample(xrange(1, 10),i))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
-
+        
         ran = random.randint(0,i-1)
         if i > 1 and ran > 0:
             for j in range(0,ran):
@@ -44,7 +66,7 @@ def ufunc(max_ndim=5):
 
         Bd = np.array(src, dtype=float, dist=True)
         Bf = np.array(src, dtype=float, dist=False)
-
+        
         Cd = Ad + Bd + 42 + Bd[-1]
         Cf = Af + Bf + 42 + Bf[-1]
         Cd = Cd[::2] + Cd[::2,...] + Cd[0,np.newaxis]
@@ -87,7 +109,8 @@ def ufunc_reduce(max_ndim=6):
     return True
 
 def diagonal(niters=10):
-    for i in range(niters):
+    niters *= 10
+    for i in xrange(niters):
         src = random_list([random.randint(1, 20), \
                            random.randint(1, 20)])
         Ad = np.array(src, dtype=float, dist=True)
@@ -122,30 +145,8 @@ def matmul(niter=2):
     return True
 
 
-print "*"*100
-print "Testing ufunc"
-if ufunc(6):
-    print "Succes"
-else:
-    print "Fail!"
 
-print "*"*100
-print "Testing ufunc reduce (no views)"
-if ufunc_reduce(6):
-    print "Succes"
-else:
-    print "Fail!"
-
-print "*"*100
-print "Testing diagonal (no views)"
-if diagonal(100):
-    print "Succes"
-else:
-    print "Fail!"
-
-print "*"*100
-print "Testing matrix multiplication (no views)"
-if matmul(6):
-    print "Succes"
-else:
-    print "Fail!"
+funtest(ufunc, "ufunc")
+funtest(ufunc_reduce, "ufunc reduce (no views)")
+funtest(diagonal, "diagonal (no views)")
+funtest(matmul, "matrix multiplication (no views)")
