@@ -700,6 +700,7 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     //Clean up
     MPI_Type_free(&src_ary_type);
     MPI_Type_free(&dest_ary_type);
+    MPI_Type_free(&elem_type);
 
     return 0;
 } /* remote_blockput */
@@ -1078,8 +1079,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
         printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
         printf("5 - Create array - ndims: %d, vdims: [%ld, %ld]\n", src_ary->ndims, vdims[0], vdims[1]);
     */
-    //    *ret_ary = PyArray_SimpleNewFromData(src_ary->ndims, vdims,
-    //                                         src_ary->base->dtype, dest);
 
         if(*ret_ary == NULL)
         {
@@ -1907,7 +1906,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                                      i*views[j]->base->elsize));
 
                 //Call the python operator.
-                Py_XDECREF(PyObject_CallObject(PyOp, arytuple));
+                PyObject *t = PyObject_CallObject(PyOp, arytuple);
+                Py_XDECREF(t);
                 Py_DECREF(arytuple);
             }
 
@@ -2005,8 +2005,10 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
                                                in_ary->dtype,
                                                in_ary->data);
             //Compute local reduce.
-            PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
-                                tmpobj, axis, Py_None, local_scalar);
+            PyObject *t = PyObject_CallMethod(PyOp, "reduce", 
+                                              "(O,i,O,O)", tmpobj, axis, 
+                                              Py_None, local_scalar);
+            Py_XDECREF(t);
 
             //Send local output scalar to the master process.
             if(myrank > 0)
@@ -2048,6 +2050,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
             Py_DECREF(tmp_scalar);
         }
         Py_DECREF(local_scalar);
+        Py_DECREF(PyOp);
         return;
     }
 
@@ -2169,6 +2172,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid, npy_intp out_ary_uid,
     //Cleanup
     MPI_Win_free(&win);//Incl. Barrier.
     Py_DECREF(subres);
+    Py_DECREF(PyOp);
 
 } /* do_UFUNC_REDUCE */
 
@@ -2443,6 +2447,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                         &tmp, iwrk, NULL);
                     ((double *)C->base->data)[m+n*C->base->localdims[1]] += tmp;
                 }
+            Py_DECREF(descr);
         }
 
         //Iterate indexes.
@@ -2455,6 +2460,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     }
 
     //Cleanup
+    MPI_Type_free(&elementtype);
     free(work0);
     free(work1);
     free(temp);
@@ -3044,7 +3050,6 @@ dnumpy_init(void)
             cart_dim_strides[i][j] = stride;
         }
     }
-
 } /* dnumpy_init */
 
 
@@ -3122,6 +3127,7 @@ dnumpy_exit()
  * Public
  * From this point on the master will continue with the pyton code
  * and the slaves will stay in C.
+ * If returning False the Python must call sys.exit(0) immediately.
  */
 static PyObject *
 dnumpy_master_slave_split()
@@ -3153,7 +3159,7 @@ dnumpy_master_slave_split()
         printf("Rank 0 received msg: ");
         #endif
         do_INIT_BLOCKSIZE(msg[1]);
-        return Py_None;
+        return Py_True;
     }
 
     int shutdown = 0;
@@ -3244,9 +3250,8 @@ dnumpy_master_slave_split()
                 MPI_Abort(MPI_COMM_WORLD, -1);
         }
     }
-    dnumpy_exit();
-    exit(0);
-    return Py_None;
+    return Py_False;
+    
 } /* dnumpy_master_slave_split */
 
 /*NUMPY_API
