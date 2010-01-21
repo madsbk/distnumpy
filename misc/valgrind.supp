@@ -236,14 +236,21 @@
    
 }
 {
-   From NumPy 1.3.0 (python 2.6) - dictresize on init of NumPy.
+   From NumPy 1.3.0 (python 2.6)
    Memcheck:Leak
    fun:malloc
    fun:dictresize
-   fun:PyDict_SetItem
-   ...
-   fun:load_module
 }
+{
+   From DistNumPy (python 2.6) - non-freed ufunc in slave processes.
+   Memcheck:Leak
+   fun:malloc
+   ...
+   fun:PyUFunc_FromFuncAndDataAndSignature
+   ...
+   fun:initumath
+}
+
 
 
 ###
@@ -446,114 +453,34 @@
    fun:function_call
 }
 {
-   From NumPy 1.3.0 (python 2.6)
+   From DistNumPy (python 2.6) - non-freed in slave processes.
    Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_SetItem
-   fun:PyDict_SetItemString
-   fun:add_tp_new_wrapper
-   fun:add_operators
-   fun:PyType_Ready
-   fun:PyObject_GenericGetAttr
-   fun:PyObject_GetAttr
-   fun:PyImport_Import
-   fun:PyImport_ImportModule
-   fun:_PyExc_Init
-}
-{
-   From NumPy 1.3.0 (python 2.6)
-   Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_SetItem
-   fun:PyDict_SetItemString
-   fun:type_set_abstractmethods
-   fun:getset_set
-   fun:PyObject_GenericSetAttr
-   fun:type_setattro
-   fun:PyObject_SetAttr
-   fun:PyEval_EvalFrameEx
-   fun:PyEval_EvalCodeEx
-   fun:function_call
-}
-{
-   From NumPy 1.3.0 (python 2.6)
-   Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_SetItem
-   fun:PyDict_SetItemString
-   fun:add_methods
-   fun:PyType_Ready
-   fun:PyObject_GenericGetAttr
-   fun:PyObject_GetAttr
-   fun:PyObject_GetAttrString
-   fun:PyObject_CallMethod
-   fun:Py_InitializeEx
-   fun:Py_Initialize
-}
-{
-   From NumPy 1.3.0 (python 2.6)
-   Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_SetItem
-   fun:PyObject_GenericSetAttr
-   fun:type_setattro
-   fun:PyObject_SetAttr
-   fun:PyEval_EvalFrameEx
-   fun:PyEval_EvalCodeEx
-   fun:function_call
-   fun:PyObject_Call
-   fun:slot_tp_new
-   fun:type_call
-}
-{
-   From NumPy 1.3.0 (python 2.6)
-   Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_SetItem
-   fun:PyDict_SetItemString
-   fun:add_getset
-   fun:PyType_Ready
-   fun:type_new
-   fun:tp_new_wrapper
-   fun:PyCFunction_Call
-   fun:call_function
-   fun:PyEval_EvalFrameEx
-   fun:PyEval_EvalCodeEx
-}
-{
-   From NumPy 1.3.0 (python 2.6)
-   Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_Merge
-   fun:PyDict_Copy
-   fun:type_new
-   fun:tp_new_wrapper
-   fun:PyCFunction_Call
-   fun:call_function
-   fun:PyEval_EvalFrameEx
-   fun:PyEval_EvalCodeEx
-   fun:function_call
-   fun:PyObject_Call
-}
-{
-   From NumPy 1.3.0 (python 2.6)
-   Memcheck:Leak
-   fun:malloc
-   fun:dictresize
-   fun:PyDict_SetItem
-   fun:dict_ass_sub
-   fun:PyObject_SetItem
-   fun:PyEval_EvalFrameEx
-   fun:fast_function
+   fun:realloc
+   fun:list_resize
+   fun:listextend
    fun:call_function
    fun:PyEval_EvalFrameEx
    fun:PyEval_EvalCodeEx
    fun:PyEval_EvalCode
    fun:PyImport_ExecCodeModuleEx
+   fun:load_source_module
+   fun:load_module
+   fun:load_package
+   fun:load_module
+}
+{
+   From DistNumPy (python 2.6) - non-freed in slave processes.
+   Memcheck:Leak
+   fun:malloc
+   fun:PyList_New
+   fun:do_mklist
+   fun:do_mkvalue
+   fun:va_build_value
+   fun:Py_BuildValue
+   fun:load_package
+   fun:load_module
+   fun:import_submodule
+   fun:load_next
+   fun:import_module_level
+   fun:PyImport_ImportModuleLevel
 }
