@@ -1,5 +1,6 @@
 #ifndef DISTNUMPY_H
 #define DISTNUMPY_H
+#include "mpi.h"
 
 //#define DISTNUMPY_DEBUG
 
@@ -49,7 +50,8 @@ typedef struct
     //npy_intp nblocks;
     //Size of local block-dimensions (local to the MPI-process).
     npy_intp localblockdims[NPY_MAXDIMS];
-    
+    //One-sided communication window (used by MPI_Get and MPI_Put).
+    MPI_Win comm_win;
 } dndarray;
 
 //Type describing a slice of a dimension.

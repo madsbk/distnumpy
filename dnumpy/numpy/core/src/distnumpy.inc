@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <math.h>
-#include "mpi.h"
 
 #ifndef CBLAS_HEADER
 #define CBLAS_HEADER "../blasdot/cblas.h"
@@ -241,6 +240,7 @@ static void rm_dndview(npy_intp uid)
                 dndviews_uid[i] = 0;
                 if(--dndviews[i].base->refcount == 0)
                 {
+                    MPI_Win_free(&dndviews[i].base->comm_win);
                     MPI_Free_mem(dndviews[i].base->data);
                     free(dndviews[i].base);
                 }
@@ -583,7 +583,7 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
  */
 static int remote_blockput(PyObject *src, dndarray *src_ary,
                            dndarray *dest_ary,
-                           int reduce_axis, MPI_Win *win,
+                           int reduce_axis,
                            npy_intp lcoords[NPY_MAXDIMS])
 {
     int i, j, src_ndims = PyArray_NDIM(src);
@@ -665,10 +665,10 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     //A exclusive lock is required since two put updates must not
     //concurrently access nonoverlapping locations in a window
     //(MPI-2.1 s. 351).
-    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, *win);
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, dest_ary->comm_win);
     MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
-            dest_ary_type, *win);
-    MPI_Win_unlock(rank, *win);
+            dest_ary_type, dest_ary->comm_win);
+    MPI_Win_unlock(rank, dest_ary->comm_win);
 
     //Clean up
     MPI_Type_free(&src_ary_type);
@@ -688,7 +688,7 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
  * Private.
  */
 static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
-                      MPI_Win *win, const npy_intp lcoords[NPY_MAXDIMS])
+                      const npy_intp lcoords[NPY_MAXDIMS])
 {
     int i;
     int ai = 0;
@@ -839,11 +839,11 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
     int rank = cart2rank(src_ary->base->ndims, pcoords);
 
     //Transfer element.
-    MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, *win);
+    MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, src_ary->base->comm_win);
     MPI_Get(dest, src_ary->base->elsize, MPI_BYTE, rank,
             offset*src_ary->base->elsize,
-            src_ary->base->elsize, MPI_BYTE, *win);
-    MPI_Win_unlock(rank, *win);
+            src_ary->base->elsize, MPI_BYTE, src_ary->base->comm_win);
+    MPI_Win_unlock(rank, src_ary->base->comm_win);
 
 //    printf("5 - reading data at rank %d, value: %lf\n", rank, *((double*)dest));
 
@@ -862,7 +862,7 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
  * Private.
  */
 static int remote_blockget(char *dest, dndview *src_ary,
-                           dndview *dest_ary, MPI_Win *win,
+                           dndview *dest_ary,
                            const npy_intp lcoords[NPY_MAXDIMS],
                            int *locked_rank,
                            PyObject **ret_ary)
@@ -1043,8 +1043,8 @@ static int remote_blockget(char *dest, dndview *src_ary,
 
         //Transfer element.
         *locked_rank = rank;
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, *win);
-        MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, *win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, src_ary->base->comm_win);
+        MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, src_ary->base->comm_win);
 
         MPI_Type_free(&arraytype);
         MPI_Type_free(&elementtype);
@@ -1207,6 +1207,10 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
+    //Create the window for one-sided communication.
+    MPI_Win_create(ary->data, nelements * ary->elsize, 1, MPI_INFO_NULL,
+                   MPI_COMM_WORLD, &ary->comm_win);
+
     //Allocate and copy the array to the views's base.
     view->base = malloc(sizeof(dndarray));
     memcpy(view->base, ary, sizeof(dndarray));
@@ -1308,11 +1312,6 @@ static void do_SET_ITEM(dndview *view, char* value,
         }
     #endif
 
-    MPI_Win win;
-    MPI_Win_create(base->data, base->nelements *
-                   elsize, 1, MPI_INFO_NULL,
-                   MPI_COMM_WORLD, &win);
-
     if(myrank == 0)
     {
         npy_intp newcoord[NPY_MAXDIMS];
@@ -1343,12 +1342,12 @@ static void do_SET_ITEM(dndview *view, char* value,
         int rank = cart2rank(base->ndims, pcoords);
 
         //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, base->comm_win);
         MPI_Put(value, elsize, MPI_BYTE, rank, offset*elsize, elsize,
-                MPI_BYTE, win);
-        MPI_Win_unlock(rank, win);
+                MPI_BYTE, base->comm_win);
+        MPI_Win_unlock(rank, base->comm_win);
     }
-    MPI_Win_free(&win);//Incl. Barrier.
+    MPI_Barrier(MPI_COMM_WORLD);
 } /* do_SET_ITEM */
 
 /*===================================================================
@@ -1376,11 +1375,6 @@ static void do_GET_ITEM(char *retdata, dndview *view,
         }
     #endif
 
-    MPI_Win win;
-    MPI_Win_create(base->data, base->nelements *
-                   elsize, 1, MPI_INFO_NULL,
-                   MPI_COMM_WORLD, &win);
-
     if(myrank == 0)
     {
         npy_intp newcoord[NPY_MAXDIMS];
@@ -1411,12 +1405,12 @@ static void do_GET_ITEM(char *retdata, dndview *view,
         int rank = cart2rank(base->ndims, pcoords);
 
         //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, base->comm_win);
         MPI_Get(retdata, elsize, MPI_BYTE, rank, offset*elsize, elsize,
-                MPI_BYTE, win);
-        MPI_Win_unlock(rank, win);
+                MPI_BYTE, base->comm_win);
+        MPI_Win_unlock(rank, base->comm_win);
     }
-    MPI_Win_free(&win);//Incl. Barrier.
+    MPI_Barrier(MPI_COMM_WORLD);
 
 } /* do_GET_ITEM */
 
@@ -1598,12 +1592,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         return;
     }//End of the simple method.
 
-    MPI_Win win[NPY_MAXARGS];
-    for(i=0; i<nin; i++)
-        MPI_Win_create(views[i]->base->data, views[i]->base->nelements *
-                       views[i]->base->elsize, 1,
-                       MPI_INFO_NULL, MPI_COMM_WORLD, &win[i]);
-
     npy_intp coords[NPY_MAXDIMS];
     memset(coords, 0, NPY_MAXDIMS * sizeof(npy_intp));
     if(block_method)
@@ -1732,7 +1720,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         for(j=0; j<nin; j++)
         {
             remote_blockget(buffer[0][j], views[j],
-                            lastary, &win[j],
+                            lastary,
                             coords,
                             &locked_ranks[j],
                             &recv_blocklist[j]);
@@ -1749,7 +1737,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 {
                     if(locked_ranks[j] >= 0)
                     {
-                        MPI_Win_unlock(locked_ranks[j], win[j]);
+                        MPI_Win_unlock(locked_ranks[j], views[j]->base->comm_win);
                         locked_ranks[j] = -1;
                     }
                     apply_blocklist[j] = recv_blocklist[j];
@@ -1771,7 +1759,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     //iteration.
                     remote_blockget(buffer[e[j]][j],
                                     views[j],
-                                    lastary, &win[j],
+                                    lastary,
                                     next_get_coords[j],
                                     &locked_ranks[j],
                                     &obj_blocklist[j]);
@@ -1858,8 +1846,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             int not_inside_view = 0;
             for(j=0; j<nin; j++)
                 not_inside_view += remote_get(buffer[j], views[j],
-                                              lastary, &win[j],
-                                              coords);
+                                              lastary, coords);
             //If just one is outside we jump to next element.
             if(!not_inside_view)
             {
@@ -1907,10 +1894,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             free(views[i]->base);
             free(views[i]);
         }
-    }
-    for(i=0; i<nin; i++)
-    {
-        MPI_Win_free(&win[i]);
     }
 #ifdef DNPY_TIME
     gettimeofday(&tv, &tz);
@@ -2056,12 +2039,6 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     //The senders should send its sub-results to the receiver with
     //identical coordinates beside zero in the axis-dimension.
 
-    //First we creates are MPI window for the output array.
-    MPI_Win win;
-    MPI_Win_create(out_ary->data, out_ary->nelements *
-                   out_ary->elsize, 1, MPI_INFO_NULL,
-                   MPI_COMM_WORLD, &win);
-
     PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
                                               in_ary->localdims,
                                               in_ary->dtype,
@@ -2117,8 +2094,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         if(PyArray_SIZE(subres) > 0)
             while(notfinished)
             {
-                remote_blockput(subres, in_ary, out_ary, axis, &win,
-                                lcoords);
+                remote_blockput(subres, in_ary, out_ary, axis, lcoords);
 
                 //Iterate coords one element.
                 for(j=in_ary->ndims-1; j >= 0; j--)
@@ -2149,7 +2125,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     }
 
     //Cleanup
-    MPI_Win_free(&win);//Incl. Barrier.
+    MPI_Barrier(MPI_COMM_WORLD);
     Py_DECREF(subres);
     Py_DECREF(PyOp);
 
@@ -2189,7 +2165,6 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
     int mypcoord, pcoord[2];
     npy_intp lcoord, gcoord, bsize;
     MPI_Datatype arraytype, elementtype;
-    MPI_Win win;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -2204,11 +2179,6 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
 
     //Find process coord in output vector.
     rank2cart(1, myrank, &mypcoord);
-
-    //Setup window for input.
-    MPI_Win_create(in->base->data,
-                   in->base->nelements * in->base->elsize, 1,
-                   MPI_INFO_NULL, MPI_COMM_WORLD, &win);
 
     //Iterate over the output vector.
     npy_intp nblocks = out->base->localblockdims[0];
@@ -2254,9 +2224,9 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         MPI_Type_commit(&arraytype);
 
         //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, win);
-        MPI_Get(out_data, bsize, elementtype, rank, offset * in->base->elsize, 1, arraytype, win);
-        MPI_Win_unlock(rank, win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, in->base->comm_win);
+        MPI_Get(out_data, bsize, elementtype, rank, offset * in->base->elsize, 1, arraytype, in->base->comm_win);
+        MPI_Win_unlock(rank, in->base->comm_win);
 
         //Clean up
         MPI_Type_free(&arraytype);
@@ -2266,8 +2236,8 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
     }
 
     //Clean up
+    MPI_Barrier(MPI_COMM_WORLD);
     MPI_Type_free(&elementtype);
-    MPI_Win_free(&win);//Incl. sync.
 }
 
 /*===================================================================
