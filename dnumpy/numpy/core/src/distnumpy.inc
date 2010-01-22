@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sys/time.h>
 #include <math.h>
 
 #ifndef CBLAS_HEADER
@@ -243,6 +242,7 @@ static void rm_dndview(npy_intp uid)
                     MPI_Win_free(&dndviews[i].base->comm_win);
                     MPI_Free_mem(dndviews[i].base->data);
                     free(dndviews[i].base);
+                    MPI_Type_free(&dndviews[i].base->mpi_dtype);
                 }
                 return;
             }
@@ -1032,13 +1032,13 @@ static int remote_blockget(char *dest, dndview *src_ary,
 //        printf("MPI_Type_create_subarray - dist_ndims: %d -> src_ndims: %d, ldims: [%d, %d],  bdims: [%d, %d], subary_coords: [%d, %d], msgsize: %ld\n", dest_ary->base->ndims, src_ary->base->ndims, ldims[0], ldims[1], bdims[0], bdims[1], subary_coords[0], subary_coords[1], msgsize);
 
         //Setup a matching MPI datatype.
-        MPI_Datatype arraytype, elementtype;
-        MPI_Type_contiguous(src_ary->base->elsize, MPI_BYTE, &elementtype);
+        MPI_Datatype arraytype;
         MPI_Type_create_subarray(src_ary->base->ndims,
                                  ldims,
                                  bdims,
                                  subary_coords,
-                                 MPI_ORDER_C, elementtype, &arraytype);
+                                 MPI_ORDER_C, src_ary->base->mpi_dtype, 
+                                 &arraytype);
         MPI_Type_commit(&arraytype);
 
         //Transfer element.
@@ -1047,7 +1047,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
         MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, src_ary->base->comm_win);
 
         MPI_Type_free(&arraytype);
-        MPI_Type_free(&elementtype);
     /*
         printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
         printf("5 - Create array - ndims: %d, vdims: [%ld, %ld]\n", src_ary->ndims, vdims[0], vdims[1]);
@@ -1210,6 +1209,10 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     //Create the window for one-sided communication.
     MPI_Win_create(ary->data, nelements * ary->elsize, 1, MPI_INFO_NULL,
                    MPI_COMM_WORLD, &ary->comm_win);
+
+    //Create a MPI-datatype that correspond to an array element.
+    MPI_Type_contiguous(ary->elsize, MPI_BYTE, &ary->mpi_dtype);
+    MPI_Type_commit(&ary->mpi_dtype);
 
     //Allocate and copy the array to the views's base.
     view->base = malloc(sizeof(dndarray));
@@ -1572,10 +1575,10 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             PyTuple_SET_ITEM(arytuple, i, PyArray_New(&PyArray_Type,
                              views[i]->ndims, dims,
                              views[i]->base->dtype, strides, data,
-                             views[i]->base->elsize, 
+                             views[i]->base->elsize,
                              NPY_WRITEABLE | NPY_CARRAY, NULL));
         }
-        
+
         //Call the python operator.
         PyObject *t = PyObject_CallObject(PyOp, arytuple);
         Py_XDECREF(t);
@@ -1610,8 +1613,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
         //Receive buffers. Two buffers per array (double buffering).
         char *buffer[2][NPY_MAXARGS];
-
-//        printf("UFUNC - block_method\n");
 
         //Allocate buffers.
         for(i=0; i<nin; i++)
@@ -1788,7 +1789,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 else
                     break;
             }
-
             for(j=0; j<nin; j++)
             {
                 //Use the previous block if we are broadcasting.
@@ -1829,13 +1829,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             free(buffer[0][j]);
             free(buffer[1][j]);
         }
-
     }//End of the block method.
     else
     {
         //Receive buffers. One per array (single buffering).
         char *buffer[NPY_MAXARGS];
-//        printf("UFUNC - NO simple method\n");
 
         //Allocate a buffer for every array.
         for(i=0; i<nin; i++)
@@ -1913,11 +1911,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
  * out_ary_uid is the output array uid or scalar datatype.
  * Private.
  */
-static void do_UFUNC_REDUCE(npy_intp in_ary_uid, 
+static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                             npy_intp out_ary_uid,
-                            int out_scalar_dtype, 
+                            int out_scalar_dtype,
                             int out_scalar_dtypesize,
-                            char* out_scalar_address, 
+                            char* out_scalar_address,
                             int axis, char* op)
 {
     int i,j;
@@ -1963,8 +1961,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                                                in_ary->dtype,
                                                in_ary->data);
             //Compute local reduce.
-            PyObject *t = PyObject_CallMethod(PyOp, "reduce", 
-                                              "(O,i,O,O)", tmpobj, axis, 
+            PyObject *t = PyObject_CallMethod(PyOp, "reduce",
+                                              "(O,i,O,O)", tmpobj, axis,
                                               Py_None, local_scalar);
             Py_XDECREF(t);
 
@@ -2002,9 +2000,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                 MPI_Recv(PyArray_DATA(tmp_scalar), out_scalar_dtypesize,
                          MPI_BYTE, cart2rank(1, &i), 0, MPI_COMM_WORLD,
                          MPI_STATUS_IGNORE);
-                PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)", 
-                                                    local_scalar, 
-                                                    tmp_scalar, 
+                PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)",
+                                                    local_scalar,
+                                                    tmp_scalar,
                                                     local_scalar);
                 Py_DECREF(t);
             }
@@ -2082,7 +2080,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
             //We use ufunc to "reduce" the two arrays over the
             //non-existing 'axis' dimension.
-            PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)", subres, 
+            PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)", subres,
                                                 tmpres, subres);
             Py_DECREF(t);
             Py_DECREF(tmpres);
@@ -2164,7 +2162,7 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
 {
     int mypcoord, pcoord[2];
     npy_intp lcoord, gcoord, bsize;
-    MPI_Datatype arraytype, elementtype;
+    MPI_Datatype arraytype;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -2172,10 +2170,6 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
                "(%d, %d)\n",(long)in->uid, (long)out->uid, offset,
                             axis1, axis2);
     #endif
-
-    //Element type.
-    MPI_Type_contiguous(in->base->elsize, MPI_BYTE, &elementtype);
-    MPI_Type_commit(&elementtype);
 
     //Find process coord in output vector.
     rank2cart(1, myrank, &mypcoord);
@@ -2220,12 +2214,15 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         int rank = cart2rank(2, pcoord);
 
         //Setup a matching MPI datatype.
-        MPI_Type_vector(bsize, 1, ldims[1]+1, elementtype, &arraytype);
+        MPI_Type_vector(bsize, 1, ldims[1]+1, in->base->mpi_dtype, 
+                        &arraytype);
         MPI_Type_commit(&arraytype);
 
         //Transfer element.
         MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, in->base->comm_win);
-        MPI_Get(out_data, bsize, elementtype, rank, offset * in->base->elsize, 1, arraytype, in->base->comm_win);
+        MPI_Get(out_data, bsize, in->base->mpi_dtype, rank, 
+                offset * in->base->elsize, 1, arraytype, 
+                in->base->comm_win);
         MPI_Win_unlock(rank, in->base->comm_win);
 
         //Clean up
@@ -2234,10 +2231,8 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         //Iterate output data one block.
         out_data += bsize * in->base->elsize;
     }
-
-    //Clean up
+    //Sync.
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Type_free(&elementtype);
 }
 
 /*===================================================================
@@ -2299,11 +2294,6 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     int ldb = MAX(B->base->localdims[1], 1);
     int ldc = MAX(C->base->localdims[1], 1);
 
-    //Setup a matching MPI datatype.
-    MPI_Datatype elementtype;
-    MPI_Type_contiguous(A->base->elsize, MPI_BYTE, &elementtype);
-    MPI_Type_commit(&elementtype);
-
     for (kk=0; kk<A->base->dims[1]; kk+=iwrk)
     {
         iwrk = MIN(blocksize, A->base->dims[1] - kk);
@@ -2333,7 +2323,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]-1+cart_dim[1])%cart_dim[1];
                 MPI_Recv(work0, A->base->localdims[0] * iwrk,
-                         elementtype, cart2rank(2,tcoord),
+                         A->base->mpi_dtype, cart2rank(2,tcoord),
                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
             //Send the iwrk'th column to the right neighbour but
@@ -2343,7 +2333,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]+1)%cart_dim[1];
                 MPI_Send(work0, A->base->localdims[0] * iwrk,
-                         elementtype, cart2rank(2,tcoord), 0,
+                         A->base->mpi_dtype, cart2rank(2,tcoord), 0,
                          MPI_COMM_WORLD);
             }
         }
@@ -2356,7 +2346,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 tcoord[0] = (mycoord[0]-1+cart_dim[0])%cart_dim[0];
                 tcoord[1] = mycoord[1];
                 MPI_Recv(work1, iwrk * B->base->localdims[1],
-                         elementtype, cart2rank(2,tcoord),
+                         A->base->mpi_dtype, cart2rank(2,tcoord),
                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
             //Send the iwrk'th row to the lower neighbour but
@@ -2366,11 +2356,11 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 tcoord[0] = (mycoord[0]+1)%cart_dim[0];
                 tcoord[1] = mycoord[1];
                 MPI_Send(work1, iwrk * B->base->localdims[1],
-                         elementtype, cart2rank(2,tcoord), 0,
+                         A->base->mpi_dtype, cart2rank(2,tcoord), 0,
                          MPI_COMM_WORLD);
             }
         }
-        
+
         //If available we use the BLAS library else we fall back to the
         //dot-function in numpy.
         if(cblas_dgemm_func != NULL)
@@ -2391,8 +2381,8 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 for(m=0; m < C->base->localdims[1]; m++)
                 {
                     double tmp;
-                    dot(work0 + n * iwrk, sizeof(double), work1 + m, 
-                        MAX(B->base->localdims[1],1) * sizeof(double), 
+                    dot(work0 + n * iwrk, sizeof(double), work1 + m,
+                        MAX(B->base->localdims[1],1) * sizeof(double),
                         &tmp, iwrk, NULL);
                     ((double *)C->base->data)[m+n*C->base->localdims[1]] += tmp;
                 }
@@ -2407,13 +2397,10 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
         icur[0] = (icur[0]+1)%cart_dim[0];
         icur[1] = (icur[1]+1)%cart_dim[1];
     }
-
     //Cleanup
-    MPI_Type_free(&elementtype);
     free(work0);
     free(work1);
     free(temp);
-
 } /* do_MATMUL */
 
 
@@ -2423,7 +2410,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
  * Public
  */
 static intp
-dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype, 
+dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype,
                        intp dtypesize)
 {
     int i;
@@ -2823,7 +2810,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
         msg[3] = PyArray_TYPE(out_ary);
         msg[4] = PyArray_ITEMSIZE(out_ary);
     }
-    msg[5] = axis;       
+    msg[5] = axis;
     strcpy((char*)(msg+6), op);
     *(((char*)(msg+6))+strlen(op)+1) = DNPY_MSG_END;
 
@@ -2834,7 +2821,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC_REDUCE(msg[1], msg[2], msg[3], msg[4], 
+    do_UFUNC_REDUCE(msg[1], msg[2], msg[3], msg[4],
                     out_ary->data, axis, op);
     return 0;
 } /* dnumpy_ufunc_reduce */
@@ -2923,7 +2910,7 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
 
     //Create the returning distributed vector.
     ret = PyArray_New(&PyArray_Type, 1, &count, view->base->dtype,
-                      NULL, NULL, 0, 
+                      NULL, NULL, 0,
                       NPY_WRITEABLE | NPY_CARRAY | DNPY_DISTRIBUTED,
                       NULL);
 
@@ -3198,7 +3185,7 @@ dnumpy_master_slave_split()
         }
     }
     return Py_False;
-    
+
 } /* dnumpy_master_slave_split */
 
 /*NUMPY_API

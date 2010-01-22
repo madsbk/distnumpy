@@ -52,6 +52,8 @@ typedef struct
     npy_intp localblockdims[NPY_MAXDIMS];
     //One-sided communication window (used by MPI_Get and MPI_Put).
     MPI_Win comm_win;
+    //MPI-datatype that correspond to an array element.
+    MPI_Datatype mpi_dtype;
 } dndarray;
 
 //Type describing a slice of a dimension.
