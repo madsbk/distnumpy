@@ -240,9 +240,9 @@ static void rm_dndview(npy_intp uid)
                 if(--dndviews[i].base->refcount == 0)
                 {
                     MPI_Win_free(&dndviews[i].base->comm_win);
+                    MPI_Type_free(&dndviews[i].base->mpi_dtype);
                     MPI_Free_mem(dndviews[i].base->data);
                     free(dndviews[i].base);
-                    MPI_Type_free(&dndviews[i].base->mpi_dtype);
                 }
                 return;
             }
