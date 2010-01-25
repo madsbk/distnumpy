@@ -1046,11 +1046,9 @@ static int remote_blockget(char *dest, dndview *src_ary,
         MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, src_ary->base->comm_win);
         MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, src_ary->base->comm_win);
 
+        //Even though arraytype is still in use, we are allowed to 
+        //call MPI_Type_free. (MPI-2.2 s. 99).
         MPI_Type_free(&arraytype);
-    /*
-        printf("4 - reading data at rank %d, value: %lf, %lf, %lf, %lf\n", rank, ((double*)dest)[0],((double*)dest)[1],((double*)dest)[2],((double*)dest)[3]);
-        printf("5 - Create array - ndims: %d, vdims: [%ld, %ld]\n", src_ary->ndims, vdims[0], vdims[1]);
-    */
 
         if(*ret_ary == NULL)
         {
@@ -1738,7 +1736,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 {
                     if(locked_ranks[j] >= 0)
                     {
-                        MPI_Win_unlock(locked_ranks[j], views[j]->base->comm_win);
+                        MPI_Win_unlock(locked_ranks[j], 
+                                       views[j]->base->comm_win);
                         locked_ranks[j] = -1;
                     }
                     apply_blocklist[j] = recv_blocklist[j];
@@ -1811,6 +1810,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             }
         }while(notfinished);
 
+        //Unlock the last block communication.
+        for(j=0; j<nin; j++)
+            if(locked_ranks[j] >= 0)
+                MPI_Win_unlock(locked_ranks[j], 
+                               views[j]->base->comm_win);
+        
         //Finally we call apply on the last block.
         for(j=0; j<lastary->base->ndims; j++)
             coords[j] = lastary->base->localblockdims[j] - 1;
