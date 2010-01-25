@@ -484,3 +484,36 @@
    fun:import_module_level
    fun:PyImport_ImportModuleLevel
 }
+{
+   From DistNumPy (python 2.6) - non-freed in slave processes.
+   Memcheck:Leak
+   fun:malloc
+   fun:fill_free_list
+   fun:PyInt_FromLong
+   fun:long_int
+   fun:PyNumber_Int
+   fun:int_new
+   fun:type_call
+   fun:PyObject_Call
+   fun:do_call
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:fast_function
+}
+{
+   From DistNumPy (python 2.6) - non-freed in slave processes.
+   Memcheck:Leak
+   fun:malloc
+   fun:fill_free_list
+   fun:PyInt_FromLong
+   fun:PyLong_FromVoidPtr
+   fun:init_ctypes
+   fun:_PyImport_LoadDynamicModule
+   fun:load_module
+   fun:import_submodule
+   fun:load_next
+   fun:import_module_level
+   fun:PyImport_ImportModuleLevel
+   fun:builtin___import__
+}
+
