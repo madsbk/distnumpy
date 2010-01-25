@@ -3,6 +3,11 @@ import numpy as np
 import random
 import sys
 
+try:
+    size = int(sys.argv[1])
+except IndexError:
+    size = 5
+
 pydebug = True
 try:
     sys.gettotalrefcount()
@@ -53,20 +58,17 @@ def random_list(dims):
         list.append(random_list(dims[0:-1]))
     return list
 
-def ufunc(max_ndim=5):
+def ufunc(max_ndim):
     for i in xrange(1,max_ndim+1):
         src = random_list(random.sample(xrange(1, 10),i))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
-        
         ran = random.randint(0,i-1)
         if i > 1 and ran > 0:
             for j in range(0,ran):
                 src = src[0]
-
         Bd = np.array(src, dtype=float, dist=True)
         Bf = np.array(src, dtype=float, dist=False)
-        
         Cd = Ad + Bd + 42 + Bd[-1]
         Cf = Af + Bf + 42 + Bf[-1]
         Cd = Cd[::2] + Cd[::2,...] + Cd[0,np.newaxis]
@@ -90,7 +92,7 @@ def ufunc(max_ndim=5):
             return False
     return True
 
-def ufunc_reduce(max_ndim=6):
+def ufunc_reduce(max_ndim):
     for i in range(1,max_ndim+1):
         src = random_list(random.sample(range(1, 10),i))
         Ad = np.array(src, dtype=float, dist=True)
@@ -108,7 +110,7 @@ def ufunc_reduce(max_ndim=6):
                 return False
     return True
 
-def diagonal(niters=10):
+def diagonal(niters):
     niters *= 10
     for i in xrange(niters):
         src = random_list([random.randint(1, 20), \
@@ -127,7 +129,7 @@ def diagonal(niters=10):
             return False
     return True
 
-def matmul(niter=2):
+def matmul(niter):
     for m in range(2,niter+2):
         for n in range(2,niter+2):
             for k in range(2,niter+2):
@@ -143,7 +145,6 @@ def matmul(niter=2):
                     print "Error in matrix multiplication!"
                     return False
     return True
-
 
 
 funtest(ufunc, "ufunc")
