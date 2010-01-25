@@ -273,8 +273,6 @@ static void msg2slaves(npy_intp *msg, int msgsize)
 } /* msg2slaves */
 
 
-
-
 /*===================================================================
  *
  * Converts a global coordinate based on a view to a global coordinate
@@ -353,7 +351,6 @@ find_next_get_coords(npy_intp coords[NPY_MAXDIMS],
             else
                 break;
         }
-
         use_prev_block = 0;
         for(i=lastary->ndims-1; 0<=i; i--)
         {
@@ -481,20 +478,12 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
         //Need data pointers in one char array.
         for(j=0; j<narys; j++)
             tdata[j] = PyArray_ITER_DATA(iters[j]);
-
-#ifdef DNPY_TIME
-    gettimeofday(&tv, &tz);
-    tmp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
-#endif
+        //Apply operation.
         function(tdata, &lastdims[axis], steps, funcdata);
-#ifdef DNPY_TIME
-    gettimeofday(&tv, &tz);
-    total_apply_time += (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - tmp_time;
-#endif
+        //Go to next block.
         for(j=0; j<narys; j++)
             PyArray_ITER_NEXT(iters[j]);
     }
-
     //Cleanup
     for(j=0; j<narys; j++)
         Py_DECREF(iters[j]);
@@ -674,7 +663,6 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     MPI_Type_free(&src_ary_type);
     MPI_Type_free(&dest_ary_type);
     MPI_Type_free(&elem_type);
-
     return 0;
 } /* remote_blockput */
 
@@ -693,21 +681,12 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
     int i;
     int ai = 0;
     int bi = 0;
-
     //A scalar dummy can be returned directly.
     if(src_ary->base->ndims == 0)
     {
         memcpy(dest, src_ary->base->data, src_ary->base->elsize);
         return 0;
     }
-/*
-    printf("src_ary-view id: %d\n",src_ary->uid);
-    printf("1 - lcoords:");
-    for(i=0; i<dest_ary->base->ndims; i++)
-        printf(" %d", lcoords[i]);
-    printf("\n");
-*/
-
     //Convert local coordinates to global coordinates based on dest_ary.
     npy_intp coordsA[NPY_MAXDIMS];
     npy_intp coordsB[NPY_MAXDIMS];
@@ -721,12 +700,6 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
                      (cdimsizes[i] * blocksize) + //jump per block
                      lcoords[i] % blocksize; //index inside block
     }
-/*
-    printf("2 - coordsA:");
-    for(i=0; i<dest_ary->base->ndims; i++)
-        printf(" %d", coordsA[i]);
-    printf("\n");
-*/
 
     //Convert global coordinates to inter-view coordinates.
     //Return -1 if the global coordinate it not part of the view.
@@ -768,12 +741,6 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
 
         ai++; bi++;
     }
-/*
-    printf("3 - coordsB:");
-    for(i=0; i<bi; i++)
-        printf(" %d", coordsB[i]);
-    printf("\n");
-*/
 
     //Convert inter-view coordinates to global coordinates based on
     //src_ary. Including broadcasting.
@@ -803,14 +770,6 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
     //Reverse again to get the correct order of the coordinates.
     for(i=0; i<src_ary->base->ndims; i++)
         coordsB[i] = coordsA[--ai];
-
-/*
-    printf("4 - coordsB:");
-    for(i=0; i<src_ary->base->ndims; i++)
-        printf(" %d", coordsB[i]);
-    printf("\n");
-*/
-
 
     //Find process cartesian coords and local offset.
     int pcoords[NPY_MAXDIMS];
@@ -845,8 +804,6 @@ static int remote_get(char *dest, dndview *src_ary, dndview *dest_ary,
             src_ary->base->elsize, MPI_BYTE, src_ary->base->comm_win);
     MPI_Win_unlock(rank, src_ary->base->comm_win);
 
-//    printf("5 - reading data at rank %d, value: %lf\n", rank, *((double*)dest));
-
     return 0;
 }/* remote_get */
 
@@ -868,10 +825,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
                            PyObject **ret_ary)
 {
     int i, ai, bi, vi, rbi;
-#ifdef DNPY_TIME
-    gettimeofday(&tv, &tz);
-    tmp_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
-#endif
     //Tmp coords
     npy_intp coordsA[NPY_MAXDIMS];
     npy_intp coordsB[NPY_MAXDIMS];
@@ -888,14 +841,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
         return -1;
     }
 
-/*
-    printf("src_ary-view id: %ld\n",src_ary->uid);
-    printf("1 - lcoords:");
-    for(i=0; i<dest_ary->base->ndims; i++)
-        printf(" %ld", lcoords[i]);
-    printf("\n");
-*/
-
     //Convert local coordinates to global coordinates.
     for(i=0; i<dest_ary->base->ndims; i++)
     {
@@ -903,12 +848,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
         coordsA[i] = pcoords[i] + lcoords[i] *
                      cart_dim_sizes[dest_ary->base->ndims-1][i];
     }
-/*
-    printf("2 - coordsA (global coords  based on dest_ary):");
-    for(i=0; i<dest_ary->base->ndims; i++)
-        printf(" %ld", coordsA[i]);
-    printf("\n");
-*/
 
     //Convert coords to be based on 'src_ary' instead of 'dest_ary'.
     //Including broadcasting.
@@ -960,13 +899,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
     int pcoords_size = bi;
     for(i=0; i<src_ary->base->ndims; i++)
         pcoords[i] = pcoordsR[--bi];
-
-/*
-    printf("3 - pcoords:");
-    for(i=0; i<src_ary->base->ndims; i++)
-        printf(" %d", pcoords[i]);
-    printf("\n");
-*/
 
     //Convert to a MPI rank number.
     int rank = cart2rank(src_ary->base->ndims, pcoords);
@@ -1029,15 +961,13 @@ static int remote_blockget(char *dest, dndview *src_ary,
             bi++;
         }
 
-//        printf("MPI_Type_create_subarray - dist_ndims: %d -> src_ndims: %d, ldims: [%d, %d],  bdims: [%d, %d], subary_coords: [%d, %d], msgsize: %ld\n", dest_ary->base->ndims, src_ary->base->ndims, ldims[0], ldims[1], bdims[0], bdims[1], subary_coords[0], subary_coords[1], msgsize);
-
         //Setup a matching MPI datatype.
         MPI_Datatype arraytype;
         MPI_Type_create_subarray(src_ary->base->ndims,
                                  ldims,
                                  bdims,
                                  subary_coords,
-                                 MPI_ORDER_C, src_ary->base->mpi_dtype, 
+                                 MPI_ORDER_C, src_ary->base->mpi_dtype,
                                  &arraytype);
         MPI_Type_commit(&arraytype);
 
@@ -1046,10 +976,11 @@ static int remote_blockget(char *dest, dndview *src_ary,
         MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, src_ary->base->comm_win);
         MPI_Get(dest, msgsize, MPI_BYTE, rank, 0, 1, arraytype, src_ary->base->comm_win);
 
-        //Even though arraytype is still in use, we are allowed to 
+        //Even though arraytype is still in use, we are allowed to
         //call MPI_Type_free. (MPI-2.2 s. 99).
         MPI_Type_free(&arraytype);
 
+        //Create a new or reuse an old array.
         if(*ret_ary == NULL)
         {
             *ret_ary = PyArray_New(&PyArray_Type,
@@ -1084,12 +1015,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
         //Reverse again to get the correct order of the coordinates.
         for(i=0; i<src_ary->base->ndims; i++)
             subary_coords[i] = coordsB[--pcoords_size];
-/*
-        printf("3 - subary_coords (local non-block coords based on src_ary):");
-        for(i=0; i<src_ary->base->ndims; i++)
-            printf(" %ld", subary_coords[i]);
-        printf("\n");
-*/
+
         //Compute a block's dims for the dest array.
         npy_intp bdims[NPY_MAXDIMS];
         npy_intp strides[NPY_MAXDIMS];
@@ -1116,6 +1042,7 @@ static int remote_blockget(char *dest, dndview *src_ary,
             offset += stride * subary_coords[j];
         }
 
+        //Create a new or reuse an old array.
         if(*ret_ary == NULL)
         {
             *ret_ary = PyArray_New(&PyArray_Type,
@@ -1140,15 +1067,6 @@ static int remote_blockget(char *dest, dndview *src_ary,
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG,
                    MPI_COMM_WORLD, &f, MPI_STATUS_IGNORE);
     }
-/*
-    printf("GET:\n");
-    PyObject_Print(*ret_ary,stdout,0);
-    printf("\n");
-*/
-#ifdef DNPY_TIME
-    gettimeofday(&tv, &tz);
-    total_rget_time += ((long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000) - tmp_time;
-#endif
     return 0;
 }/* remote_blockget */
 
@@ -1426,10 +1344,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                      char* scalar, char* op)
 {
     int i, j;
-#ifdef DNPY_TIME
-    gettimeofday(&tv, &tz);
-    total_time_tmp = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000;
-#endif
 
     //Get arrray structs.
     dndview *views[NPY_MAXARGS];
@@ -1520,7 +1434,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
     if(nocomm_method)
     {
-//        printf("UFUNC - nocomm_method\n");
         npy_intp dims[NPY_MAXDIMS];
         npy_intp strides[NPY_MAXDIMS];
         PyObject *arytuple = PyTuple_New(narys);
@@ -1673,20 +1586,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             else
                 dim_iter_order[ec--] = i;
         }
-        /*
-        //Init coords. SingleIndex should be set here and never again
-        //touched and the rest is zero.
-        j=0;
-        for(i=0; i < lastary->nslice; i++)
-        {
-            if(lastary->slice[i].nsteps == PseudoIndex)
-                continue;
-
-            if(lastary->slice[i].nsteps == SingleIndex)
-                coords[j] = lastary->slice[i].start;
-            j++;
-        }
-        */
 
         //Coordinate of the next block we need to remote-get.
         npy_intp next_get_coords[NPY_MAXARGS][NPY_MAXDIMS];
@@ -1736,7 +1635,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 {
                     if(locked_ranks[j] >= 0)
                     {
-                        MPI_Win_unlock(locked_ranks[j], 
+                        MPI_Win_unlock(locked_ranks[j],
                                        views[j]->base->comm_win);
                         locked_ranks[j] = -1;
                     }
@@ -1813,9 +1712,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //Unlock the last block communication.
         for(j=0; j<nin; j++)
             if(locked_ranks[j] >= 0)
-                MPI_Win_unlock(locked_ranks[j], 
+                MPI_Win_unlock(locked_ranks[j],
                                views[j]->base->comm_win);
-        
+
         //Finally we call apply on the last block.
         for(j=0; j<lastary->base->ndims; j++)
             coords[j] = lastary->base->localblockdims[j] - 1;
@@ -2219,14 +2118,14 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         int rank = cart2rank(2, pcoord);
 
         //Setup a matching MPI datatype.
-        MPI_Type_vector(bsize, 1, ldims[1]+1, in->base->mpi_dtype, 
+        MPI_Type_vector(bsize, 1, ldims[1]+1, in->base->mpi_dtype,
                         &arraytype);
         MPI_Type_commit(&arraytype);
 
         //Transfer element.
         MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, in->base->comm_win);
-        MPI_Get(out_data, bsize, in->base->mpi_dtype, rank, 
-                offset * in->base->elsize, 1, arraytype, 
+        MPI_Get(out_data, bsize, in->base->mpi_dtype, rank,
+                offset * in->base->elsize, 1, arraytype,
                 in->base->comm_win);
         MPI_Win_unlock(rank, in->base->comm_win);
 
@@ -2365,7 +2264,6 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                          MPI_COMM_WORLD);
             }
         }
-
         //If available we use the BLAS library else we fall back to the
         //dot-function in numpy.
         if(cblas_dgemm_func != NULL)
