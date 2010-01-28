@@ -67,6 +67,28 @@ typedef struct
     npy_intp nsteps; 
 } dndslice;
 
+//Type describing a sub-section of a view block.
+typedef struct
+{
+    //The rank of the MPI-process that owns this sub-block.
+    int rank;
+    //Start index (one per dimension).
+    npy_intp start[NPY_MAXDIMS];
+    //Elements between index (one per dimension).
+    npy_intp step[NPY_MAXDIMS];
+    //Number of steps (one per dimension).
+    npy_intp nsteps[NPY_MAXDIMS];
+} dndsvb;
+
+//Type describing a view block.
+typedef struct
+{
+    //The id of the view block.
+    npy_intp id;
+    //All sub-view-blocks in this view block.
+    dndsvb *sub;
+} dndvb;
+
 //View-alteration flags.
 #define DNPY_NDIMS    0x001
 #define DNPY_STEP     0x002
@@ -83,19 +105,21 @@ typedef struct
     int nslice;
     //Sliceses - the global view of the base-array.
     dndslice slice[NPY_MAXDIMS];
-    //Block slice - sliceses that indicate the viewable blocks in this
-    //view (local to the MPI-process).
-    //NB: number of bsliceses is always base->ndims.
-//    dndslice bslice[NPY_MAXDIMS];
-    //Number of viewable dimensions.
-    int ndims;
-    //A binary mask specifying which alterations this view represents.
+    //A bit mask specifying which alterations this view represents.
     //Possible flags:
     //Zero        - no alterations.
     //DNPY_NDIMS  - number of dimensions altered.
     //DNPY_STEP   - 'step' altered.
     //DNPY_NSTEPS - 'nsteps' altered.
     int alterations;
+    //Number of viewable dimensions.
+    int ndims;        
+    //All view-blocks this array view represents.
+    dndvb *blocks;
+    //Number of view-blocks.
+    npy_intp nblocks;
+    //Dimension size of the view-blocks.
+    npy_intp blockdims[NPY_MAXDIMS];
 } dndview;
 
 #endif

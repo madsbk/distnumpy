@@ -239,6 +239,9 @@ static void rm_dndview(npy_intp uid)
                 dndviews_uid[i] = 0;
                 if(--dndviews[i].base->refcount == 0)
                 {
+                    //Cleanup view-blocks.
+                    free(dndviews[i].blocks->sub);
+                    free(dndviews[i].blocks);
                     MPI_Win_free(&dndviews[i].base->comm_win);
                     MPI_Type_free(&dndviews[i].base->mpi_dtype);
                     MPI_Free_mem(dndviews[i].base->data);
@@ -1095,19 +1098,21 @@ static void do_INIT_BLOCKSIZE(npy_intp new_blocksize)
 static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
 {
     int ndims = ary->ndims;
-    int *dims = cart_dim_sizes[ndims-1];
-    int i;
+    int *cdims = cart_dim_sizes[ndims-1];
+    npy_intp i, j, n, offset;
+    npy_intp coord[NPY_MAXDIMS];
+    int cartcoord[NPY_MAXDIMS];
+    int rank, rank_offset;
 
     //Get cartesian coords.
-    int coords[NPY_MAXDIMS];
-    rank2cart(ndims, myrank, coords);
+    rank2cart(ndims, myrank, cartcoord);
 
     //Acummulate total number of local sizes and save it.
     npy_intp nelements = 1;
     for(i=0; i < ary->ndims; i++)
     {
         ary->localdims[i] = dnumroc(ary->dims[i],
-                            blocksize, coords[i], dims[i]);
+                            blocksize, cartcoord[i], cdims[i]);
         nelements *= ary->localdims[i];
         ary->localblockdims[i] = ceil(ary->localdims[i] /
                                       (double) blocksize);
@@ -1129,6 +1134,56 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     //Create a MPI-datatype that correspond to an array element.
     MPI_Type_contiguous(ary->elsize, MPI_BYTE, &ary->mpi_dtype);
     MPI_Type_commit(&ary->mpi_dtype);
+
+  
+    //Compute number of blocks.
+    view->nblocks = 1;
+    for(i=0; i<ndims;i++)
+    {
+        view->blockdims[i] = ceil(ary->dims[i] / (double) blocksize);
+        view->nblocks *= view->blockdims[i];
+    }
+    
+    //Alloc vblocks and sub-vblocks.
+    view->blocks = malloc(view->nblocks * sizeof(dndvb));
+    dndsvb *tmpmem = malloc(view->nblocks * sizeof(dndsvb));
+
+    //Compute ALL view blocks.
+    memset(coord, 0, ary->ndims * sizeof(npy_intp));
+    rank = 0; rank_offset = 0;
+    for(n=0; n<view->nblocks; n++)
+    {
+        //There is only one sub-view-block in a non-partial array view.
+        view->blocks[n].sub = tmpmem++;
+        view->blocks[n].sub->rank = rank + rank_offset;  
+        for(i=0; i < ndims; i++)
+        {
+            offset = (coord[i] / cdims[i]) * blocksize;
+            view->blocks[n].sub->start[i] = offset;
+            view->blocks[n].sub->step[i] = 1;
+            view->blocks[n].sub->nsteps[i] = MIN(blocksize, 
+                                                 ary->dims[i] - 
+                                                 coord[i] * blocksize);
+//            if(myrank == 0)
+//                printf("block: %ld, rank: %d, start: %ld, step: %d, nstep: %ld\n", n, rank, view->blocks[n].sub->start[i], 1, view->blocks[n].sub->nsteps[i]);
+        }
+
+        //Iterate coords one block (Row-major).
+        for(j=ndims-1; j >= 0; j--)
+        {
+            if(++coord[j] >= view->blockdims[j])
+            {
+                coord[j] = 0;
+                rank = -1;
+                rank_offset += cdims[j];
+            }
+            else
+            {
+                rank = (rank+1)%cdims[j];
+                break;
+            }
+        }
+    }
 
     //Allocate and copy the array to the views's base.
     view->base = malloc(sizeof(dndarray));
