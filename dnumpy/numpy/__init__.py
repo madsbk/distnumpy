@@ -159,4 +159,6 @@ else:
     __all__.extend(['linalg', 'fft', 'random', 'ctypeslib', 'ma'])
 
     #DISTNUMPY
-    core.multiarray.dnumpy_init()
+    if not core.multiarray.dnumpy_init():
+        import sys
+        sys.exit(0)
