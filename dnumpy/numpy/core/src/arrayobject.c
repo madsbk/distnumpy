@@ -2365,7 +2365,7 @@ array_ass_big_item(PyArrayObject *self, intp i, PyObject *v)
     {
         if (i < 0)
             i += self->dimensions[0];
-        return dnumpy_dndarray_setitem(PyArray_DNDUID(self), &i, v);
+        return dnumpy_dndarray_putitem(PyArray_DNDUID(self), &i, v);
     }
     
     if (self->descr->f->setitem(v, item, self) == -1) {
@@ -8232,7 +8232,7 @@ setDistArrayFromSequence(PyArrayObject *a, PyObject *s, int dim,
             res = setDistArrayFromSequence(a, o, dim+1, coords);
         }
         else {
-            if((res = dnumpy_dndarray_setitem(a->dnduid, coords, o)) < 0)
+            if((res = dnumpy_dndarray_putitem(a->dnduid, coords, o)) < 0)
                 PyErr_SetString(PyExc_ValueError,
                         "assignment from incompatible type.");
         }

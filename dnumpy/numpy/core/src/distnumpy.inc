@@ -280,53 +280,6 @@ static void msg2slaves(npy_intp *msg, int msgsize)
 
 /*===================================================================
  *
- * Converts a global coordinate based on a view to a global coordinate
- * based on the view's base.
- * 'coord_based_on_view' and 'coord_based_on_base' is allowed to be
- * the same adresse, but note that there size may differ.
- * 'coord_based_on_base' size must be the same as view->base->ndims and
- * 'coord_based_on_view' size must be the same as view->ndims.
- * The coordinates are in Row-major.
- * Private.
- */
-static void
-view2base_globalcoord(npy_intp coord_based_on_view[NPY_MAXDIMS],
-                      dndview* view,
-                      npy_intp coord_based_on_base[NPY_MAXDIMS])
-{
-    int viewi = 0;
-    int basei = 0;
-    int i;
-    for(i=0; i<view->nslice; i++)
-    {
-        if(view->slice[i].nsteps == SingleIndex)
-        {
-            coord_based_on_base[basei++] = view->slice[i].start;
-        }
-        else if(view->slice[i].nsteps == PseudoIndex)
-        {
-            if(coord_based_on_view[viewi] != 0)
-            {
-                fprintf(stderr, "view2base_globalcoord - coord_based_on"
-                                "_view[%d] should be zero (was %d) sinc"
-                                "e that dimension is a PseudoIndex\n",
-                                viewi, (int)coord_based_on_view[viewi]);
-                MPI_Abort(MPI_COMM_WORLD, -1);
-            }
-            viewi++;
-        }
-        else
-        {
-            coord_based_on_base[basei++] = view->slice[i].start +
-                                           coord_based_on_view[viewi++]
-                                           * view->slice[i].step;
-        }
-    }
-}/* view2base_globalcoord */
-
-
-/*===================================================================
- *
  * Find the next coordinate thats requires are remote-get.
  * Private.
  */
@@ -1393,78 +1346,15 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
     }
 } /* do_CREATE_VIEW */
 
-
 /*===================================================================
  *
- * Message handler for SET_ITEM.
+ * Message handler for PUT_ITEM and GET_ITEM.
+ * Direction: 0=Get, 1=Put.
  * Private.
  */
-static void do_SET_ITEM(dndview *view, char* value,
-                        npy_intp coord[NPY_MAXDIMS])
-{
-    dndarray *base = view->base;
-    int i;
-
-    //Get element size.
-    int elsize = base->elsize;
-
-    //Print debug info.
-    #ifdef DISTNUMPY_DEBUG
-        if(myrank == 0)
-        {
-            printf("SET_ITEM - uid: %ld, coord: (", (long)view->uid);
-            for(i=0; i < view->ndims; i++)
-                printf(" %ld", (long)coord[i]);
-            printf(")\n");
-        }
-    #endif
-
-    if(myrank == 0)
-    {
-        npy_intp newcoord[NPY_MAXDIMS];
-        view2base_globalcoord(coord, view, newcoord);
-
-        //Find process cartesian coords and local offset.
-        int pcoords[NPY_MAXDIMS];
-        npy_intp offset = 0;
-        for(i=base->ndims-1; i>=0; i--)
-        {
-            npy_intp B = newcoord[i] / blocksize;
-            int P = cart_dim_sizes[base->ndims-1][i];
-            pcoords[i] = B % P;
-            npy_intp block_index = B / P;
-            npy_intp index = newcoord[i] % blocksize;
-
-            npy_intp stride = 1;
-            int s;
-            for(s=i+1; s<base->ndims; s++)
-                stride *= dnumroc(base->dims[s], blocksize,
-                                  pcoords[s],
-                                  cart_dim_sizes[base->ndims-1][s]);
-
-            offset += stride * (block_index * blocksize + index);
-        }
-
-        //Convert to a MPI rank number.
-        int rank = cart2rank(base->ndims, pcoords);
-
-        //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, base->comm_win);
-        MPI_Put(value, elsize, MPI_BYTE, rank, offset*elsize, elsize,
-                MPI_BYTE, base->comm_win);
-        MPI_Win_unlock(rank, base->comm_win);
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-} /* do_SET_ITEM */
-
-/*===================================================================
- *
- * Message handler for GET_ITEM.
- * Private.
- */
-static void do_GET_ITEM(char *retdata, dndview *view,
-                        npy_intp coord[NPY_MAXDIMS])
-{
+static void do_PUTGET_ITEM(int Direction, dndview *view, char* item, 
+                           npy_intp coord[NPY_MAXDIMS])
+{   
     npy_intp i,j,b,offset;
     npy_intp n, s;
     npy_intp icoord[NPY_MAXDIMS];
@@ -1476,8 +1366,11 @@ static void do_GET_ITEM(char *retdata, dndview *view,
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         if(myrank == 0)
-        {
-            printf("GET_ITEM - uid: %ld, coord: (",(long)view->uid);
+        {   if(Direction)
+                printf("PUT_ITEM");
+            else
+                printf("GET_ITEM");
+            printf(" - uid: %ld, coord: (",(long)view->uid);
             for(i=0; i < view->ndims; i++)
                 printf(" %ld", (long)coord[i]);
             printf(")\n");
@@ -1558,9 +1451,15 @@ static void do_GET_ITEM(char *retdata, dndview *view,
         //Do the communication.
         MPI_Win_lock(MPI_LOCK_SHARED, dvb->sub[b].rank,
                      MPI_MODE_NOCHECK, view->base->comm_win);
-        MPI_Get(retdata, 1, view->base->mpi_dtype, dvb->sub[b].rank,
-                offset*view->base->elsize, 1, view->base->mpi_dtype,
-                view->base->comm_win);
+        if(Direction)
+            MPI_Put(item, 1, view->base->mpi_dtype, dvb->sub[b].rank,
+                    offset*view->base->elsize, 1, view->base->mpi_dtype,
+                    view->base->comm_win);
+        else
+            MPI_Get(item, 1, view->base->mpi_dtype, dvb->sub[b].rank,
+                    offset*view->base->elsize, 1, view->base->mpi_dtype,
+                    view->base->comm_win);
+
         MPI_Win_unlock(dvb->sub[b].rank, view->base->comm_win);
     }
     MPI_Barrier(MPI_COMM_WORLD);
@@ -2761,7 +2660,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
  * Public
  */
 static int
-dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
+dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
                         PyObject *item)
 {
     //Get arrray structs.
@@ -2782,7 +2681,7 @@ dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
     }
 
     //Tell slaves about the new item.
-    msg[0] = DNPY_SET_ITEM;
+    msg[0] = DNPY_PUT_ITEM;
     msg[1] = view->uid;
     memcpy(&msg[2], PyArray_DATA(citem2), elsize);
     memcpy(((char *) &msg[2]) + elsize, coordinate,
@@ -2796,14 +2695,14 @@ dnumpy_dndarray_setitem(intp uid, intp coordinate[NPY_MAXDIMS],
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
     #endif
-    do_SET_ITEM(view, PyArray_DATA(citem2), coordinate);
+    do_PUTGET_ITEM(1, view, PyArray_DATA(citem2), coordinate);
 
     //Clean up.
     Py_DECREF(citem2);
     Py_DECREF(item2);
 
     return 0;//Succes
-} /* dnumpy_dndarray_setitem */
+} /* dnumpy_dndarray_putitem */
 
 /*NUMPY_API
  *===================================================================
@@ -2831,7 +2730,7 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
         printf("Rank 0 received msg: ");
     #endif
 
-    do_GET_ITEM(retdata, view, &msg[2]);
+    do_PUTGET_ITEM(0, view, retdata, &msg[2]);
 } /* dnumpy_dndarray_getitem */
 
 /*NUMPY_API
@@ -3267,16 +3166,16 @@ dnumpy_master_slave_split()
                 #endif
                 shutdown = 1;
                 break;
-            case DNPY_SET_ITEM:
+            case DNPY_PUT_ITEM:
                 ary = get_dndview(*((npy_intp*)msg_data));
                 t1 = msg_data+sizeof(npy_intp);
                 t2 = t1+ary->base->elsize;
-                do_SET_ITEM(ary, t1, (npy_intp*) t2);
+                do_PUTGET_ITEM(1, ary, t1, (npy_intp*) t2);
                 break;
             case DNPY_GET_ITEM:
                 ary = get_dndview(*((npy_intp*)msg_data));
                 t1 = msg_data+sizeof(npy_intp);
-                do_GET_ITEM(NULL, ary, (npy_intp*) t1);
+                do_PUTGET_ITEM(0, ary, NULL, (npy_intp*) t1);
                 break;
             case DNPY_UFUNC:
                 d1 = *((npy_intp*)msg_data);

@@ -177,7 +177,7 @@ dnumpy_exit
 dnumpy_create_dndarray
 dnumpy_create_dndview
 dnumpy_destroy_dndarray
-dnumpy_dndarray_setitem
+dnumpy_dndarray_putitem
 dnumpy_dndarray_getitem
 dnumpy_ufunc
 dnumpy_ufunc_reduce
