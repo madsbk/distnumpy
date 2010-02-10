@@ -41,8 +41,6 @@ typedef struct
     npy_intp nelements;
     //Size of local dimensions (local to the MPI-process).
     npy_intp localdims[NPY_MAXDIMS];
-    //Number of local blocks (local to the MPI-process).
-    //npy_intp nblocks;
     //Size of local block-dimensions (local to the MPI-process).
     npy_intp localblockdims[NPY_MAXDIMS];
     //One-sided communication window (used by MPI_Get and MPI_Put).
