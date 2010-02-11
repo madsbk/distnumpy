@@ -1071,9 +1071,6 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
     /* Counters */
     int b, i, j, n, extent;
 
-    /* Debug string buffer */
-    char dbuf[1024];
-
     /* Convenience */
     int ndims = view->base->ndims;
 
@@ -1126,34 +1123,6 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
             j++;
         }
     }
-
-#if 0
-    /* Print debug information for all processes
-     * MPI_Barrier is used to stop output from being interleaved */
-    for(j = 0; j < worldsize; j++) {
-
-        if(myrank == j) {
-            print_v_init("do_DATAFILL");
-            print_v("coords", ndims, coords);
-            print_v("stride", ndims, stride);
-            print_v("mycoords", ndims, mycoords);
-            print_v("mystride", ndims, mystride);
-            print_v("mylocalblockdims", ndims, mylocalblockdims);
-            print_v("mydims", ndims, mydims);
-
-            for(n = 0; n < ndims; n++) {
-                sprintf(dbuf, "displacements[%d]", n);
-                print_v(dbuf, mylocalblockdims[n], displacements[n]);
-                sprintf(dbuf, "blocklengths[%d]", n);
-                print_v(dbuf, mylocalblockdims[n], blocklengths[n]);
-            }
-
-            printf("\n");
-        }
-
-        MPI_Barrier(MPI_COMM_WORLD);
-    }
-#endif
 
     /* Stores derived data types */
     MPI_Datatype derived_type[ndims];
@@ -2357,6 +2326,7 @@ static void do_ZEROFILL(dndview *view)
  */
 static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 {
+    /* File access mode */
     int mode;
     
     /* Setup file handle */
