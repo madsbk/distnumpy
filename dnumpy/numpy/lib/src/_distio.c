@@ -51,7 +51,6 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
                                      &fortran_order,
                                      PyArray_DescrConverter,
                                      &typecode)) {
-        printf("Failed!\n");
         goto fail;
     }
 

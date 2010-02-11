@@ -1054,6 +1054,141 @@ static int remote_blockget(char *dest, dndview *src_ary,
     return 0;
 }/* remote_blockget */
 
+
+/*===================================================================
+ *
+ * Create a MPI data type to match the given view for a
+ * N-dimensional block cyclic distribution.
+ * Private.
+ */
+static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
+{
+    /* Get cartesian coords */
+    int coords[NPY_MAXDIMS];
+    rank2cart(view->base->ndims, myrank, coords);
+    int *stride = cart_dim_sizes[view->base->ndims-1];
+
+    /* Counters */
+    int b, i, j, n, extent;
+
+    /* Debug string buffer */
+    char dbuf[1024];
+
+    /* Convenience */
+    int ndims = view->base->ndims;
+
+    /* Holds arrays of displacements and blocklengths for each dimension */
+    int *displacements[ndims];
+    int *blocklengths[ndims];
+
+    /* Copies for reverse enumeration */
+    int mydims[ndims];
+    int mylocalblockdims[ndims];
+    int mycoords[ndims];
+    int mystride[ndims];
+
+    /* We want to reverse the dimension enumeration for convenience */
+    i = 0;
+    for(n = ndims-1; n >= 0; n--) {
+        mydims[i] = view->base->dims[n];
+        mylocalblockdims[i] = view->base->localblockdims[n];
+        mycoords[i] = coords[n];
+        mystride[i++] = stride[n];
+    }
+
+    /* Allocate room for mylocalblockdims[n] elements in each dimension */
+    for(n = 0; n < ndims; n++) {
+        if(NULL == (displacements[n] = malloc(sizeof(int)*mylocalblockdims[n]))) {
+            fprintf(stderr, "Failed to allocate memory for displacements.\n");
+            return -1;
+        }
+        if(NULL == (blocklengths[n] = malloc(sizeof(int)*mylocalblockdims[n]))) {
+            fprintf(stderr, "Failed to allocate memory for block lengths.\n");
+            return -1;
+        }
+    }
+
+    /* Iterate over dimensions */
+    for(n = 0; n < ndims; n++) {
+        j = 0; // Reset internal counter
+
+        /* Iterate over a dimension to calculate displacements */
+        for(i = mycoords[n]*blocksize; i < mydims[n]; ) {
+            displacements[n][j] = i;
+
+            if(blocksize+i > mydims[n]) {
+                blocklengths[n][j] = mydims[n] % blocksize;
+            } else {
+                blocklengths[n][j] = blocksize;
+            }
+
+            i += mystride[n]*blocksize;
+            j++;
+        }
+    }
+
+#if 0
+    /* Print debug information for all processes
+     * MPI_Barrier is used to stop output from being interleaved */
+    for(j = 0; j < worldsize; j++) {
+
+        if(myrank == j) {
+            print_v_init("do_DATAFILL");
+            print_v("coords", ndims, coords);
+            print_v("stride", ndims, stride);
+            print_v("mycoords", ndims, mycoords);
+            print_v("mystride", ndims, mystride);
+            print_v("mylocalblockdims", ndims, mylocalblockdims);
+            print_v("mydims", ndims, mydims);
+
+            for(n = 0; n < ndims; n++) {
+                sprintf(dbuf, "displacements[%d]", n);
+                print_v(dbuf, mylocalblockdims[n], displacements[n]);
+                sprintf(dbuf, "blocklengths[%d]", n);
+                print_v(dbuf, mylocalblockdims[n], blocklengths[n]);
+            }
+
+            printf("\n");
+        }
+
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+#endif
+
+    /* Stores derived data types */
+    MPI_Datatype derived_type[ndims];
+    MPI_Datatype tmp_type;
+
+    /* Setup derived data type for elements */
+    derived_type[0] = view->base->mpi_dtype;
+
+    /* Setup derived data types for rest of dimensions */
+    for(n = 1; n <= ndims; n++) {
+        extent = view->base->elsize;
+        for(i = 0; i < n; i++) {
+            extent *= mydims[i];
+        }
+
+        MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
+                         displacements[n-1], derived_type[n-1], &tmp_type);
+        if(n < ndims) { 
+            MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
+        } else {
+            MPI_Type_create_resized(tmp_type, 0, extent, dtype);
+        }
+    }
+
+    /* Free allocated data */
+    MPI_Type_free(&tmp_type);
+    for(n = 0; n < ndims; n++) {
+        MPI_Type_free(&derived_type[n]);
+        free(displacements[n]);
+    }
+
+    return 0;
+
+} /* create_mpidtype */
+
 /*===================================================================
  *
  * Message handler for INIT_BLOCKSIZE.
@@ -2217,277 +2352,59 @@ static void do_ZEROFILL(dndview *view)
 
 /*===================================================================
  *
- * Message handler for DATADUMP.
+ * Generic message handler for DATAFILL and DATADUMP.
  * Private.
  */
-static void do_DATADUMP(dndview *view, const char *filename, long filepos)
+static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 {
-    /* Get cartesian coords */
-    int coords[NPY_MAXDIMS];
-    rank2cart(view->base->ndims, myrank, coords);
-    int *stride = cart_dim_sizes[view->base->ndims-1];
-
-    /* Counters */
-    int b, i, j, n, extent;
-
-    /* Debug string buffer */
-    char dbuf[1024];
-
-    /* Convenience */
-    int ndims = view->base->ndims;
-
-    /* Holds arrays of displacements and blocklengths for each dimension */
-    int *displacements[ndims];
-    int *blocklengths[ndims];
-
-    /* Copies for reverse enumeration */
-    int mydims[ndims];
-    int mylocalblockdims[ndims];
-    int mycoords[ndims];
-    int mystride[ndims];
-
-    /* We want to reverse the dimension enumeration for convenience */
-    i = 0;
-    for(n = ndims-1; n >= 0; n--) {
-        mydims[i] = view->base->dims[n];
-        mylocalblockdims[i] = view->base->localblockdims[n];
-        mycoords[i] = coords[n];
-        mystride[i++] = stride[n];
-    }
-
-    /* Allocate room for mylocalblockdims[n] elements in each dimension */
-    for(n = 0; n < ndims; n++) {
-        displacements[n] = malloc(sizeof(int)*mylocalblockdims[n]);
-        blocklengths[n] = malloc(sizeof(int)*mylocalblockdims[n]);
-    }
-
-    /* Iterate over dimensions */
-    for(n = 0; n < ndims; n++) {
-        j = 0; // Reset internal counter
-
-        /* Iterate over a dimension to calculate displacements */
-        for(i = mycoords[n]*blocksize; i < mydims[n]; ) {
-            displacements[n][j] = i;
-
-            if(blocksize+i > mydims[n]) {
-                blocklengths[n][j] = mydims[n] % blocksize;
-            } else {
-                blocklengths[n][j] = blocksize;
-            }
-
-            i += mystride[n]*blocksize;
-            j++;
-        }
-    }
-
-#if 1
-    /* Print debug information for all processes
-     * MPI_Barrier is used to stop output from being interleaved */
-    for(j = 0; j < worldsize; j++) {
-
-        if(myrank == j) {
-            print_v_init("do_DATADUMP");
-            print_v("coords", ndims, coords);
-            print_v("stride", ndims, stride);
-            print_v("mycoords", ndims, mycoords);
-            print_v("mystride", ndims, mystride);
-            print_v("mylocalblockdims", ndims, mylocalblockdims);
-            print_v("mydims", ndims, mydims);
-
-            for(n = 0; n < ndims; n++) {
-                sprintf(dbuf, "displacements[%d]", n);
-                print_v(dbuf, mylocalblockdims[n], displacements[n]);
-                sprintf(dbuf, "blocklengths[%d]", n);
-                print_v(dbuf, mylocalblockdims[n], blocklengths[n]);
-            }
-
-            printf("\n");
-        }
-
-        MPI_Barrier(MPI_COMM_WORLD);
-    }
-#endif
-
-    /* Stores derived data types */
-    MPI_Datatype derived_type[ndims+1];
-    MPI_Datatype tmp_type;
-
-    /* Setup derived data type for elements */
-    MPI_Type_contiguous(view->base->elsize, MPI_BYTE, &derived_type[0]);
-
-    /* Setup derived data types for rest of dimensions */
-    for(n = 1; n < ndims+1; n++) {
-        extent = view->base->elsize;
-        for(i = 0; i < n; i++) {
-            extent *= mydims[i];
-        }
-
-        MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
-                         displacements[n-1], derived_type[n-1], &tmp_type);
-        MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
-    }
-
+    int mode;
+    
     /* Setup file handle */
     MPI_File fh;
-    MPI_File_open(MPI_COMM_WORLD, (char *)filename, // MPI_File_open discards
-                                                    // const
-                  MPI_MODE_WRONLY | MPI_MODE_APPEND, MPI_INFO_NULL, &fh);
+    switch(op) {
+        case DNPY_DATAFILL:
+            mode = MPI_MODE_RDONLY;
+            break;
+        case DNPY_DATADUMP:
+            mode = MPI_MODE_WRONLY | MPI_MODE_APPEND;
+            break;
+        default:
+            fprintf(stderr, "Unknown I/O operation\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+               
+    MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
+                  mode, MPI_INFO_NULL, &fh);
+           
+    /* Setup MPI data type */
+    MPI_Datatype dtype;
+    create_mpi_dtype(view, &dtype);
 
-    /* Set file view with final derived data type */
-    MPI_File_set_view(fh, filepos, derived_type[0], derived_type[ndims],
+    /* Set file view with derived data type */
+    MPI_File_set_view(fh, filepos, view->base->mpi_dtype, dtype,
                       "native", MPI_INFO_NULL);
 
-    /* Now, just write */
+    /* Do operation */
     MPI_Status status;
-    MPI_File_write(fh, view->base->data, view->base->nelements, derived_type[0],
-                  &status);
-
-    /* Free allocated data */
-    for(n = 0; n < ndims; n++) {
-        free(displacements[n]);
+    switch(op) {
+        case DNPY_DATAFILL:
+            MPI_File_read(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            break;
+        case DNPY_DATADUMP:
+            MPI_File_write(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            break;
+        default:
+            fprintf(stderr, "Ehh, the universe collapsed...\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
     }
-
-} /* do_DATADUMP */
-
-/*===================================================================
- *
- * Message handler for DATAFILL.
- * Private.
- */
-static void do_DATAFILL(dndview *view, const char *filename, long filepos)
-{
-    /* Get cartesian coords */
-    int coords[NPY_MAXDIMS];
-    rank2cart(view->base->ndims, myrank, coords);
-    int *stride = cart_dim_sizes[view->base->ndims-1];
-
-    /* Counters */
-    int b, i, j, n, extent;
-
-    /* Debug string buffer */
-    char dbuf[1024];
-
-    /* Convenience */
-    int ndims = view->base->ndims;
-
-    /* Holds arrays of displacements and blocklengths for each dimension */
-    int *displacements[ndims];
-    int *blocklengths[ndims];
-
-    /* Copies for reverse enumeration */
-    int mydims[ndims];
-    int mylocalblockdims[ndims];
-    int mycoords[ndims];
-    int mystride[ndims];
-
-    /* We want to reverse the dimension enumeration for convenience */
-    i = 0;
-    for(n = ndims-1; n >= 0; n--) {
-        mydims[i] = view->base->dims[n];
-        mylocalblockdims[i] = view->base->localblockdims[n];
-        mycoords[i] = coords[n];
-        mystride[i++] = stride[n];
-    }
-
-    /* Allocate room for mylocalblockdims[n] elements in each dimension */
-    for(n = 0; n < ndims; n++) {
-        displacements[n] = malloc(sizeof(int)*mylocalblockdims[n]);
-        blocklengths[n] = malloc(sizeof(int)*mylocalblockdims[n]);
-    }
-
-    /* Iterate over dimensions */
-    for(n = 0; n < ndims; n++) {
-        j = 0; // Reset internal counter
-
-        /* Iterate over a dimension to calculate displacements */
-        for(i = mycoords[n]*blocksize; i < mydims[n]; ) {
-            displacements[n][j] = i;
-
-            if(blocksize+i > mydims[n]) {
-                blocklengths[n][j] = mydims[n] % blocksize;
-            } else {
-                blocklengths[n][j] = blocksize;
-            }
-
-            i += mystride[n]*blocksize;
-            j++;
-        }
-    }
-
-#if 0
-    /* Print debug information for all processes
-     * MPI_Barrier is used to stop output from being interleaved */
-    for(j = 0; j < worldsize; j++) {
-
-        if(myrank == j) {
-            print_v_init("do_DATAFILL");
-            print_v("coords", ndims, coords);
-            print_v("stride", ndims, stride);
-            print_v("mycoords", ndims, mycoords);
-            print_v("mystride", ndims, mystride);
-            print_v("mylocalblockdims", ndims, mylocalblockdims);
-            print_v("mydims", ndims, mydims);
-
-            for(n = 0; n < ndims; n++) {
-                sprintf(dbuf, "displacements[%d]", n);
-                print_v(dbuf, mylocalblockdims[n], displacements[n]);
-                sprintf(dbuf, "blocklengths[%d]", n);
-                print_v(dbuf, mylocalblockdims[n], blocklengths[n]);
-            }
-
-            printf("\n");
-        }
-
-        MPI_Barrier(MPI_COMM_WORLD);
-    }
-#endif
-
-    /* Stores derived data types */
-    MPI_Datatype derived_type[ndims+1];
-    MPI_Datatype tmp_type;
-
-    /* Setup derived data type for elements */
-    MPI_Type_contiguous(view->base->elsize, MPI_BYTE, &derived_type[0]);
-
-    /* Setup derived data types for rest of dimensions */
-    for(n = 1; n < ndims+1; n++) {
-        extent = view->base->elsize;
-        for(i = 0; i < n; i++) {
-            extent *= mydims[i];
-        }
-
-        MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
-                         displacements[n-1], derived_type[n-1], &tmp_type);
-        MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
-    }
-
-    /* Setup file handle */
-    MPI_File fh;
-    MPI_File_open(MPI_COMM_WORLD, (char *)filename, // MPI_File_open discards
-                                                    // const
-                  MPI_MODE_RDONLY, MPI_INFO_NULL, &fh);
-
-    /* Set file view with final derived data type */
-    MPI_File_set_view(fh, filepos, derived_type[0], derived_type[ndims],
-                      "native", MPI_INFO_NULL);
-
-    /* Now, just read */
-    MPI_Status status;
-    MPI_File_read(fh, view->base->data, view->base->nelements, derived_type[0],
-                  &status);
 
     /* Close file handle */
     MPI_File_close(&fh);
 
-    /* Free allocated data */
-    MPI_Type_free(&tmp_type);
-    for(n = 0; n < ndims+1; n++) {
-        MPI_Type_free(&derived_type[n]);
-        if(n < ndims)
-            free(displacements[n]);
-    }
+    /* Free derived data type */
+    MPI_Type_free(&dtype);
 
-} /* do_DATAFILL */
+} /* do_FILEIO */
 
 /*===================================================================
  *
@@ -3208,7 +3125,7 @@ dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
     msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
 
     //The master should also do the operation.
-    do_DATAFILL(view, filename, datapos);
+    do_FILEIO(view, filename, datapos, DNPY_DATAFILL);
 } /* dnumpy_datafill */
 
 /*NUMPY_API
@@ -3234,7 +3151,7 @@ dnumpy_datadump(intp ary_uid, const char *filename, long datapos)
     msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
 
     //The master should also do the operation.
-    do_DATADUMP(view, filename, datapos);
+    do_FILEIO(view, filename, datapos, DNPY_DATADUMP);
 } /* dnumpy_datadump */
 
 /*NUMPY_API
@@ -3556,13 +3473,13 @@ dnumpy_master_slave_split()
                 d1 = ((npy_intp*)msg_data)[0]; // view uid
                 l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
                 strcpy(t1, msg_data+sizeof(npy_intp)+sizeof(long)); // get filename
-                do_DATAFILL(get_dndview(d1), t1, l1);
+                do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATAFILL);
                 break;               
             case DNPY_DATADUMP:
                 d1 = ((npy_intp*)msg_data)[0]; // view uid
                 l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
                 strcpy(t1, msg_data+sizeof(npy_intp)+sizeof(long)); // get filename
-                do_DATADUMP(get_dndview(d1), t1, l1);
+                do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATADUMP);
                 break;               
             case DNPY_DIAGONAL:
                 ary  = get_dndview(((npy_intp*)msg_data)[0]);
