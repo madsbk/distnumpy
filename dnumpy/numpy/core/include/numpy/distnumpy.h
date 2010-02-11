@@ -18,14 +18,9 @@
 
 //Operation types
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
-          DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_SET_ITEM, DNPY_GET_ITEM,
+          DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_PUT_ITEM, DNPY_GET_ITEM,
           DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL, DNPY_DATAFILL,
           DNPY_DATADUMP, DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL};
-
-//dndslice constants.
-#define PseudoIndex -1//Adds a extra 1-dim - 'A[1,newaxis]'
-#define RubberIndex -2//A[1,2,...]
-#define SingleIndex -3//Dim not visible - 'A[1]'
 
 //Type describing a distributed array.
 typedef struct
@@ -46,8 +41,6 @@ typedef struct
     npy_intp nelements;
     //Size of local dimensions (local to the MPI-process).
     npy_intp localdims[NPY_MAXDIMS];
-    //Number of local blocks (local to the MPI-process).
-    //npy_intp nblocks;
     //Size of local block-dimensions (local to the MPI-process).
     npy_intp localblockdims[NPY_MAXDIMS];
     //One-sided communication window (used by MPI_Get and MPI_Put).
@@ -55,6 +48,11 @@ typedef struct
     //MPI-datatype that correspond to an array element.
     MPI_Datatype mpi_dtype;
 } dndarray;
+
+//dndslice constants.
+#define PseudoIndex -1//Adds a extra 1-dim - 'A[1,newaxis]'
+#define RubberIndex -2//A[1,2,...] (Not used in distnumpy.inc)
+#define SingleIndex -3//Dim not visible - 'A[1]'
 
 //Type describing a slice of a dimension.
 typedef struct
@@ -74,10 +72,10 @@ typedef struct
     int rank;
     //Start index (one per dimension).
     npy_intp start[NPY_MAXDIMS];
-    //Elements between index (one per dimension).
-    npy_intp step[NPY_MAXDIMS];
-    //Number of steps (one per dimension).
+    //Number of elements (one per dimension).
     npy_intp nsteps[NPY_MAXDIMS];
+    //Number of elements to next dimension (one per dimension).
+    npy_intp stride[NPY_MAXDIMS];
 } dndsvb;
 
 //Type describing a view block.
@@ -101,6 +99,8 @@ typedef struct
     npy_intp uid;
     //The array this view is a view of.
     dndarray *base;
+    //Number of viewable dimensions.
+    int ndims;
     //Number of sliceses. NB: nslice >= base->ndims.
     int nslice;
     //Sliceses - the global view of the base-array.
@@ -112,13 +112,11 @@ typedef struct
     //DNPY_STEP   - 'step' altered.
     //DNPY_NSTEPS - 'nsteps' altered.
     int alterations;
-    //Number of viewable dimensions.
-    int ndims;        
     //All view-blocks this array view represents.
     dndvb *blocks;
     //Number of view-blocks.
     npy_intp nblocks;
-    //Dimension size of the view-blocks.
+    //Number of view-blocks in each dimension.
     npy_intp blockdims[NPY_MAXDIMS];
 } dndview;
 
