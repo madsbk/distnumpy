@@ -231,14 +231,23 @@ static dndview *put_dndview(dndview *view)
 //if it is the last reference to the dndarray.
 static void rm_dndview(npy_intp uid)
 {
-    npy_intp i,j;
+    npy_intp i,j,n;
     if(uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
             {
                 //Cleanup view.
                 for(j=0; j<dndviews[i].nblocks; j++)
+                {
+                    for(n=0; n<dndviews[i].blocks[j].nsub; n++)
+                    {
+                        MPI_Type_free(
+                         &dndviews[i].blocks[j].sub[n].comm_dtype_view);
+                        MPI_Type_free(
+                         &dndviews[i].blocks[j].sub[n].comm_dtype_buf);
+                    }
                     free(dndviews[i].blocks[j].sub);
+                }
                 free(dndviews[i].blocks);
                 //Cleanup base.
                 dndviews_uid[i] = 0;
@@ -276,6 +285,167 @@ static void msg2slaves(npy_intp *msg, int msgsize)
     MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
 
 } /* msg2slaves */
+
+
+/*===================================================================
+ *
+ * Calculate the view block at the specified block-coordinate.
+ * NB: coord must have length view->ndims.
+ * Private.
+ */
+static void
+calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
+            dndvb *vblock)
+{
+    npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset, bufs;
+    npy_intp notfinished, stride, vitems, vvitems, offset_view, offset_buf;
+    npy_intp coord[NPY_MAXDIMS];
+    npy_intp scoord[NPY_MAXDIMS];
+    int pcoord[NPY_MAXDIMS];
+    int *cdims = cart_dim_sizes[view->base->ndims-1];
+    npy_intp start[NPY_MAXDIMS];
+    npy_intp step[NPY_MAXDIMS];
+    npy_intp nsteps[NPY_MAXDIMS];
+    npy_intp bufstride[NPY_MAXDIMS];
+    dndsvb *svb = vblock->sub;
+    MPI_Datatype comm_bufOLD, comm_bufNEW;
+    MPI_Datatype comm_viewOLD, comm_viewNEW;
+
+    
+    j=0;
+    for(i=0; i < view->nslice; i++)
+    {
+        if(view->slice[i].nsteps == PseudoIndex)
+        {
+//            assert(vcoord[s] == 0);
+            continue;
+        }
+        if(view->slice[i].nsteps == SingleIndex)
+        {
+            nsteps[j] = 1;
+            step[j] = 1;
+            coord[j] = 0;
+        }
+        else
+        {
+            coord[j] = vcoord[j];
+            nsteps[j] = view->slice[i].nsteps;
+            step[j] = view->slice[i].step;
+        }
+        start[j++] = view->slice[i].start;
+    }
+
+    //Sub-vblocks coordinate.
+    memset(scoord, 0, view->base->ndims * sizeof(npy_intp));
+    //Compute all sub-vblocks associated with the n'th vblock.
+    notfinished=1; s=0;
+    while(notfinished)
+    {
+        bufs=view->base->elsize;
+        for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
+        {
+            //View offset relative to array-view (non-block offset).
+            voffset = coord[i] * blocksize + scoord[i];
+            //Global offset relative to array-base.
+            goffset = voffset * step[i] + start[i];
+            //Global block offset relative to array-base.
+            B = goffset / blocksize;
+            //Process rank of the owner in the i'th dimension.
+            pcoord[i] = B % cdims[i];
+            //Local block offset relative to array-base.
+            boffset = B / cdims[i];
+            //Item index local to the block.
+            item_idx = goffset % blocksize;
+            //Local offset relative to array-base.
+            offset = boffset * blocksize + item_idx;
+            //Save offset.
+            svb[s].start[i] = offset;
+            //Viewable items left in the block.
+            vitems = MAX((blocksize - item_idx) / step[i], 1);
+            //Viewable items left in the view.
+            vvitems = nsteps[i] - voffset;
+            //Compute nsteps.
+            svb[s].nsteps[i] = MIN(blocksize, MIN(vvitems, vitems));
+            //Compute the stride for the comm_dtype_buf.
+            bufstride[i] = bufs;
+            bufs *= MIN(blocksize, vvitems);
+            //Debug check.
+            assert(svb[s].nsteps[i] > 0);
+        }
+        //Find rank.
+        svb[s].rank = cart2rank(view->base->ndims, pcoord);
+
+        //Compute the strides (we need the rank to do this).
+        stride = 1;
+        for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
+        {
+            svb[s].stride[i] = stride;
+            stride *= dnumroc(view->base->dims[i], blocksize,
+                              pcoord[i], cdims[i]);
+            assert(svb[s].stride[i] > 0);
+        }
+
+
+
+        //Compute the MPI datatype for communication.
+        MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);        
+        MPI_Type_dup(view->base->mpi_dtype, &comm_bufOLD);
+        offset_view = 0;
+        offset_buf = 0;
+        for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
+        {
+            //Compute the MPI datatype for the view.
+            stride = svb[s].stride[i] * step[i] * view->base->elsize;
+            MPI_Type_create_hvector(svb[s].nsteps[i], 1, stride, 
+                                    comm_viewOLD, &comm_viewNEW);
+
+            //Compute the MPI datatype for the buffer.
+            MPI_Type_create_hvector(svb[s].nsteps[i], 1, bufstride[i], 
+                                    comm_bufOLD, &comm_bufNEW);
+
+            //Compute offsets.
+            offset_view += svb[s].start[i] * svb[s].stride[i];
+            offset_buf += scoord[i] * bufstride[i];
+
+            //Cleanup and iterate comm types.
+            MPI_Type_free(&comm_viewOLD);
+            MPI_Type_free(&comm_bufOLD);
+            comm_viewOLD = comm_viewNEW;
+            comm_bufOLD = comm_bufNEW;
+        }
+        //Save offsets.
+        svb[s].offset_view = offset_view * view->base->elsize;
+        svb[s].offset_buf = offset_buf;
+
+        //Commit dtype.
+        MPI_Type_commit(&comm_viewNEW);
+        MPI_Type_commit(&comm_bufNEW);
+        svb[s].comm_dtype_view = comm_viewNEW;
+        svb[s].comm_dtype_buf = comm_bufNEW;
+
+        //Iterate Sub-vblocks coordinate (Row-major).
+        for(j=view->base->ndims-1; j >= 0; j--)
+        {
+            voffset = coord[j] * blocksize + scoord[j];
+            scoord[j] += svb[s].nsteps[j];
+            if(scoord[j] >= MIN(blocksize, nsteps[j] - voffset))
+            {
+                //We a finished, if wrapping around.
+                if(j == 0)
+                {
+                    notfinished = 0;
+                    break;
+                }
+                scoord[j] = 0;
+            }
+            else
+                break;
+        }
+        s++;
+    }
+    //Save number of sub-vblocks.
+    vblock->nsub = s;
+} /* calc_vblock */
 
 
 /*===================================================================
@@ -1054,7 +1224,7 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
 {
     int ndims = ary->ndims;
     int *cdims = cart_dim_sizes[ndims-1];
-    npy_intp i, n, offset,s;
+    npy_intp i, n;
     npy_intp coord[NPY_MAXDIMS];
     int cartcoord[NPY_MAXDIMS];
 
@@ -1105,42 +1275,22 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
 
     //Alloc vblocks and sub-vblocks.
     view->blocks = malloc(view->nblocks * sizeof(dndvb));
-
-    //Compute view blocks.
-    memset(coord, 0, ary->ndims * sizeof(npy_intp));//Block coord.
-    memset(cartcoord, 0, ary->ndims * sizeof(npy_intp));
-    for(n=0; n<view->nblocks; n++)
+    //Block coordinate.
+    memset(coord, 0, view->base->ndims * sizeof(npy_intp));
+    //Compute the vblocks.
+    for(n=0; n < view->nblocks; n++)
     {
-        //Compute new process rank.
-        for(i=0; i<ndims; i++)
-            cartcoord[i] = coord[i] % cdims[i];
-
-        //There is only one sub-view-block in a non-partial array view.
         view->blocks[n].sub = malloc(sizeof(dndsvb));
-        view->blocks[n].sub->rank = cart2rank(ndims, cartcoord);
-        for(i=0; i<ndims; i++)
-        {
-            offset = (coord[i] / cdims[i]) * blocksize;
-            view->blocks[n].sub->start[i] = offset;
-            view->blocks[n].sub->nsteps[i] = MIN(blocksize,
-                                                 ary->dims[i] -
-                                                 coord[i] * blocksize);
-        }
+        calc_vblock(view, coord, view->blocks+n);
 
-        //Compute the stride of the sub-view-block.
-        s = 1;
-        for(i=ndims-1; i>=0; i--)//Row-major.
-        {
-            view->blocks[n].sub->stride[i] = s;
-            s *= dnumroc(view->base->dims[i], blocksize,
-                         cartcoord[i], cdims[i]);
-        }
         //Iterate coords one block (Row-major).
-        for(i=ndims-1; i >= 0; i--)
+        for(i=view->base->ndims-1; i >= 0; i--)
+        {
             if(++coord[i] >= view->blockdims[i])
                 coord[i] = 0;
             else
                 break;
+        }
     }
 
     //Save the new view.
@@ -1187,15 +1337,9 @@ static void do_DESTROY_ARRAY(npy_intp uid)
  */
 static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
 {
-    npy_intp n, i, j, B, item_idx, s, offset, goffset, voffset, boffset;
-    npy_intp notfinished, stride, vitems, vvitems;
-    npy_intp coord[NPY_MAXDIMS], scoord[NPY_MAXDIMS];
-    int pcoord[NPY_MAXDIMS];
+    npy_intp n, i, j;
+    npy_intp coord[NPY_MAXDIMS];
     dndview *orgview = get_dndview(org_view_uid);
-    int *cdims = cart_dim_sizes[orgview->base->ndims-1];
-    npy_intp start[NPY_MAXDIMS];
-    npy_intp step[NPY_MAXDIMS];
-    npy_intp nsteps[NPY_MAXDIMS];
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -1238,103 +1382,16 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
         }
     }
 
-    //Convert PseudoIndex and PseudoIndex.
-    j = 0;
-    for(i=0; i < newview->nslice; i++)
-    {
-        if(newview->slice[i].nsteps == PseudoIndex)
-            continue;
-        if(newview->slice[i].nsteps == SingleIndex)
-        {
-            nsteps[j] = 1;
-            step[j] = 1;
-        }
-        else
-        {
-            nsteps[j] = newview->slice[i].nsteps;
-            step[j] = newview->slice[i].step;
-        }
-        start[j++] = newview->slice[i].start;
-    }
-
     //Alloc vblocks and sub-vblocks.
     newview->blocks = malloc(newview->nblocks * sizeof(dndvb));
     //Block coordinate.
     memset(coord, 0, newview->base->ndims * sizeof(npy_intp));
-    //MPI-process coordinate.
-    memset(pcoord, 0, newview->base->ndims * sizeof(npy_intp));
     //Compute the vblocks.
     for(n=0; n < newview->nblocks; n++)
     {
-        //Allocate sub-vblocks owned by the n'th vblock. TODO: compute the real uses.
-        newview->blocks[n].sub = malloc(4 * newview->base->ndims * sizeof(dndsvb));
-        dndsvb *svb = newview->blocks[n].sub;
+        newview->blocks[n].sub = malloc(4 * newview->base->ndims * sizeof(dndsvb));//TODO
+        calc_vblock(newview, coord, newview->blocks+n);
 
-        //Sub-vblocks coordinate.
-        memset(scoord, 0, newview->base->ndims * sizeof(npy_intp));
-        //Compute all sub-vblocks associated with the n'th vblock.
-        notfinished=1; s=0;
-        while(notfinished)
-        {
-            for(i=newview->base->ndims-1; i >= 0; i--)//Row-major.
-            {
-                //View offset relative to array-view (non-block offset).
-                voffset = coord[i] * blocksize + scoord[i];
-                //Global offset relative to array-base.
-                goffset = voffset * step[i] + start[i];
-                //Global block offset relative to array-base.
-                B = goffset / blocksize;
-                //Process rank of the owner in the i'th dimension.
-                pcoord[i] = B % cdims[i];
-                //Local block offset relative to array-base.
-                boffset = B / cdims[i];
-                //Item index local to the block.
-                item_idx = goffset % blocksize;
-                //Local offset relative to array-base.
-                offset = boffset * blocksize + item_idx;
-                //Save offset.
-                svb[s].start[i] = offset;
-                //Viewable items left in the block.
-                vitems = MAX((blocksize - item_idx) / step[i], 1);
-                //Viewable items left in the view.
-                vvitems = nsteps[i] - voffset;
-                //Compute nsteps.
-                svb[s].nsteps[i] = MIN(blocksize, MIN(vvitems, vitems));
-                //Debug check.
-                assert(svb[s].nsteps[i] > 0);
-            }
-            //Find rank.
-            svb[s].rank = cart2rank(newview->base->ndims, pcoord);
-
-            //Compute the strides (we need the rank to do this).
-            stride = 1;
-            for(i=newview->base->ndims-1; i >= 0; i--)//Row-major.
-            {
-                svb[s].stride[i] = stride;
-                stride *= dnumroc(newview->base->dims[i], blocksize, pcoord[i], cdims[i]);
-                assert(svb[s].stride[i] > 0);
-            }
-
-            //Iterate Sub-vblocks coordinate (Row-major).
-            for(j=newview->base->ndims-1; j >= 0; j--)
-            {
-                voffset = coord[j] * blocksize + scoord[j];
-                scoord[j] += svb[s].nsteps[j];
-                if(scoord[j] >= MIN(blocksize, nsteps[j] - voffset))
-                {
-                    //We a finished, if wrapping around.
-                    if(j == 0)
-                    {
-                        notfinished = 0;
-                        break;
-                    }
-                    scoord[j] = 0;
-                }
-                else
-                    break;
-            }
-            s++;
-        }
         //Iterate coords one block (Row-major).
         for(j=newview->base->ndims-1; j >= 0; j--)
         {
