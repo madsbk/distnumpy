@@ -290,7 +290,8 @@ static void msg2slaves(npy_intp *msg, int msgsize)
 /*===================================================================
  *
  * Calculate the view block at the specified block-coordinate.
- * NB: coord must have length view->ndims.
+ * NB: vcoord is the visible coordinates and must therefore have 
+ * length view->ndims.
  * Private.
  */
 static void
@@ -311,13 +312,14 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     MPI_Datatype comm_bufOLD, comm_bufNEW;
     MPI_Datatype comm_viewOLD, comm_viewNEW;
 
-    
-    j=0;
+    //Convert vcoord to coord, which have length view->base->ndims.
+    j=0;s=0;
     for(i=0; i < view->nslice; i++)
     {
         if(view->slice[i].nsteps == PseudoIndex)
         {
-//            assert(vcoord[s] == 0);
+            assert(vcoord[s] == 0);
+            s++;
             continue;
         }
         if(view->slice[i].nsteps == SingleIndex)
@@ -328,9 +330,10 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         }
         else
         {
-            coord[j] = vcoord[j];
+            coord[j] = vcoord[s];
             nsteps[j] = view->slice[i].nsteps;
             step[j] = view->slice[i].step;
+            s++;
         }
         start[j++] = view->slice[i].start;
     }
@@ -384,8 +387,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
                               pcoord[i], cdims[i]);
             assert(svb[s].stride[i] > 0);
         }
-
-
 
         //Compute the MPI datatype for communication.
         MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);        
@@ -446,6 +447,28 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     //Save number of sub-vblocks.
     vblock->nsub = s;
 } /* calc_vblock */
+
+/*===================================================================
+ *
+ * Return the view block at the specified vblock-coordinate.
+ * NB: coord is the visible coordinates and must therefore have 
+ * length view->ndims.
+ * Private.
+ */
+static dndvb *
+find_vblock(dndview *view, npy_intp coord[NPY_MAXDIMS])
+{
+    npy_intp i,j,s,n=0;
+    for(i=view->ndims-1; i>=0; i--)//Row-major.
+    {
+        s = 1;
+        for(j=view->ndims-1; j>i; j--)
+            s *= view->blockdims[j];
+        n += s * coord[i];
+    }
+    assert(n < view->nblocks);
+    return &view->blocks[n];
+} /* find_vblock */
 
 
 /*===================================================================
@@ -1370,10 +1393,10 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
     n=0;
     for(i=0; i < newview->nslice; i++)
     {
-        if(newview->slice[i].nsteps != PseudoIndex)
+        if(newview->slice[i].nsteps != SingleIndex)
         {
             j = 1;//SingleIndex has length one.
-            if(newview->slice[i].nsteps != SingleIndex)
+            if(newview->slice[i].nsteps != PseudoIndex)
                 j = newview->slice[i].nsteps;
 
             newview->blockdims[n] = ceil(j / (double) blocksize);
@@ -1385,15 +1408,15 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
     //Alloc vblocks and sub-vblocks.
     newview->blocks = malloc(newview->nblocks * sizeof(dndvb));
     //Block coordinate.
-    memset(coord, 0, newview->base->ndims * sizeof(npy_intp));
+    memset(coord, 0, newview->ndims * sizeof(npy_intp));
     //Compute the vblocks.
     for(n=0; n < newview->nblocks; n++)
     {
-        newview->blocks[n].sub = malloc(4 * newview->base->ndims * sizeof(dndsvb));//TODO
+        newview->blocks[n].sub = malloc(8 * sizeof(dndsvb));//TODO
         calc_vblock(newview, coord, newview->blocks+n);
 
         //Iterate coords one block (Row-major).
-        for(j=newview->base->ndims-1; j >= 0; j--)
+        for(j=newview->ndims-1; j >= 0; j--)
         {
             if(++coord[j] >= newview->blockdims[j])
                 coord[j] = 0;
@@ -1414,11 +1437,11 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 {   
     npy_intp i,j,b,offset;
     npy_intp n, s;
-    npy_intp icoord[NPY_MAXDIMS];
-    npy_intp bcoord[NPY_MAXDIMS];
+    npy_intp tcoord[NPY_MAXDIMS];
     npy_intp rcoord[NPY_MAXDIMS];
     npy_intp nsteps[NPY_MAXDIMS];
     npy_intp step[NPY_MAXDIMS];
+    dndvb *vblock;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -1436,6 +1459,11 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 
     if(myrank == 0)
     {
+        //Find the view block.
+        for(i=0; i<view->ndims; i++)
+            tcoord[i] = coord[i] / blocksize;
+        vblock = find_vblock(view, tcoord);
+              
         //Convert PseudoIndex and SingleIndex.
         j=0;n=0;
         for(i=0; i < view->nslice; i++)
@@ -1460,23 +1488,11 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
                 j++; n++;
             }
         }
-        //Convert global coordinate to block and
-        //index coordinates relative to the view.
+        
+        //Convert global coordinate to index coordinates 
+        //relative to the view.
         for(i=0; i<view->base->ndims; i++)
-        {
-            bcoord[i] = rcoord[i] / blocksize;
-            icoord[i] = rcoord[i] % blocksize;
-        }
-        //Find view block.
-        n = 0;
-        for(i=view->base->ndims-1; i>=0; i--)//Row-major.
-        {
-            s = 1;
-            for(j=view->base->ndims-1; j>i; j--)
-                s *= view->blockdims[j];
-            n += s * bcoord[i];
-        }
-        dndvb *dvb = &view->blocks[n];
+            tcoord[i] = rcoord[i] % blocksize;
 
         //Find sub view block and convert icoord to coordinate
         //relative to the sub view block.
@@ -1484,17 +1500,17 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         for(i=view->base->ndims-1; i>=0; i--)//Row-major.
         {
             npy_intp subdimsize=1;
-            j = dvb->sub[b].nsteps[i];
-            while(icoord[i] >= dvb->sub[b].nsteps[i])
+            j = vblock->sub[b].nsteps[i];
+            while(tcoord[i] >= vblock->sub[b].nsteps[i])
             {
-                icoord[i] -= dvb->sub[b].nsteps[i];
-                j += dvb->sub[b].nsteps[i];
+                tcoord[i] -= vblock->sub[b].nsteps[i];
+                j += vblock->sub[b].nsteps[i];
                 subdimsize++;
                 b += s;
             }
             while(j < MIN(blocksize, nsteps[i] - rcoord[i]))
             {
-                j += dvb->sub[b].nsteps[i];
+                j += vblock->sub[b].nsteps[i];
                 subdimsize++;
             }
             s *= subdimsize;
@@ -1503,22 +1519,24 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         //Compute offset.
         offset = 0;
         for(i=view->base->ndims-1; i>=0; i--)//Row-major.
-            offset += (dvb->sub[b].start[i] + icoord[i] * step[i]) * dvb->sub[b].stride[i];
+            offset += (vblock->sub[b].start[i] + tcoord[i] * step[i]) * 
+                      vblock->sub[b].stride[i];
         
         //Do the communication.
-        MPI_Win_lock(MPI_LOCK_SHARED, dvb->sub[b].rank,
+        MPI_Win_lock(MPI_LOCK_SHARED, vblock->sub[b].rank,
                      MPI_MODE_NOCHECK, view->base->comm_win);
         if(Direction)
-            MPI_Put(item, 1, view->base->mpi_dtype, dvb->sub[b].rank,
+            MPI_Put(item, 1, view->base->mpi_dtype, vblock->sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
         else
-            MPI_Get(item, 1, view->base->mpi_dtype, dvb->sub[b].rank,
+            MPI_Get(item, 1, view->base->mpi_dtype, vblock->sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
 
-        MPI_Win_unlock(dvb->sub[b].rank, view->base->comm_win);
+        MPI_Win_unlock(vblock->sub[b].rank, view->base->comm_win);
     }
+
     MPI_Barrier(MPI_COMM_WORLD);
 
 } /* do_GET_ITEM */
@@ -2722,7 +2740,7 @@ dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
 {
     //Get arrray structs.
     dndview *view = get_dndview(uid);
-    int ndims = view->base->ndims;
+    int ndims = view->ndims;
     int elsize = view->base->elsize;
 
     //Convert item to a compatible type.

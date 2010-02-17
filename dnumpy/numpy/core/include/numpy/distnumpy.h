@@ -70,11 +70,11 @@ typedef struct
 {
     //The rank of the MPI-process that owns this sub-block.
     int rank;
-    //Start index (one per dimension).
+    //Start index (one per base-dimension).
     npy_intp start[NPY_MAXDIMS];
-    //Number of elements (one per dimension).
+    //Number of elements (one per base-dimension).
     npy_intp nsteps[NPY_MAXDIMS];
-    //Number of elements to next dimension (one per dimension).
+    //Number of elements to next dimension (one per base-dimension).
     npy_intp stride[NPY_MAXDIMS];
     
     //The MPI datatype for the view.
