@@ -1143,20 +1143,36 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
                                 PyArray_SimpleNewFromData(0, NULL,
                                                 PyArray_TYPE(dest),
                                                 zero);
-
+    
         PyArrayObject *arylist[3] = {src,scalar,dest};
+        PyArrayObject *tmpAry = NULL;
+        if(!usecopy)//We have to use a tmp array.
+        {
+            tmpAry = (PyArrayObject *) PyArray_New(&PyArray_Type, 
+                                                   PyArray_NDIM(src), 
+                                                   PyArray_DIMS(src), 
+                                                   PyArray_TYPE(src), 
+                                                   NULL, NULL, 0, 
+                                                   DNPY_DISTRIBUTED, 
+                                                   NULL);
+            //Copy src to tmp array.
+            arylist[2] = tmpAry;
+            dnumpy_ufunc(arylist, 3, 1, "add", -1);
+            arylist[0] = tmpAry;
+            arylist[2] = dest;
+        }
+        
         //TODO: create a specialized COPY function.
         dnumpy_ufunc(arylist, 3, 1, "add", -1);
 
         //Cleanup
         free(zero);
+        Py_XDECREF(tmpAry);
         Py_DECREF(tmpIter);
         Py_DECREF(scalar);
         return 0;
     }
 
-
-    
     same = PyArray_SAMESHAPE(dest, src);
     simple = same && ((PyArray_ISCARRAY_RO(src) && PyArray_ISCARRAY(dest)) ||
             (PyArray_ISFARRAY_RO(src) && PyArray_ISFARRAY(dest)));

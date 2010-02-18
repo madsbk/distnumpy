@@ -70,12 +70,19 @@ typedef struct
 {
     //The rank of the MPI-process that owns this sub-block.
     int rank;
-    //Start index (one per dimension).
+    //Start index (one per base-dimension).
     npy_intp start[NPY_MAXDIMS];
-    //Number of elements (one per dimension).
+    //Number of elements (one per base-dimension).
     npy_intp nsteps[NPY_MAXDIMS];
-    //Number of elements to next dimension (one per dimension).
+    //Number of elements to next dimension (one per base-dimension).
     npy_intp stride[NPY_MAXDIMS];
+    
+    //The MPI datatype for the view.
+    MPI_Datatype comm_dtype_view;
+    npy_intp offset_view;
+    //The MPI datatype and offset for the buffer.
+    MPI_Datatype comm_dtype_buf;
+    npy_intp offset_buf;
 } dndsvb;
 
 //Type describing a view block.
@@ -85,6 +92,8 @@ typedef struct
     npy_intp id;
     //All sub-view-blocks in this view block.
     dndsvb *sub;
+    //Number of sub-view-blocks.
+    npy_intp nsub;
 } dndvb;
 
 //View-alteration flags.
@@ -116,7 +125,7 @@ typedef struct
     dndvb *blocks;
     //Number of view-blocks.
     npy_intp nblocks;
-    //Number of view-blocks in each dimension.
+    //Number of view-blocks in each viewable dimension.
     npy_intp blockdims[NPY_MAXDIMS];
 } dndview;
 
