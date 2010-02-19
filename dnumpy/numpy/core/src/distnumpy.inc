@@ -8,12 +8,6 @@
 #endif
 #include CBLAS_HEADER
 
-#ifdef DNPY_TIME
-#include <sys/time.h>
-struct timeval tv;
-struct timezone tz;
-unsigned long long total_rget_time=0, tmp_time, total_time_tmp, total_time, total_apply_time;
-#endif
 
 /*===================================================================
  *
@@ -290,7 +284,7 @@ static void msg2slaves(npy_intp *msg, int msgsize)
 /*===================================================================
  *
  * Calculate the view block at the specified block-coordinate.
- * NB: vcoord is the visible coordinates and must therefore have 
+ * NB: vcoord is the visible coordinates and must therefore have
  * length view->ndims.
  * Private.
  */
@@ -389,7 +383,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         }
 
         //Compute the MPI datatype for communication.
-        MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);        
+        MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);
         MPI_Type_dup(view->base->mpi_dtype, &comm_bufOLD);
         offset_view = 0;
         offset_buf = 0;
@@ -397,11 +391,11 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         {
             //Compute the MPI datatype for the view.
             stride = svb[s].stride[i] * step[i] * view->base->elsize;
-            MPI_Type_create_hvector(svb[s].nsteps[i], 1, stride, 
+            MPI_Type_create_hvector(svb[s].nsteps[i], 1, stride,
                                     comm_viewOLD, &comm_viewNEW);
 
             //Compute the MPI datatype for the buffer.
-            MPI_Type_create_hvector(svb[s].nsteps[i], 1, bufstride[i], 
+            MPI_Type_create_hvector(svb[s].nsteps[i], 1, bufstride[i],
                                     comm_bufOLD, &comm_bufNEW);
 
             //Compute offsets.
@@ -451,7 +445,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 /*===================================================================
  *
  * Return the view block at the specified vblock-coordinate.
- * NB: coord is the visible coordinates and must therefore have 
+ * NB: coord is the visible coordinates and must therefore have
  * length view->ndims.
  * Private.
  */
@@ -1432,9 +1426,9 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
  * Direction: 0=Get, 1=Put.
  * Private.
  */
-static void do_PUTGET_ITEM(int Direction, dndview *view, char* item, 
+static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
                            npy_intp coord[NPY_MAXDIMS])
-{   
+{
     npy_intp i,j,b,offset;
     npy_intp n, s;
     npy_intp tcoord[NPY_MAXDIMS];
@@ -1463,7 +1457,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         for(i=0; i<view->ndims; i++)
             tcoord[i] = coord[i] / blocksize;
         vblock = find_vblock(view, tcoord);
-              
+
         //Convert PseudoIndex and SingleIndex.
         j=0;n=0;
         for(i=0; i < view->nslice; i++)
@@ -1488,8 +1482,8 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
                 j++; n++;
             }
         }
-        
-        //Convert global coordinate to index coordinates 
+
+        //Convert global coordinate to index coordinates
         //relative to the view.
         for(i=0; i<view->base->ndims; i++)
             tcoord[i] = rcoord[i] % blocksize;
@@ -1519,9 +1513,9 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         //Compute offset.
         offset = 0;
         for(i=view->base->ndims-1; i>=0; i--)//Row-major.
-            offset += (vblock->sub[b].start[i] + tcoord[i] * step[i]) * 
+            offset += (vblock->sub[b].start[i] + tcoord[i] * step[i]) *
                       vblock->sub[b].stride[i];
-        
+
         //Do the communication.
         MPI_Win_lock(MPI_LOCK_SHARED, vblock->sub[b].rank,
                      MPI_MODE_NOCHECK, view->base->comm_win);
@@ -1596,407 +1590,61 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
     //Get Python function.
     PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
-    if(PyOp == NULL)
-    {
-        fprintf(stderr, "UFUNC : unknown operator: %s\n", op);
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-    //ufunc's objects.
-    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
-
-    //Analyse if it is possible to use a simplified computation method.
-    //* If all array have the same number of dimensions and if the views
-    //  are all identical we can use a very simple end efficient
-    //  computation method which do not require any communication..
-    //* If the only view-alteration is concerning the number of visible
-    //  dimensions we can use a block-oriented computation method.
-    int nocomm_method = 1;
-    int block_method = 1;
-    for(i=0; i<narys; i++)
-    {
-        //A scalar is also compatible with all methods.
-        if(views[i]->base->ndims == 0)
-            continue;
-
-        if(views[i]->base->ndims != lastary->base->ndims ||
-           views[i]->nslice != lastary->nslice)
-        {
-            nocomm_method = 0;
-        }
-        else if(memcmp(views[i]->slice, lastary->slice,
-                 views[i]->nslice * sizeof(dndslice)))
-        {
-             nocomm_method = 0;
-        }
-        if(views[i]->alterations & ~DNPY_NDIMS)
-        {
-            block_method = 0;
-        }
-    }
-    //At the moment the block-method requires that the output array
-    //has no alterations.
-    //TODO: This shouldn't be a requirement.
-    for(i=nin; i<narys; i++)
-        if(views[i]->alterations != 0)
-            block_method = 0;
-
-    if(nocomm_method)
-    {
-        npy_intp dims[NPY_MAXDIMS];
-        npy_intp strides[NPY_MAXDIMS];
-        PyObject *arytuple = PyTuple_New(narys);
-        for(i=0; i < narys; i++)
-        {
-            char *data = views[i]->base->data;
-
-            //A scalar is very simple.
-            if(views[i]->base->ndims == 0)
-            {
-                PyTuple_SET_ITEM(arytuple, i,
-                                 PyArray_SimpleNewFromData(0, NULL,
-                                        views[i]->base->dtype, data));
-                continue;
-            }
-
-            //Compute the strides and dims from the view.
-            int dj=0; int bj=0; int sj=0;
-            while(sj < views[i]->nslice)
-            {
-                if(views[i]->slice[sj].nsteps == PseudoIndex)
-                {
-                    dims[dj] = 1;
-                    strides[dj] = 0;
-                    dj++;
-                }
-                else
-                {
-                    int stride = 1;
-                    int s;
-                    for(s=bj+1; s<views[i]->base->ndims; s++)
-                        stride *= views[i]->base->localdims[s];
-
-                    if(views[i]->slice[sj].nsteps == SingleIndex)
-                    {
-                        //Forwarding - invisible dimension.
-                        data += views[i]->slice[sj].start * stride *
-                                views[i]->base->elsize;
-                    }
-                    else
-                    {
-                        dims[dj] = views[i]->base->localdims[bj];
-                        strides[dj] = stride * views[i]->base->elsize;
-                        dj++;
-                    }
-                    bj++;
-                }
-                sj++;
-            }
-            PyTuple_SET_ITEM(arytuple, i, PyArray_New(&PyArray_Type,
-                             views[i]->ndims, dims,
-                             views[i]->base->dtype, strides, data,
-                             views[i]->base->elsize,
-                             NPY_WRITEABLE | NPY_CARRAY, NULL));
-        }
-
-        //Call the python operator.
-        PyObject *t = PyObject_CallObject(PyOp, arytuple);
-        Py_XDECREF(t);
-
-        //Clean up
-        Py_DECREF(arytuple);
-        Py_DECREF(PyOp);
-        for(i=0; i<narys; i++)
-            if(views[i]->base->ndims == 0)//Scalar dummy.
-            {
-                free(views[i]->base);
-                free(views[i]);
-            }
-        return;
-    }//End of the simple method.
+    assert(PyOp != NULL);
 
     npy_intp coords[NPY_MAXDIMS];
     memset(coords, 0, NPY_MAXDIMS * sizeof(npy_intp));
-    if(block_method)
+
+    //Receive buffers. One per array (single buffering).
+    char *buffer[NPY_MAXARGS];
+
+    //Allocate a buffer for every array.
+    for(i=0; i<nin; i++)
+        buffer[i] = malloc(views[i]->base->elsize);
+
+    for(i=0; i<lastary->base->nelements; i++)
     {
-        if(appropriate_function < 0)
+        int not_inside_view = 0;
+        for(j=0; j<nin; j++)
+            not_inside_view += remote_get(buffer[j], views[j],
+                                          lastary, coords);
+        //If just one is outside we jump to next element.
+        if(!not_inside_view)
         {
-            fprintf(stderr, "do_UFUNC was called on a view but no "
-                            "appropriate_function was provided\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
+            npy_intp one = 1;
+            PyObject *arytuple = PyTuple_New(narys);
+            for(j=0; j<nin; j++)
+                PyTuple_SET_ITEM(arytuple, j,
+                                 PyArray_SimpleNewFromData(1,
+                                 &one, views[j]->base->dtype,
+                                 buffer[j]));
+
+            for(j=nin; j<narys; j++)
+                PyTuple_SET_ITEM(arytuple, j,
+                                 PyArray_SimpleNewFromData(1,
+                                 &one, views[j]->base->dtype,
+                                 views[j]->base->data +
+                                 i*views[j]->base->elsize));
+
+            //Call the python operator.
+            PyObject *t = PyObject_CallObject(PyOp, arytuple);
+            Py_XDECREF(t);
+            Py_DECREF(arytuple);
         }
 
-        //ufunc objects.
-        PyUFuncGenericFunction ufunc_function =
-                               ufunc_obj->functions[appropriate_function];
-        void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
-
-        //Receive buffers. Two buffers per array (double buffering).
-        char *buffer[2][NPY_MAXARGS];
-
-        //Allocate buffers.
-        for(i=0; i<nin; i++)
+        //Iterate coords one element.
+        for(j=lastary->base->ndims-1; j >= 0; j--)
         {
-            npy_intp s = views[i]->base->elsize;
-            for(j=0; j<views[i]->base->ndims; j++)
-            {
-                npy_intp d = dnumroc(views[i]->base->dims[j], blocksize,
-                         0, cart_dim_sizes[views[i]->base->ndims-1][j]);
-                s *= (blocksize < d)?blocksize:d;
-            }
-            s = (s < views[i]->base->elsize)?views[i]->base->elsize:s;
-            buffer[0][i] = malloc(s);
-            buffer[1][i] = malloc(s);
-            if(buffer[0][i] == NULL || buffer[1][i] == NULL)
-            {
-                fprintf(stderr, "Out of memory!\n");
-                MPI_Abort(MPI_COMM_WORLD, -1);
-            }
-        }
-
-        //Find the order of which the dimensions should be iterated.
-        int dim_iter_order[NPY_MAXDIMS];
-        int sc = 0; //start counter.
-        int ec = lastary->ndims-1; //end counter.
-        for(i=ec; i>=0; i--)
-        {
-            int broadcast = 0;
-            if(lastary->base->dims[i] != 1)
-            {
-                for(j=0; j<nin; j++)
-                {
-                    int lastcount = i - (lastary->ndims -
-                                         views[j]->ndims);
-                    int s, si=views[j]->ndims-1, gotdim=0;
-                    if(lastcount >= 0)
-                    {
-                        for(s=views[j]->nslice-1; s>=0; s--)
-                        {
-                            if(views[j]->slice[s].nsteps !=
-                               SingleIndex)
-                                if(si-- == lastcount)
-                                {
-                                    gotdim = 1;
-                                    break;
-                                }
-                        }
-                    }
-                    if(gotdim == 0 || //no more dims.
-                       views[j]->slice[s].nsteps == 1)//dim size is 1.
-                    {
-                        broadcast = 1;
-                        break;
-                    }
-                }
-            }
-            //Dims we need to broadcast should be ordered first.
-            if(broadcast)
-                dim_iter_order[sc++] = i;
+            if(++coords[j] >= lastary->base->localdims[j])
+                coords[j] = 0;
             else
-                dim_iter_order[ec--] = i;
+                break;
         }
-
-        //Coordinate of the next block we need to remote-get.
-        npy_intp next_get_coords[NPY_MAXARGS][NPY_MAXDIMS];
-        memset(next_get_coords, 0, NPY_MAXARGS*NPY_MAXDIMS*
-                                   sizeof(npy_intp));
-
-        //List of intermediate array blocks (PyArrays) we should reuse.
-        PyObject *obj_blocklist[NPY_MAXARGS];
-        //List of intermediate array blocks we are receiving.
-        PyObject *apply_blocklist[NPY_MAXARGS];
-        //List of intermediate array blocks we should apply on.
-        PyObject *recv_blocklist[NPY_MAXARGS];
-        for(j=0; j<narys; j++)
-        {
-            recv_blocklist[j] = NULL;
-            apply_blocklist[j] = NULL;
-            obj_blocklist[j] = NULL;
-        }
-
-        //Ranks that were locked by the previous remote_blockget.
-        int locked_ranks[NPY_MAXARGS];
-        for(j=0;j<narys;j++)
-            locked_ranks[j] = -1;
-
-        //'e' indicates in which buffer we are receiving.
-        int e[NPY_MAXARGS];// Even/odd switcher for
-        memset(e, 0, NPY_MAXARGS * sizeof(int));
-
-        //1. iteration - fill the recv_blocklist.
-        for(j=0; j<nin; j++)
-        {
-            remote_blockget(buffer[0][j], views[j],
-                            lastary,
-                            coords,
-                            &locked_ranks[j],
-                            &recv_blocklist[j]);
-        }
-
-        //Do the rest of the iterations.
-        int notfinished = 1;
-        do{
-            //Update apply_blocklist with the new blocks in
-            //recv_blocklist.
-            for(j=0; j<nin; j++)
-                if(recv_blocklist[j] != NULL &&
-                   apply_blocklist[j] == NULL)
-                {
-                    if(locked_ranks[j] >= 0)
-                    {
-                        MPI_Win_unlock(locked_ranks[j],
-                                       views[j]->base->comm_win);
-                        locked_ranks[j] = -1;
-                    }
-                    apply_blocklist[j] = recv_blocklist[j];
-                    recv_blocklist[j] = NULL;
-                }
-
-            //Retrieve remote blocks if there is room in the
-            //recv_blocklist.
-            for(j=0; j<nin; j++)
-                if(recv_blocklist[j] == NULL)
-                {
-                    //Update next_get_coords.
-                    find_next_get_coords(next_get_coords[j], views[j],
-                                         lastary, dim_iter_order);
-                    //Flip
-                    e[j] = (e[j]+1)%2;
-
-                    //Now get the block we will need in the next
-                    //iteration.
-                    remote_blockget(buffer[e[j]][j],
-                                    views[j],
-                                    lastary,
-                                    next_get_coords[j],
-                                    &locked_ranks[j],
-                                    &obj_blocklist[j]);
-                    recv_blocklist[j] = obj_blocklist[j];
-                    obj_blocklist[j] = NULL;
-                }
-
-            //Apply the universial function.
-            apply_ufunc(narys, apply_blocklist, ufunc_function,
-                        ufunc_funcdata, lastary, coords);
-
-            //Iterate one block.
-            for(j=0; j < lastary->base->ndims; j++)
-            {
-                int o = dim_iter_order[j];//Using the computed order.
-                if(++coords[o] >= lastary->base->localblockdims[o])
-                {
-                    //We a finished, if wrapping around.
-                    if(j == lastary->base->ndims-1)
-                    {
-                        notfinished = 0;
-                        break;
-                    }
-                    coords[o] = 0;
-                }
-                else
-                    break;
-            }
-            for(j=0; j<nin; j++)
-            {
-                //Use the previous block if we are broadcasting.
-                int use_prev_block = 0;
-
-                //If coords is not equal to next_get_coords we
-                //should use the previous block.
-                for(i=0; i<lastary->ndims; i++)
-                    if(coords[i] != next_get_coords[j][i])
-                    {
-                        use_prev_block = 1;
-                        break;
-                    }
-                if(!use_prev_block)
-                {
-                    //Reusing the PyObject.
-                    obj_blocklist[j] = apply_blocklist[j];
-                    apply_blocklist[j] = NULL;
-                }
-            }
-        }while(notfinished);
-
-        //Unlock the last block communication.
-        for(j=0; j<nin; j++)
-            if(locked_ranks[j] >= 0)
-                MPI_Win_unlock(locked_ranks[j],
-                               views[j]->base->comm_win);
-
-        //Finally we call apply on the last block.
-        for(j=0; j<lastary->base->ndims; j++)
-            coords[j] = lastary->base->localblockdims[j] - 1;
-        apply_ufunc(narys, apply_blocklist, ufunc_function,
-                    ufunc_funcdata, lastary, coords);
-
-        //Cleanup.
-        for(j=0; j<narys; j++)
-        {
-            Py_XDECREF(recv_blocklist[j]);
-            Py_XDECREF(apply_blocklist[j]);
-            Py_XDECREF(obj_blocklist[j]);
-        }
-        for(j=0; j<nin; j++)
-        {
-            free(buffer[0][j]);
-            free(buffer[1][j]);
-        }
-    }//End of the block method.
-    else
-    {
-        //Receive buffers. One per array (single buffering).
-        char *buffer[NPY_MAXARGS];
-
-        //Allocate a buffer for every array.
-        for(i=0; i<nin; i++)
-            buffer[i] = malloc(views[i]->base->elsize);
-
-        for(i=0; i<lastary->base->nelements; i++)
-        {
-            int not_inside_view = 0;
-            for(j=0; j<nin; j++)
-                not_inside_view += remote_get(buffer[j], views[j],
-                                              lastary, coords);
-            //If just one is outside we jump to next element.
-            if(!not_inside_view)
-            {
-                npy_intp one = 1;
-                PyObject *arytuple = PyTuple_New(narys);
-                for(j=0; j<nin; j++)
-                    PyTuple_SET_ITEM(arytuple, j,
-                                     PyArray_SimpleNewFromData(1,
-                                     &one, views[j]->base->dtype,
-                                     buffer[j]));
-
-                for(j=nin; j<narys; j++)
-                    PyTuple_SET_ITEM(arytuple, j,
-                                     PyArray_SimpleNewFromData(1,
-                                     &one, views[j]->base->dtype,
-                                     views[j]->base->data +
-                                     i*views[j]->base->elsize));
-
-                //Call the python operator.
-                PyObject *t = PyObject_CallObject(PyOp, arytuple);
-                Py_XDECREF(t);
-                Py_DECREF(arytuple);
-            }
-
-            //Iterate coords one element.
-            for(j=lastary->base->ndims-1; j >= 0; j--)
-            {
-                if(++coords[j] >= lastary->base->localdims[j])
-                    coords[j] = 0;
-                else
-                    break;
-            }
-        }
-        //Cleanup
-        for(i=0; i<nin; i++)
-            free(buffer[i]);
     }
-
     //Clean up
-    Py_DECREF(ufunc_obj);
+    Py_DECREF(PyOp);
+    for(i=0; i<nin; i++)
+        free(buffer[i]);
     for(i=0; i<narys; i++)
     {
         if(views[i]->base->ndims == 0)//Scalar dummy.
@@ -2005,15 +1653,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             free(views[i]);
         }
     }
-#ifdef DNPY_TIME
-    gettimeofday(&tv, &tz);
-    total_time = (long long)tv.tv_usec + ((long long)tv.tv_sec)*1000000 - total_time_tmp;
-
-    printf("total time: %llu us\n", total_time);
-    printf("total remote get: %llu us\n", total_rget_time);
-    printf("total apply: %llu us\n", total_apply_time);
-    printf("total admin: %llu us\n", total_time-total_rget_time-total_apply_time);
-#endif
 
 } /* do_UFUNC */
 
