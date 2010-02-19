@@ -79,6 +79,8 @@ def ufunc(max_ndim):
         Df[1:] = Cf[:-1]
         Cd = Dd + Bd[np.newaxis,-1]
         Cf = Df + Bf[np.newaxis,-1]
+        Cd[1:] = Cd[:-1]
+        Cf[1:] = Cf[:-1]
 
         if not array_equal(Cd,Cf):
             print "Error in ufunc!"
