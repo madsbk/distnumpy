@@ -225,7 +225,7 @@ static dndview *put_dndview(dndview *view)
 //if it is the last reference to the dndarray.
 static void rm_dndview(npy_intp uid)
 {
-    npy_intp i,j,n;
+    npy_intp i;
     if(uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
@@ -547,7 +547,7 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
                                     strides,
                                     lastary->base->data + offset,
                                     lastary->base->elsize,
-                                    NPY_WRITEABLE | NPY_CARRAY, NULL);
+                                    NPY_BEHAVED, NULL);
     }
     else
     {
@@ -812,8 +812,7 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
 {
     int ndims = ary->ndims;
     int *cdims = cart_dim_sizes[ndims-1];
-    npy_intp i, n;
-    npy_intp coord[NPY_MAXDIMS];
+    npy_intp i;
     int cartcoord[NPY_MAXDIMS];
 
     //Allocate and copy the array to the views's base.
@@ -906,7 +905,6 @@ static void do_DESTROY_ARRAY(npy_intp uid)
 static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
 {
     npy_intp n, i, j;
-    npy_intp coord[NPY_MAXDIMS];
     dndview *orgview = get_dndview(org_view_uid);
 
     //Print debug info.
@@ -1227,7 +1225,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                             views[v]->ndims, vdims,
                             views[v]->base->dtype, NULL, buffer[v],
                             views[v]->base->elsize,
-                            NPY_WRITEABLE | NPY_CARRAY, NULL);
+                            NPY_BEHAVED | NPY_CARRAY, NULL);
             PyTuple_SET_ITEM(arytuple, v, ary);
 
             free_vblock(dvb);
@@ -2300,7 +2298,7 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
     //Create the returning distributed vector.
     ret = PyArray_New(&PyArray_Type, 1, &count, view->base->dtype,
                       NULL, NULL, 0,
-                      NPY_WRITEABLE | NPY_CARRAY | DNPY_DISTRIBUTED,
+                      NPY_BEHAVED | NPY_CARRAY | DNPY_DISTRIBUTED,
                       NULL);
 
     //Tell slaves
