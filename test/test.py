@@ -40,6 +40,7 @@ def funtest(fun, str):
         print out[0]
         print "The result from NumPy:"
         print out[1]
+        sys.exit()
 
 def array_equal(A,B):
     if type(A) is not type(B):
@@ -95,17 +96,16 @@ def ufunc(max_ndim):
         if not array_equal(Cd,Cf):
             return (Cd, Cf, Af, Bf)
 
-    #Test some special cases.
-    srcA = random_list([10,10,10])
-    srcB = random_list([10,10,10])
-    Ad = np.array(srcA, dist=True, dtype=float)
-    Af = np.array(srcA, dist=False, dtype=float)
-    Bd = np.array(srcB, dist=True, dtype=float)
-    Bf = np.array(srcB, dist=False, dtype=float)
-    Cd = Ad[::2, ::2, ::2] + Bd[3:8, ::2, ::2] + Ad[3:8,1,2]
-    Cf = Af[::2, ::2, ::2] + Bf[3:8, ::2, ::2] + Af[3:8,1,2]
-    if not array_equal(Cd,Cf):
-        return (Cd, Cf, Af, Bf)
+    for i in xrange(1,max_ndim+1):
+        src = random_list([max_ndim,max_ndim,max_ndim])
+        Ad = np.array(src, dist=True, dtype=float)
+        Af = np.array(src, dist=False, dtype=float)
+        Bd = np.array(src, dist=True, dtype=float)
+        Bf = np.array(src, dist=False, dtype=float)
+        Cd = Ad[::2, ::2, ::2] + Bd[::2, ::2, ::2] + Ad[::2,1,2]
+        Cf = Af[::2, ::2, ::2] + Bf[::2, ::2, ::2] + Af[::2,1,2]
+        if not array_equal(Cd,Cf):
+            return (Cd, Cf, Af, Bf)
 
     return None
 
