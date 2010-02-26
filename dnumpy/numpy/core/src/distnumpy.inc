@@ -281,7 +281,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 {
     npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset, bufs;
     npy_intp notfinished, stride, vitems, vvitems, vblocksize;
-    npy_intp offset_view, offset_buf;
+    npy_intp offset_view, offset_buf, bcoord;
     npy_intp coord[NPY_MAXDIMS];
     npy_intp scoord[NPY_MAXDIMS];
     int pcoord[NPY_MAXDIMS];
@@ -329,8 +329,10 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         bufs=view->base->elsize;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
+            //Block coord relative to array-view.
+            bcoord = coord[i] * blocksize;
             //View offset relative to array-view (non-block offset).
-            voffset = coord[i] * blocksize + scoord[i];
+            voffset = bcoord + scoord[i];
             //Global offset relative to array-base.
             goffset = voffset * step[i] + start[i];
             //Global block offset relative to array-base.
@@ -348,9 +350,9 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             //Viewable items left in the block.
             vitems = MAX((blocksize - item_idx) / step[i], 1);
             //Size of current view block.
-            vblocksize = MIN(blocksize, nsteps[i] - voffset);
+            vblocksize = MIN(blocksize, nsteps[i] - bcoord);
             //Viewable items left in the view-block.
-            vvitems = MAX(vblocksize - (voffset % blocksize), 1);
+            vvitems = vblocksize - (voffset % blocksize);
             //Compute nsteps.
             svb[s].nsteps[i] = MIN(blocksize, MIN(vvitems, vitems));
             //Compute the stride for the comm_dtype_buf.
@@ -431,6 +433,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     }
     //Save number of sub-vblocks.
     vblock->nsub = s;
+    assert(vblock->nsub > 0);
 } /* calc_vblock */
 
 /*===================================================================
@@ -1211,7 +1214,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
                     MPI_Win_lock(MPI_LOCK_SHARED, svb->rank,
                                  0, views[v]->base->comm_win);
-
                     MPI_Get(buffer[v]+svb->offset_buf, 1,
                             svb->comm_dtype_buf, svb->rank,
                             svb->offset_view, 1, svb->comm_dtype_view,
