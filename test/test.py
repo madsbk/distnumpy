@@ -2,11 +2,15 @@
 import numpy as np
 import random
 import sys
+import time
 
 try:
     size = int(sys.argv[1])
 except IndexError:
     size = 5
+
+seed = time.time()
+random.seed(seed)
 
 pydebug = True
 try:
@@ -25,10 +29,17 @@ def funtest(fun, str):
             print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
     else:
         out = fun(6)
-    if out:
+    if out is None:
         print "Succes"
     else:
-        print "Fail!"
+        print "Error in %s! Random seed: %d"%(str, seed)
+        for o in out[2:]:
+            print "Input array:"
+            print o
+        print "The result from DistNumPy:"
+        print out[0]
+        print "The result from NumPy:"
+        print out[1]
 
 def array_equal(A,B):
     if type(A) is not type(B):
@@ -81,18 +92,22 @@ def ufunc(max_ndim):
         Cf = Df + Bf[np.newaxis,-1]
         Cd[1:] = Cd[:-1]
         Cf[1:] = Cf[:-1]
-
         if not array_equal(Cd,Cf):
-            print "Error in ufunc!"
-            print Cd
-            print "The distributed array no equal to facit"
-            print Cf
-            print "Af:"
-            print Af
-            print "Bf:"
-            print Bf
-            return False
-    return True
+            return (Cd, Cf, Af, Bf)
+
+    #Test some special cases.
+    srcA = random_list([10,10,10])
+    srcB = random_list([10,10,10])
+    Ad = np.array(srcA, dist=True, dtype=float)
+    Af = np.array(srcA, dist=False, dtype=float)
+    Bd = np.array(srcB, dist=True, dtype=float)
+    Bf = np.array(srcB, dist=False, dtype=float)
+    Cd = Ad[::2, ::2, ::2] + Bd[3:8, ::2, ::2] + Ad[3:8,1,2]
+    Cf = Af[::2, ::2, ::2] + Bf[3:8, ::2, ::2] + Af[3:8,1,2]
+    if not array_equal(Cd,Cf):
+        return (Cd, Cf, Af, Bf)
+
+    return None
 
 def ufunc_reduce(max_ndim):
     for i in range(1,max_ndim+1):
@@ -103,14 +118,8 @@ def ufunc_reduce(max_ndim):
             Cd = np.add.reduce(Ad,j)
             Cf = np.add.reduce(Af,j)
             if not array_equal(Cd,Cf):
-                print "Error in ufunc_reduce!"
-                print Cd
-                print "The distributed array no equal to facit"
-                print Cf
-                print "Af:"
-                print Af
-                return False
-    return True
+                return (Cd,Cf,Af)
+    return None
 
 def diagonal(niters):
     niters *= 10
@@ -122,14 +131,8 @@ def diagonal(niters):
         Cd = Ad.diagonal()
         Cf = Af.diagonal()
         if not array_equal(Cd,Cf):
-            print "Error in diagonal!"
-            print Cd
-            print "The distributed array no equal to facit"
-            print Cf
-            print "Af:"
-            print Af
-            return False
-    return True
+            return (Cd,Cf,Af)
+    return None
 
 def matmul(niter):
     for m in range(2,niter+2):
@@ -144,9 +147,8 @@ def matmul(niter):
                 Cd = np.dot(Ad,Bd)
                 Cf = np.dot(Af,Bf)
                 if not array_equal(Cd,Cf):
-                    print "Error in matrix multiplication!"
-                    return False
-    return True
+                    return (Cd, Cf, Af, Bf)
+    return None
 
 
 funtest(ufunc, "ufunc")
