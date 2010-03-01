@@ -281,7 +281,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 {
     npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset, bufs;
     npy_intp notfinished, stride, vitems, vvitems, vblocksize;
-    npy_intp offset_view, offset_buf, bcoord;
+    npy_intp offset_view, offset_buf, ncoord;
     npy_intp coord[NPY_MAXDIMS];
     npy_intp scoord[NPY_MAXDIMS];
     int pcoord[NPY_MAXDIMS];
@@ -329,10 +329,10 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         bufs=view->base->elsize;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
-            //Block coord relative to array-view.
-            bcoord = coord[i] * blocksize;
+            //Non-block coord relative to array-view.
+            ncoord = coord[i] * blocksize;
             //View offset relative to array-view (non-block offset).
-            voffset = bcoord + scoord[i];
+            voffset = ncoord + scoord[i];
             //Global offset relative to array-base.
             goffset = voffset * step[i] + start[i];
             //Global block offset relative to array-base.
@@ -350,7 +350,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             //Viewable items left in the block.
             vitems = MAX((blocksize - item_idx) / step[i], 1);
             //Size of current view block.
-            vblocksize = MIN(blocksize, nsteps[i] - bcoord);
+            vblocksize = MIN(blocksize, nsteps[i] - ncoord);
             //Viewable items left in the view-block.
             vvitems = vblocksize - (voffset % blocksize);
             //Compute nsteps.
@@ -414,9 +414,9 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         //Iterate Sub-vblocks coordinate (Row-major).
         for(j=view->base->ndims-1; j >= 0; j--)
         {
-            voffset = coord[j] * blocksize + scoord[j];
+            ncoord = coord[j] * blocksize;
             scoord[j] += svb[s].nsteps[j];
-            if(scoord[j] >= MIN(blocksize, nsteps[j] - voffset))
+            if(scoord[j] >= MIN(blocksize, nsteps[j] - ncoord))
             {
                 //We a finished, if wrapping around.
                 if(j == 0)
@@ -1189,6 +1189,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             //NB: bcoord consist of only visible coordinates.
             assert(lastary->ndims >= views[v]->ndims);
             n = lastary->ndims-1;
+            npy_intp nsub_in_worse_case=1;
             for(j=views[v]->ndims-1; j>=0; j--,n--)
             {
                 s = views[v]->slice[idx_v2s(views[v],j)].nsteps;
@@ -1199,11 +1200,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 else
                     bcoord[j] = coord[n];
                 vdims[j] = MIN(blocksize, s - bcoord[j]*blocksize);
+                nsub_in_worse_case *= vdims[j];
             }
 
             //Get view block info.
             dndvb *dvb = malloc(sizeof(dndvb));
-            dvb->sub = malloc(8 * sizeof(dndsvb));
+            dvb->sub = malloc(nsub_in_worse_case * sizeof(dndsvb));
             calc_vblock(views[v], bcoord, dvb);
 
             //Get vblock.
