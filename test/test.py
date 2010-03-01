@@ -8,8 +8,10 @@ try:
     size = int(sys.argv[1])
 except IndexError:
     size = 5
-
-seed = time.time()
+try:
+    seed = int(sys.argv[2])
+except IndexError:
+    seed = time.time()
 random.seed(seed)
 
 pydebug = True
