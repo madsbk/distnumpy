@@ -281,16 +281,17 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 {
     npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset, bufs;
     npy_intp notfinished, stride, vitems, vvitems, vblocksize;
-    npy_intp offset_view, offset_buf, ncoord;
+    npy_intp offset_view, offset_buf, nsub_in_worse_case;
     npy_intp coord[NPY_MAXDIMS];
     npy_intp scoord[NPY_MAXDIMS];
+    npy_intp ncoord[NPY_MAXDIMS];
     int pcoord[NPY_MAXDIMS];
     int *cdims = cart_dim_sizes[view->base->ndims-1];
     npy_intp start[NPY_MAXDIMS];
     npy_intp step[NPY_MAXDIMS];
     npy_intp nsteps[NPY_MAXDIMS];
     npy_intp bufstride[NPY_MAXDIMS];
-    dndsvb *svb = vblock->sub;
+    dndsvb *svb;
     MPI_Datatype comm_bufOLD, comm_bufNEW;
     MPI_Datatype comm_viewOLD, comm_viewNEW;
 
@@ -320,19 +321,29 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         start[j++] = view->slice[i].start;
     }
 
+    //Compute Non-block coord relative to array-view and the
+    //number of sub-view-blocks in worse case.
+    nsub_in_worse_case=1;
+    for(i=0; i<view->base->ndims; i++)
+    {
+        ncoord[i] = coord[i] * blocksize;
+        nsub_in_worse_case *= MIN(blocksize, nsteps[i] - ncoord[i]);
+    }
+    vblock->sub = malloc(nsub_in_worse_case * sizeof(dndsvb));
+    svb = vblock->sub;
+
     //Sub-vblocks coordinate.
     memset(scoord, 0, view->base->ndims * sizeof(npy_intp));
     //Compute all sub-vblocks associated with the n'th vblock.
     notfinished=1; s=0;
     while(notfinished)
     {
+        assert(s < nsub_in_worse_case);
         bufs=view->base->elsize;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
-            //Non-block coord relative to array-view.
-            ncoord = coord[i] * blocksize;
             //View offset relative to array-view (non-block offset).
-            voffset = ncoord + scoord[i];
+            voffset = ncoord[i] + scoord[i];
             //Global offset relative to array-base.
             goffset = voffset * step[i] + start[i];
             //Global block offset relative to array-base.
@@ -350,7 +361,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             //Viewable items left in the block.
             vitems = MAX((blocksize - item_idx) / step[i], 1);
             //Size of current view block.
-            vblocksize = MIN(blocksize, nsteps[i] - ncoord);
+            vblocksize = MIN(blocksize, nsteps[i] - ncoord[i]);
             //Viewable items left in the view-block.
             vvitems = vblocksize - (voffset % blocksize);
             //Compute nsteps.
@@ -414,9 +425,8 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         //Iterate Sub-vblocks coordinate (Row-major).
         for(j=view->base->ndims-1; j >= 0; j--)
         {
-            ncoord = coord[j] * blocksize;
             scoord[j] += svb[s].nsteps[j];
-            if(scoord[j] >= MIN(blocksize, nsteps[j] - ncoord))
+            if(scoord[j] >= MIN(blocksize, nsteps[j] - ncoord[j]))
             {
                 //We a finished, if wrapping around.
                 if(j == 0)
@@ -451,7 +461,6 @@ free_vblock(dndvb *vblock)
         MPI_Type_free(&vblock->sub[i].comm_dtype_buf);
     }
     free(vblock->sub);
-    free(vblock);
 
 } /* free_vblock */
 
@@ -967,7 +976,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
     npy_intp rcoord[NPY_MAXDIMS];
     npy_intp nsteps[NPY_MAXDIMS];
     npy_intp step[NPY_MAXDIMS];
-    dndvb *vblock;
+    dndvb vblock;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -990,9 +999,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
             tcoord[i] = coord[i] / blocksize;
 
         //Get view block info.
-        vblock = malloc(sizeof(dndvb));
-        vblock->sub = malloc(8 * sizeof(dndsvb));
-        calc_vblock(view, tcoord, vblock);
+        calc_vblock(view, tcoord, &vblock);
 
         //Convert PseudoIndex and SingleIndex.
         j=0;n=0;
@@ -1030,17 +1037,17 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         for(i=view->base->ndims-1; i>=0; i--)//Row-major.
         {
             npy_intp subdimsize=1;
-            j = vblock->sub[b].nsteps[i];
-            while(tcoord[i] >= vblock->sub[b].nsteps[i])
+            j = vblock.sub[b].nsteps[i];
+            while(tcoord[i] >= vblock.sub[b].nsteps[i])
             {
-                tcoord[i] -= vblock->sub[b].nsteps[i];
-                j += vblock->sub[b].nsteps[i];
+                tcoord[i] -= vblock.sub[b].nsteps[i];
+                j += vblock.sub[b].nsteps[i];
                 subdimsize++;
                 b += s;
             }
             while(j < MIN(blocksize, nsteps[i] - rcoord[i]))
             {
-                j += vblock->sub[b].nsteps[i];
+                j += vblock.sub[b].nsteps[i];
                 subdimsize++;
             }
             s *= subdimsize;
@@ -1049,24 +1056,24 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         //Compute offset.
         offset = 0;
         for(i=view->base->ndims-1; i>=0; i--)//Row-major.
-            offset += (vblock->sub[b].start[i] + tcoord[i] * step[i]) *
-                      vblock->sub[b].stride[i];
+            offset += (vblock.sub[b].start[i] + tcoord[i] * step[i]) *
+                      vblock.sub[b].stride[i];
 
         //Do the communication.
-        MPI_Win_lock(MPI_LOCK_SHARED, vblock->sub[b].rank,
+        MPI_Win_lock(MPI_LOCK_SHARED, vblock.sub[b].rank,
                      MPI_MODE_NOCHECK, view->base->comm_win);
         if(Direction)
-            MPI_Put(item, 1, view->base->mpi_dtype, vblock->sub[b].rank,
+            MPI_Put(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
         else
-            MPI_Get(item, 1, view->base->mpi_dtype, vblock->sub[b].rank,
+            MPI_Get(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
 
-        MPI_Win_unlock(vblock->sub[b].rank, view->base->comm_win);
+        MPI_Win_unlock(vblock.sub[b].rank, view->base->comm_win);
 
-        free_vblock(vblock);
+        free_vblock(&vblock);
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -1089,6 +1096,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     int pcoord[NPY_MAXDIMS];
     char *buffer[NPY_MAXARGS];
     int notfinished=1;
+    dndvb vblocks[NPY_MAXARGS];
 
     //Get arrray structs.
     dndview *views[NPY_MAXARGS];
@@ -1189,7 +1197,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             //NB: bcoord consist of only visible coordinates.
             assert(lastary->ndims >= views[v]->ndims);
             n = lastary->ndims-1;
-            npy_intp nsub_in_worse_case=1;
             for(j=views[v]->ndims-1; j>=0; j--,n--)
             {
                 s = views[v]->slice[idx_v2s(views[v],j)].nsteps;
@@ -1200,12 +1207,10 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 else
                     bcoord[j] = coord[n];
                 vdims[j] = MIN(blocksize, s - bcoord[j]*blocksize);
-                nsub_in_worse_case *= vdims[j];
             }
 
             //Get view block info.
-            dndvb *dvb = malloc(sizeof(dndvb));
-            dvb->sub = malloc(nsub_in_worse_case * sizeof(dndsvb));
+            dndvb *dvb = &vblocks[v];
             calc_vblock(views[v], bcoord, dvb);
 
             //Get vblock.
@@ -1232,7 +1237,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                             NPY_BEHAVED | NPY_CARRAY, NULL);
             PyTuple_SET_ITEM(arytuple, v, ary);
 
-            free_vblock(dvb);
         }
 
         //Call the python operator.
@@ -1244,9 +1248,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         for(v=nin; v<narys; v++)
         {
             //Get view block info.
-            dndvb *dvb = malloc(sizeof(dndvb));
-            dvb->sub = malloc(8 * sizeof(dndsvb));
-            calc_vblock(views[v], bcoord, dvb);
+            dndvb *dvb = &vblocks[v];
 
             for(j=0; j<dvb->nsub; j++)
             {
@@ -1262,7 +1264,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
                 MPI_Win_unlock(svb->rank, views[v]->base->comm_win);
             }
-            free_vblock(dvb);
+        }
+
+        //Cleanup.
+        for(v=0; v<narys; v++)
+        {
+            if(views[v]->base->ndims != 0)//Not a scalar.
+                free_vblock(&vblocks[v]);
         }
 
         //Iterate coord one vblock.
