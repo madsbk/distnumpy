@@ -2281,7 +2281,7 @@ array_big_item(PyArrayObject *self, intp i)
     if (r == NULL) {
         return NULL;
     }
-    /* DISTNUMY */
+    /* DISTNUMPY */
     if(PyArray_ISDISTRIBUTED(self))
     {
         //Lets make a slice covering the whole 'self' array beside
