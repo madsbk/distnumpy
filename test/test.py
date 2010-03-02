@@ -7,7 +7,7 @@ import time
 try:
     size = int(sys.argv[1])
 except IndexError:
-    size = 5
+    size = 6
 try:
     seed = int(sys.argv[2])
 except IndexError:
@@ -25,12 +25,12 @@ def funtest(fun, str):
     print "Testing %s"%str
     if pydebug:
         r1 = sys.gettotalrefcount()
-        out = fun(6)
+        out = fun(size)
         r2 = sys.gettotalrefcount()
         if r2-2 != r1:
             print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
     else:
-        out = fun(6)
+        out = fun(size)
     if out is None:
         print "Succes"
     else:
@@ -98,8 +98,8 @@ def ufunc(max_ndim):
         if not array_equal(Cd,Cf):
             return (Cd, Cf, Af, Bf)
 
-    for i in xrange(1,max_ndim+1):
-        src = random_list([max_ndim,max_ndim,max_ndim])
+    for i in xrange(3,max_ndim+3):
+        src = random_list([i,i,i])
         Ad = np.array(src, dist=True, dtype=float)
         Af = np.array(src, dist=False, dtype=float)
         Bd = np.array(src, dist=True, dtype=float)
