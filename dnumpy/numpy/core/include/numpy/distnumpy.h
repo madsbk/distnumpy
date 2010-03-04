@@ -76,7 +76,7 @@ typedef struct
     npy_intp nsteps[NPY_MAXDIMS];
     //Number of elements to next dimension (one per base-dimension).
     npy_intp stride[NPY_MAXDIMS];
-    
+
     //The MPI datatype for the view.
     MPI_Datatype comm_dtype_view;
     npy_intp offset_view;
@@ -121,8 +121,6 @@ typedef struct
     //DNPY_STEP   - 'step' altered.
     //DNPY_NSTEPS - 'nsteps' altered.
     int alterations;
-    //All view-blocks this array view represents.
-    dndvb *blocks;
     //Number of view-blocks.
     npy_intp nblocks;
     //Number of view-blocks in each viewable dimension.

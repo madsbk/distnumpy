@@ -1153,6 +1153,8 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
                                                    PyArray_DIMS(src), 
                                                    PyArray_TYPE(src), 
                                                    NULL, NULL, 0, 
+                                                   NPY_WRITEABLE |
+                                                   NPY_CARRAY |
                                                    DNPY_DISTRIBUTED, 
                                                    NULL);
             //Copy src to tmp array.
@@ -2279,7 +2281,7 @@ array_big_item(PyArrayObject *self, intp i)
     if (r == NULL) {
         return NULL;
     }
-    /* DISTNUMY */
+    /* DISTNUMPY */
     if(PyArray_ISDISTRIBUTED(self))
     {
         //Lets make a slice covering the whole 'self' array beside
