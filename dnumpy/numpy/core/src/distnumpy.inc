@@ -838,7 +838,7 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
     int *stride = cart_dim_sizes[view->base->ndims-1];
 
     /* Counters */
-    int b, i, j, n, extent;
+    int i, j, n, extent;
 
     /* Convenience */
     int ndims = view->base->ndims;
@@ -1690,7 +1690,7 @@ static void do_ZEROFILL(dndview *view)
 static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 {
     /* File access mode */
-    int mode;
+    int mode = 0;
     
     /* Setup file handle */
     MPI_File fh;
@@ -2805,13 +2805,13 @@ dnumpy_master_slave_split()
             case DNPY_DATAFILL:
                 d1 = ((npy_intp*)msg_data)[0]; // view uid
                 l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
-                strcpy(t1, msg_data+sizeof(npy_intp)+sizeof(long)); // get filename
+                t1 = msg_data+sizeof(npy_intp)+sizeof(long); // get filename
                 do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATAFILL);
                 break;               
             case DNPY_DATADUMP:
                 d1 = ((npy_intp*)msg_data)[0]; // view uid
                 l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
-                strcpy(t1, msg_data+sizeof(npy_intp)+sizeof(long)); // get filename
+                t1 = msg_data+sizeof(npy_intp)+sizeof(long); // get filename
                 do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATADUMP);
                 break;               
             case DNPY_DIAGONAL:
