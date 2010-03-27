@@ -909,7 +909,7 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 
         MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
                          displacements[n-1], derived_type[n-1], &tmp_type);
-        if(n < ndims) { 
+        if(n < ndims) {
             MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
         } else {
             MPI_Type_create_resized(tmp_type, 0, extent, dtype);
@@ -1721,10 +1721,10 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
     MPI_Status status;
     switch(op) {
         case DNPY_DATAFILL:
-            MPI_File_read(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            MPI_File_read_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
             break;
         case DNPY_DATADUMP:
-            MPI_File_write(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            MPI_File_write_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
             break;
         default:
             fprintf(stderr, "Ehh, the universe collapsed...\n");
