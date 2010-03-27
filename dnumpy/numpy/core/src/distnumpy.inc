@@ -1691,7 +1691,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 {
     /* File access mode */
     int mode = 0;
-    
+
     /* Setup file handle */
     MPI_File fh;
     switch(op) {
@@ -1705,10 +1705,10 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
             fprintf(stderr, "Unknown I/O operation\n");
             MPI_Abort(MPI_COMM_WORLD, -1);
     }
-               
+
     MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
                   mode, MPI_INFO_NULL, &fh);
-           
+
     /* Setup MPI data type */
     MPI_Datatype dtype;
     create_mpi_dtype(view, &dtype);
