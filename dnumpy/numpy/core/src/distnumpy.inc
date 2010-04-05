@@ -66,31 +66,6 @@ static cblas_func_type *cblas_cgemm_func = NULL;
 
 /*===================================================================
  *
- * Debug vector init.
- * Private
- */
-static void print_v_init(char *fname)
-{
-    printf("(rank %d) In function '%s':\n", myrank, fname);
-} /* print_v_begin */
-
-/*===================================================================
- *
- * Debug vector.
- * Private
- */
-static void print_v(char *msg, int n, int *data)
-{
-    int i;
-
-    printf("  %s = ( ", msg);
-    for(i = 0; i < n; i++)
-        printf("%d ", data[i]);
-    printf(")\n");
-} /* print_v */
-
-/*===================================================================
- *
  * Returns a string describing dtype.
  * Private
  */
@@ -832,6 +807,26 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
  */
 static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 {
+#ifdef USE_DARRAY
+    int i;
+    int distribs[view->base->ndims];
+    int dargs[view->base->ndims];
+    int dims[view->base->ndims];
+
+    for(i = 0; i < view->base->ndims; i++) {
+        distribs[i] = MPI_DISTRIBUTE_CYCLIC;
+        dargs[i] = blocksize;
+        dims[i] = view->base->dims[i];
+        printf("view->base->dims[%d]: %d\n", i, view->base->dims[i]);
+    }
+
+    MPI_Type_create_darray(worldsize, myrank, view->base->ndims, dims,
+                           distribs, dargs,
+                           cart_dim_sizes[view->base->ndims-1], MPI_ORDER_C,
+                           view->base->mpi_dtype, dtype);
+
+#else
+
     /* Get cartesian coords */
     int coords[NPY_MAXDIMS];
     rank2cart(view->base->ndims, myrank, coords);
@@ -922,6 +917,10 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
         MPI_Type_free(&derived_type[n]);
         free(displacements[n]);
     }
+
+#endif
+
+    MPI_Type_commit(dtype);
 
     return 0;
 
@@ -1689,6 +1688,9 @@ static void do_ZEROFILL(dndview *view)
  */
 static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 {
+    /* MPI Info var */
+    MPI_Info info;
+
     /* File access mode */
     int mode = 0;
 
@@ -1706,8 +1708,14 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
             MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
+    MPI_Info_create(&info);
+    /*MPI_Info_set(info, "romio_ds_read", "enable/disable");*/
+    /*MPI_Info_set(info, "romio_cb_read", "enable/disable");*/
+    /*MPI_Info_set(info, "cb_nodes", "n");*/
+    /*MPI_Info_set(info, "no_indep_rw", "bool");*/
+
     MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
-                  mode, MPI_INFO_NULL, &fh);
+                  mode, info, &fh);
 
     /* Setup MPI data type */
     MPI_Datatype dtype;
@@ -1715,7 +1723,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 
     /* Set file view with derived data type */
     MPI_File_set_view(fh, filepos, view->base->mpi_dtype, dtype,
-                      "native", MPI_INFO_NULL);
+                      "native", info);
 
     /* Do operation */
     MPI_Status status;
@@ -1736,6 +1744,9 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 
     /* Free derived data type */
     MPI_Type_free(&dtype);
+
+    /* Free info */
+    MPI_Info_free(&info);
 
 } /* do_FILEIO */
 
