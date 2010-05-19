@@ -80,9 +80,14 @@ typedef struct
     //The MPI datatype for the view.
     MPI_Datatype comm_dtype_view;
     npy_intp offset_view;
-    //The MPI datatype and offset for the buffer.
+    //The MPI datatype and offset for the buffer (in bytes).
     MPI_Datatype comm_dtype_buf;
     npy_intp offset_buf;
+
+    //Number of elements in this sub-block.
+    npy_intp nelem;
+    //Pointer to data. NULL if data needs to be fetched. 
+    char *data;
 } dndsvb;
 
 //Type describing a view block.
@@ -90,10 +95,12 @@ typedef struct
 {
     //The id of the view block.
     npy_intp id;
-    //All sub-view-blocks in this view block.
+    //All sub-view-blocks in this view block (Row-major).
     dndsvb *sub;
     //Number of sub-view-blocks.
     npy_intp nsub;
+    //Number of sub-view-blocks in each dimension.
+    npy_intp svbdims[NPY_MAXDIMS];
 } dndvb;
 
 //View-alteration flags.
