@@ -1166,7 +1166,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                      int scalar_dtype, int scalar_size,
                      char* scalar, char* op)
 {
-    npy_intp i, j, d, s, n, v;
+    npy_intp i, j, s, n, v;
     npy_intp coord[NPY_MAXDIMS], bcoord[NPY_MAXDIMS];
     npy_intp vdims[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp offset, scoord[NPY_MAXDIMS], sdims[NPY_MAXDIMS];
@@ -1174,7 +1174,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     npy_intp svboffset[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp csvb[NPY_MAXARGS][NPY_MAXDIMS];
     int pcoord[NPY_MAXDIMS];
-    char *buffer[NPY_MAXARGS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
 
@@ -1225,26 +1224,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
     assert(PyOp != NULL);
 
-    //Allocate buffers - one per array (single buffering).
-    for(v=0; v<narys; v++)
-    {
-        n=0;
-        s = views[v]->base->elsize;
-        for(j=0; j < views[v]->nslice; j++)
-            if(views[v]->slice[j].nsteps != PseudoIndex)
-            {
-                d = 1;//SingleIndex has length one.
-                if(views[v]->slice[j].nsteps != SingleIndex)
-                    d = dnumroc(views[v]->base->dims[n], blocksize,
-                        0,//The first block is the largest.
-                        cart_dim_sizes[views[v]->base->ndims-1][n]);
-                s *= MAX(MIN(blocksize, d),1);
-                n++;
-            }
-        assert(s > 0);
-        buffer[v] = malloc(s);
-    }
-
     //Compute global start coordinate for the output array.
     rank2cart(lastary->base->ndims, myrank, pcoord);
     for(v=nin; v<narys; v++)
@@ -1252,7 +1231,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         {
             coord[j] = pcoord[idx_v2b(views[v],j)];//Start coord.
             if(coord[j] >= views[v]->blockdims[j])
-                notfinished=0;//This process do not own anything.
+                notfinished=0;//This process does not own anything.
         }
 
     //Iterate over all output vblocks.
@@ -1482,7 +1461,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     Py_DECREF(PyOp);
     for(i=0; i<narys; i++)
     {
-        free(buffer[i]);
         if(views[i]->base->ndims == 0)//Scalar dummy.
         {
             free(views[i]->base);
