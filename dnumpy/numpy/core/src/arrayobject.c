@@ -1139,39 +1139,48 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
        
         char *zero = malloc(PyArray_ITEMSIZE(dest));
         memset(zero, 0, PyArray_ITEMSIZE(dest));
-        PyArrayObject *scalar = (PyArrayObject *)
-                                PyArray_SimpleNewFromData(0, NULL,
-                                                PyArray_TYPE(dest),
-                                                zero);
-    
-        PyArrayObject *arylist[3] = {src,scalar,dest};
-        PyArrayObject *tmpAry = NULL;
+        PyObject *scalar = PyArray_SimpleNewFromData(0, NULL,
+                                                     PyArray_TYPE(dest),
+                                                     zero);
+        PyObject *tmpAry = NULL;
+        PyObject *tuple;
+
+        //We need the add ufunc operator for copying.
+        //TODO: create a specialized COPY function.
+        PyObject *PyOp = PyObject_GetAttrString(
+                         dnumpy_get_reged_ufunc_module(),"add");
+        assert(PyOp != NULL);
+        
         if(!usecopy)//We have to use a tmp array.
         {
-            tmpAry = (PyArrayObject *) PyArray_New(&PyArray_Type, 
-                                                   PyArray_NDIM(src), 
-                                                   PyArray_DIMS(src), 
-                                                   PyArray_TYPE(src), 
-                                                   NULL, NULL, 0, 
-                                                   NPY_WRITEABLE |
-                                                   NPY_CARRAY |
-                                                   DNPY_DISTRIBUTED, 
-                                                   NULL);
+            tmpAry = PyArray_New(&PyArray_Type, 
+                                 PyArray_NDIM(src), 
+                                 PyArray_DIMS(src), 
+                                 PyArray_TYPE(src), 
+                                 NULL, NULL, 0, 
+                                 NPY_WRITEABLE |
+                                 NPY_CARRAY |
+                                 DNPY_DISTRIBUTED, 
+                                 NULL);
             //Copy src to tmp array.
-            arylist[2] = tmpAry;
-            dnumpy_ufunc(arylist, 3, 1, "add", -1);
-            arylist[0] = tmpAry;
-            arylist[2] = dest;
+            tuple = PyTuple_Pack(3, (PyObject *)src, scalar, tmpAry);
+            PyObject *t = PyObject_CallObject(PyOp, tuple);
+            Py_XDECREF(t);
+            Py_DECREF(tuple);
+            tuple = PyTuple_Pack(3, tmpAry, scalar, dest);
         }
-        
-        //TODO: create a specialized COPY function.
-        dnumpy_ufunc(arylist, 3, 1, "add", -1);
+        else
+            tuple = PyTuple_Pack(3, (PyObject *)src, scalar,
+                                    (PyObject *)dest);
 
-        //Cleanup
+        PyObject *t = PyObject_CallObject(PyOp, tuple);
+        Py_XDECREF(t);
         free(zero);
         Py_XDECREF(tmpAry);
         Py_DECREF(tmpIter);
         Py_DECREF(scalar);
+        Py_DECREF(tuple);
+        Py_DECREF(PyOp);
         return 0;
     }
 

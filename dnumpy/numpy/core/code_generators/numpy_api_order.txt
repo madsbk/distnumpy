@@ -181,9 +181,10 @@ dnumpy_dndarray_putitem
 dnumpy_dndarray_getitem
 dnumpy_ufunc
 dnumpy_ufunc_reduce
-dnumpy_reg_ufunc_module
 dnumpy_master_slave_split
 dnumpy_zerofill
 dnumpy_diagonal
 dnumpy_matrix_multiplication
+dnumpy_reg_ufunc_module
+dnumpy_get_reged_ufunc_module
 dnumpy_reg_cblas

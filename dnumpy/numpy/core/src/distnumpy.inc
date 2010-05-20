@@ -592,69 +592,21 @@ idx_v2s(const dndview *view, npy_intp vindex)
 
 /*===================================================================
  *
- * Apply the ufunc 'function' on 'arys' and lastary.
- * 'narys' are both in and output arrays.
+ * Apply the ufunc 'function' on 'arys'.
+ * 'narys' are both input and output arrays.
  * Private.
  */
 static void
 apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
             PyUFuncGenericFunction function,
-            void *funcdata,
-            dndview *lastary,
-            const npy_intp coords[NPY_MAXDIMS])
+            void *funcdata)
 {
-    //Compute a block's dims for the dest array.
-    npy_intp bdims[NPY_MAXDIMS];
-    npy_intp strides[NPY_MAXDIMS];
-    npy_intp offset = 0;
     int j;
-
-    for(j=0; j < lastary->base->ndims; j++)
-    {
-        npy_intp stride = lastary->base->elsize;
-        int s;
-        for(s=j+1; s<lastary->base->ndims; s++)
-            stride *= lastary->base->localdims[s];
-        strides[j] = stride;
-
-        bdims[j] = lastary->base->localdims[j] - coords[j] * blocksize;
-        if(bdims[j] > blocksize)
-            bdims[j] = blocksize;
-        else if(bdims[j] <= 0)
-            return;
-
-        offset += stride * (coords[j] * blocksize);
-    }
-
-    if(arys[narys-1] == NULL)
-    {
-        arys[narys-1] = PyArray_New(&PyArray_Type,
-                                    lastary->base->ndims,
-                                    bdims,
-                                    lastary->base->dtype,
-                                    strides,
-                                    lastary->base->data + offset,
-                                    lastary->base->elsize,
-                                    NPY_BEHAVED, NULL);
-    }
-    else
-    {
-        int size = lastary->base->ndims * sizeof(npy_intp);
-        memcpy(PyArray_DIMS(arys[narys-1]), bdims, size);
-        memcpy(PyArray_STRIDES(arys[narys-1]), strides, size);
-        PyArray_BYTES(arys[narys-1]) = lastary->base->data + offset;
-    }
-
-    npy_intp *lastdims = bdims;
-    npy_intp lastndim = lastary->base->ndims;
-
-    //If just one array is NULL we are finished.
-    for(j=0; j<narys; j++)
-        if(arys[j] == NULL)
-            return;
+    npy_intp *lastdims = PyArray_DIMS(arys[narys-1]);
+    npy_intp lastndim = PyArray_NDIM(arys[narys-1]);
+    PyObject *iters[NPY_MAXARGS];
 
     //Create broadcasted iterators.
-    PyObject *iters[NPY_MAXARGS];
     for(j=0; j<narys; j++)
         iters[j] = PyArray_BroadcastToShape(arys[j], lastdims, lastndim);
 
@@ -1176,6 +1128,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     int pcoord[NPY_MAXDIMS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
+    PyObject *arrays[NPY_MAXARGS];//PyArrays objects.
+    npy_intp ones[NPY_MAXDIMS];
+    
 
     //Get arrray structs.
     dndview *views[NPY_MAXARGS];
@@ -1223,6 +1178,17 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     //Get Python function.
     PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
     assert(PyOp != NULL);
+    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
+    if(appropriate_function < 0)
+    {
+        fprintf(stderr, "do_UFUNC was called on a view but no "
+                        "appropriate_function was provided\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+    PyUFuncGenericFunction ufunc_function =
+                           ufunc_obj->functions[appropriate_function];
+    void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
+    
 
     //Compute global start coordinate for the output array.
     rank2cart(lastary->base->ndims, myrank, pcoord);
@@ -1233,6 +1199,14 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             if(coord[j] >= views[v]->blockdims[j])
                 notfinished=0;//This process does not own anything.
         }
+
+    //Initiate input and output arrays to PyArrays objects.
+    for(i=0; i<lastary->ndims; i++)
+        ones[i] = 1; //Just need some ones.
+    for(v=0; v<narys; v++)
+        arrays[v] = PyArray_SimpleNewFromData(views[v]->ndims, ones,
+                                              views[v]->base->dtype,
+                                              views[v]->base->data);
 
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
@@ -1276,7 +1250,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         int svb_notfinished = 1;
         while(svb_notfinished)
         {
-            PyObject *arytuple = PyTuple_New(narys);
             //Find current sub-view-block for all arrays.
             dndsvb *svbs[NPY_MAXARGS];
             for(v=0; v<narys; v++)
@@ -1321,18 +1294,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                        sdims[i] <= blocksize);
             }
 
-            //Inset sub-view-block into Python Array Object.
+            //Update the PyArray Objects to match the current
+            //sub-view-block.
             for(v=0; v<narys; v++)
             {
-                //A scalar is very simple.
+                //Scalars is already updated.
                 if(views[v]->base->ndims == 0)
-                {
-                    PyTuple_SET_ITEM(arytuple, v,
-                                     PyArray_SimpleNewFromData(0, NULL,
-                                                 views[v]->base->dtype,
-                                                 views[v]->base->data));
                     continue;
-                }
                 
                 //Convert sdims to match current view ndims.
                 for(i=0; i<views[v]->ndims; i++)
@@ -1361,20 +1329,21 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                         s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
                     }
 
-                PyObject *ary = PyArray_New(&PyArray_Type,
-                                views[v]->ndims, csdims,
-                                views[v]->base->dtype, sstride, 
-                                svbs[v]->data + offset,
-                                views[v]->base->elsize,
-                                NPY_BEHAVED, NULL);
-                
-                PyTuple_SET_ITEM(arytuple, v, ary);
+                //Apply update to PyArray object.
+                s = views[v]->ndims * sizeof(npy_intp);
+                memcpy(PyArray_DIMS(arrays[v]), csdims, s);
+                memcpy(PyArray_STRIDES(arrays[v]), sstride, s);
+                PyArray_BYTES(arrays[v]) = svbs[v]->data + offset;
+                //Which corresponds to the following:
+                //    PyArray_New(&PyArray_Type,
+                //                views[v]->ndims, csdims,
+                //                views[v]->base->dtype, sstride, 
+                //                svbs[v]->data + offset,
+                //                views[v]->base->elsize,
+                //                NPY_BEHAVED, NULL);
             }
 
-            //Call the python operator.
-            PyObject *t = PyObject_CallObject(PyOp, arytuple);
-            Py_XDECREF(t);
-            Py_DECREF(arytuple);
+            apply_ufunc(narys, arrays, ufunc_function, ufunc_funcdata);
 
             //Iterate coord one chunk.
             for(i=lastary->ndims-1; i>=0; i--)
@@ -1461,6 +1430,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     Py_DECREF(PyOp);
     for(i=0; i<narys; i++)
     {
+        Py_DECREF(arrays[i]);
         if(views[i]->base->ndims == 0)//Scalar dummy.
         {
             free(views[i]->base);
@@ -2761,6 +2731,18 @@ dnumpy_reg_ufunc_module(PyObject *module)
 {
     ufunc_module = module;
 } /* dnumpy_reg_ufunc_module */
+
+/*NUMPY_API
+ * ===================================================================
+ * Public
+ * Registrete the python module in which ufunction's operators can be
+ * found.
+ */
+static PyObject*
+dnumpy_get_reged_ufunc_module()
+{
+    return ufunc_module;
+} /* dnumpy_get_reged_ufunc_module */
 
 /*NUMPY_API
  * ===================================================================
