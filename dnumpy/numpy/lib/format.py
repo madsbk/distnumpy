@@ -341,6 +341,7 @@ def write_array(fp, array, version=(1,0)):
             # arrayterator.
             fp.write(array.tostring('C'))
 
+# DISTNUMPY
 def read_array(fp, dist=False):
     """
     Read an array from an NPY file.

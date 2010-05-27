@@ -2,17 +2,6 @@
 #include "numpy/noprefix.h"
 #include "structmember.h"
 #include "numpy/arrayobject.h"
-#include "hashdescr.c"
-
-static PyObject *ErrorObject;
-#define Py_Try(BOOLEAN) {if (!(BOOLEAN)) goto fail;}
-#define Py_Assert(BOOLEAN,MESS) {if (!(BOOLEAN)) {      \
-            PyErr_SetString(ErrorObject, (MESS));       \
-            goto fail;}                                 \
-    }
-
-#define PYSETERROR(message) \
-{ PyErr_SetString(ErrorObject, message); goto fail; }
 
 static PyObject *
 distio_save(PyObject *NPY_UNUSED(ignored), PyObject *args)
@@ -24,6 +13,7 @@ distio_save(PyObject *NPY_UNUSED(ignored), PyObject *args)
     if(!PyArg_ParseTuple(args, "O&sl", PyArray_Converter, &ary, &filename, &datapos)) 
         return NULL;
 
+    /* Call DistNumPy */
     dnumpy_datadump(PyArray_DNDUID(ary), filename, datapos);
 
     Py_XDECREF(ary);
@@ -34,7 +24,6 @@ distio_save(PyObject *NPY_UNUSED(ignored), PyObject *args)
 static PyObject *
 distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 {
-    /* DISTNUMPY */
     static char *kwlist[] = {"filename","datapos","shape","fortran_order","dtype",NULL}; 
     char *filename;
     long datapos;
@@ -64,6 +53,7 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
         typecode = PyArray_DescrFromType(PyArray_DEFAULT);
     }
 
+    /* Create the distributed array */
     ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type,
                                                 typecode,
                                                 shape.len, shape.ptr,
@@ -74,6 +64,7 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
         return NULL;
     }
 
+    /* Call DistNumPy */
     dnumpy_datafill(PyArray_DNDUID(ret), filename, datapos);
 
     PyDimMem_FREE(shape.ptr);
@@ -86,6 +77,7 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 }
 
 
+/* Export methods */
 static struct PyMethodDef methods[] = {
     {"dist_load",  (PyCFunction)distio_load, METH_VARARGS | METH_KEYWORDS, 
      "Load binary file into distributed array."},
