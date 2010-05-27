@@ -807,7 +807,7 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
  */
 static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 {
-#ifdef USE_DARRAY
+	/* Setup DARRAY parameters */
     int i;
     int distribs[view->base->ndims];
     int dargs[view->base->ndims];
@@ -817,108 +817,13 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
         distribs[i] = MPI_DISTRIBUTE_CYCLIC;
         dargs[i] = blocksize;
         dims[i] = view->base->dims[i];
-        printf("view->base->dims[%d]: %d\n", i, view->base->dims[i]);
     }
 
+	/* Create and commit data type */
     MPI_Type_create_darray(worldsize, myrank, view->base->ndims, dims,
                            distribs, dargs,
                            cart_dim_sizes[view->base->ndims-1], MPI_ORDER_C,
                            view->base->mpi_dtype, dtype);
-
-#else
-
-    /* Get cartesian coords */
-    int coords[NPY_MAXDIMS];
-    rank2cart(view->base->ndims, myrank, coords);
-    int *stride = cart_dim_sizes[view->base->ndims-1];
-
-    /* Counters */
-    int i, j, n, extent;
-
-    /* Convenience */
-    int ndims = view->base->ndims;
-
-    /* Holds arrays of displacements and blocklengths for each dimension */
-    int *displacements[ndims];
-    int *blocklengths[ndims];
-
-    /* Copies for reverse enumeration */
-    int mydims[ndims];
-    int mylocalblockdims[ndims];
-    int mycoords[ndims];
-    int mystride[ndims];
-
-    /* We want to reverse the dimension enumeration for convenience */
-    i = 0;
-    for(n = ndims-1; n >= 0; n--) {
-        mydims[i] = view->base->dims[n];
-        mylocalblockdims[i] = view->base->localblockdims[n];
-        mycoords[i] = coords[n];
-        mystride[i++] = stride[n];
-    }
-
-    /* Allocate room for mylocalblockdims[n] elements in each dimension */
-    for(n = 0; n < ndims; n++) {
-        if(NULL == (displacements[n] = malloc(sizeof(int)*mylocalblockdims[n]))) {
-            fprintf(stderr, "Failed to allocate memory for displacements.\n");
-            return -1;
-        }
-        if(NULL == (blocklengths[n] = malloc(sizeof(int)*mylocalblockdims[n]))) {
-            fprintf(stderr, "Failed to allocate memory for block lengths.\n");
-            return -1;
-        }
-    }
-
-    /* Iterate over dimensions */
-    for(n = 0; n < ndims; n++) {
-        j = 0; // Reset internal counter
-
-        /* Iterate over a dimension to calculate displacements */
-        for(i = mycoords[n]*blocksize; i < mydims[n]; ) {
-            displacements[n][j] = i;
-
-            if(blocksize+i > mydims[n]) {
-                blocklengths[n][j] = mydims[n] % blocksize;
-            } else {
-                blocklengths[n][j] = blocksize;
-            }
-
-            i += mystride[n]*blocksize;
-            j++;
-        }
-    }
-
-    /* Stores derived data types */
-    MPI_Datatype derived_type[ndims];
-    MPI_Datatype tmp_type;
-
-    /* Setup derived data type for elements */
-    derived_type[0] = view->base->mpi_dtype;
-
-    /* Setup derived data types for rest of dimensions */
-    for(n = 1; n <= ndims; n++) {
-        extent = view->base->elsize;
-        for(i = 0; i < n; i++) {
-            extent *= mydims[i];
-        }
-
-        MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
-                         displacements[n-1], derived_type[n-1], &tmp_type);
-        if(n < ndims) {
-            MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
-        } else {
-            MPI_Type_create_resized(tmp_type, 0, extent, dtype);
-        }
-    }
-
-    /* Free allocated data */
-    MPI_Type_free(&tmp_type);
-    for(n = 0; n < ndims; n++) {
-        MPI_Type_free(&derived_type[n]);
-        free(displacements[n]);
-    }
-
-#endif
 
     MPI_Type_commit(dtype);
 
@@ -1688,8 +1593,8 @@ static void do_ZEROFILL(dndview *view)
  */
 static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 {
-    /* MPI Info var */
-    MPI_Info info;
+    /* MPI data type */
+    MPI_Datatype dtype;
 
     /* File access mode */
     int mode = 0;
@@ -1708,22 +1613,15 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
             MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    MPI_Info_create(&info);
-    /*MPI_Info_set(info, "romio_ds_read", "enable/disable");*/
-    /*MPI_Info_set(info, "romio_cb_read", "enable/disable");*/
-    /*MPI_Info_set(info, "cb_nodes", "n");*/
-    /*MPI_Info_set(info, "no_indep_rw", "bool");*/
-
     MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
-                  mode, info, &fh);
+                  mode, MPI_INFO_NULL, &fh);
 
-    /* Setup MPI data type */
-    MPI_Datatype dtype;
+	/* Setup MPI data type */
     create_mpi_dtype(view, &dtype);
 
     /* Set file view with derived data type */
     MPI_File_set_view(fh, filepos, view->base->mpi_dtype, dtype,
-                      "native", info);
+                      "native", MPI_INFO_NULL);
 
     /* Do operation */
     MPI_Status status;
@@ -1735,7 +1633,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
             MPI_File_write_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
             break;
         default:
-            fprintf(stderr, "Ehh, the universe collapsed...\n");
+            fprintf(stderr, "Huh? Unknown operation requested.\n");
             MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
@@ -1744,9 +1642,6 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
 
     /* Free derived data type */
     MPI_Type_free(&dtype);
-
-    /* Free info */
-    MPI_Info_free(&info);
 
 } /* do_FILEIO */
 
@@ -2449,7 +2344,7 @@ dnumpy_zerofill(intp ary_uid)
 /*NUMPY_API
  *===================================================================
  * Public
- * Fill the distributed array/view with data from file.
+ * Fill the distributed array with data from file.
  */
 static void
 dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
@@ -2475,7 +2370,7 @@ dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
 /*NUMPY_API
  *===================================================================
  * Public
- * Foo
+ * Save the distributed array to file.
  */
 static void
 dnumpy_datadump(intp ary_uid, const char *filename, long datapos)
