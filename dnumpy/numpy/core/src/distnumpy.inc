@@ -807,7 +807,7 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
  */
 static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 {
-	/* Setup DARRAY parameters */
+    /* Setup DARRAY parameters */
     int i;
     int distribs[view->base->ndims];
     int dargs[view->base->ndims];
@@ -819,7 +819,7 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
         dims[i] = view->base->dims[i];
     }
 
-	/* Create and commit data type */
+    /* Create and commit data type */
     MPI_Type_create_darray(worldsize, myrank, view->base->ndims, dims,
                            distribs, dargs,
                            cart_dim_sizes[view->base->ndims-1], MPI_ORDER_C,
@@ -1616,7 +1616,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
     MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
                   mode, MPI_INFO_NULL, &fh);
 
-	/* Setup MPI data type */
+    /* Setup MPI data type */
     create_mpi_dtype(view, &dtype);
 
     /* Set file view with derived data type */
