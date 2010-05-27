@@ -61,6 +61,9 @@ import cPickle
 import numpy
 from numpy.lib.utils import safe_eval
 
+# DISTNUMPY
+from _distio import dist_load, dist_save
+
 
 MAGIC_PREFIX = '\x93NUMPY'
 MAGIC_LEN = len(MAGIC_PREFIX) + 2
@@ -310,6 +313,11 @@ def write_array(fp, array, version=(1,0)):
     fp.write(magic(*version))
     write_array_header_1_0(fp, header_data_from_array_1_0(array))
     if array.dtype.hasobject:
+        # DISTNUMPY
+        if array.dist():
+            msg = "distnumpy doesn't supports writing Python objects when saving to file"
+            raise ValueError(msg)
+
         # We contain Python objects so we cannot write out the data directly.
         # Instead, we will pickle it out with version 2 of the pickle protocol.
         cPickle.dump(array, fp, protocol=2)
@@ -318,6 +326,14 @@ def write_array(fp, array, version=(1,0)):
         # handle Fortran-contiguous arrays.
         fp.write(array.data)
     else:
+        # DISTNUMPY
+        if array.dist():
+            name = fp.name
+            filepos = fp.tell()
+            fp.close()
+            dist_save(array, name, filepos)
+            return
+
         if isinstance(fp, file):
             array.tofile(fp)
         else:
@@ -325,7 +341,8 @@ def write_array(fp, array, version=(1,0)):
             # arrayterator.
             fp.write(array.tostring('C'))
 
-def read_array(fp):
+# DISTNUMPY
+def read_array(fp, dist=False):
     """
     Read an array from an NPY file.
 
@@ -358,9 +375,18 @@ def read_array(fp):
 
     # Now read the actual data.
     if dtype.hasobject:
+        # DISTNUMPY
+        if dist:
+            msg = "distnumpy doesn't support pickled objects when loading from file"
+            raise ValueError(msg)
+
         # The array contained Python objects. We need to unpickle the data.
         array = cPickle.load(fp)
     else:
+        # DISTNUMPY
+        if dist:
+            return dist_load(filename=fp.name, datapos=fp.tell(), shape=shape, fortran_order = 1 if fortran_order else 0, dtype=dtype) 
+
         if isinstance(fp, file):
             # We can use the fast fromfile() function.
             array = numpy.fromfile(fp, dtype=dtype, count=count)

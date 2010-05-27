@@ -64,7 +64,6 @@ static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 
-
 /*===================================================================
  *
  * Returns a string describing dtype.
@@ -658,7 +657,8 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
  * dimension will be removed.
  * The coordinates are in Row-major.
  * Private.
- *//*
+ */
+ /*
 static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
                       int reduce_axis, MPI_Win *win,
                       npy_intp lcoords[NPY_MAXDIMS])
@@ -719,7 +719,8 @@ static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
     MPI_Win_unlock(rank, *win);
 
     return 0;
-}*//* remote_put */
+}*/
+/* remote_put */
 
 /*===================================================================
  *
@@ -825,6 +826,38 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     MPI_Type_free(&elem_type);
     return 0;
 } /* remote_blockput */
+
+/*===================================================================
+ *
+ * Create a MPI data type to match the given view for a
+ * N-dimensional block cyclic distribution.
+ * Private.
+ */
+static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
+{
+    /* Setup DARRAY parameters */
+    int i;
+    int distribs[view->base->ndims];
+    int dargs[view->base->ndims];
+    int dims[view->base->ndims];
+
+    for(i = 0; i < view->base->ndims; i++) {
+        distribs[i] = MPI_DISTRIBUTE_CYCLIC;
+        dargs[i] = blocksize;
+        dims[i] = view->base->dims[i];
+    }
+
+    /* Create and commit data type */
+    MPI_Type_create_darray(worldsize, myrank, view->base->ndims, dims,
+                           distribs, dargs,
+                           cart_dim_sizes[view->base->ndims-1], MPI_ORDER_C,
+                           view->base->mpi_dtype, dtype);
+
+    MPI_Type_commit(dtype);
+
+    return 0;
+
+} /* create_mpi_dtype */
 
 /*===================================================================
  *
@@ -1688,6 +1721,65 @@ static void do_ZEROFILL(dndview *view)
 
 /*===================================================================
  *
+ * Generic message handler for DATAFILL and DATADUMP.
+ * Private.
+ */
+static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
+{
+    /* MPI data type */
+    MPI_Datatype dtype;
+
+    /* File access mode */
+    int mode = 0;
+
+    /* Setup file handle */
+    MPI_File fh;
+    switch(op) {
+        case DNPY_DATAFILL:
+            mode = MPI_MODE_RDONLY;
+            break;
+        case DNPY_DATADUMP:
+            mode = MPI_MODE_WRONLY | MPI_MODE_APPEND;
+            break;
+        default:
+            fprintf(stderr, "Unknown I/O operation\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
+                  mode, MPI_INFO_NULL, &fh);
+
+    /* Setup MPI data type */
+    create_mpi_dtype(view, &dtype);
+
+    /* Set file view with derived data type */
+    MPI_File_set_view(fh, filepos, view->base->mpi_dtype, dtype,
+                      "native", MPI_INFO_NULL);
+
+    /* Do operation */
+    MPI_Status status;
+    switch(op) {
+        case DNPY_DATAFILL:
+            MPI_File_read_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            break;
+        case DNPY_DATADUMP:
+            MPI_File_write_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            break;
+        default:
+            fprintf(stderr, "Huh? Unknown operation requested.\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    /* Close file handle */
+    MPI_File_close(&fh);
+
+    /* Free derived data type */
+    MPI_Type_free(&dtype);
+
+} /* do_FILEIO */
+
+/*===================================================================
+ *
  * Message handler for DIAGONAL.
  * Private.
  */
@@ -2382,6 +2474,57 @@ dnumpy_zerofill(intp ary_uid)
     do_ZEROFILL(view);
 } /* dnumpy_zerofill */
 
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Fill the distributed array with data from file.
+ */
+static void
+dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
+{
+    //Get arrray structs.
+    dndview *view = get_dndview(ary_uid);
+
+    //Get filename length
+    int filename_length = strlen(filename);
+
+    //Tell slaves
+    msg[0] = DNPY_DATAFILL;
+    msg[1] = view->uid;
+    memcpy(&msg[2], &datapos, sizeof(long));
+    strcpy((char*)&msg[2]+sizeof(long), filename);
+    *(&msg[2]+sizeof(long)+(filename_length+1)*sizeof(char)) = DNPY_MSG_END;
+    msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
+
+    //The master should also do the operation.
+    do_FILEIO(view, filename, datapos, DNPY_DATAFILL);
+} /* dnumpy_datafill */
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Save the distributed array to file.
+ */
+static void
+dnumpy_datadump(intp ary_uid, const char *filename, long datapos)
+{
+    //Get array structs.
+    dndview *view = get_dndview(ary_uid);
+
+    //Get filename length
+    int filename_length = strlen(filename);
+
+    //Tell slaves
+    msg[0] = DNPY_DATADUMP;
+    msg[1] = view->uid;
+    memcpy(&msg[2], &datapos, sizeof(long));
+    strcpy((char*)&msg[2]+sizeof(long), filename);
+    *(&msg[2]+sizeof(long)+(filename_length+1)*sizeof(char)) = DNPY_MSG_END;
+    msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
+
+    //The master should also do the operation.
+    do_FILEIO(view, filename, datapos, DNPY_DATADUMP);
+} /* dnumpy_datadump */
 
 /*NUMPY_API
  *===================================================================
@@ -2632,6 +2775,7 @@ dnumpy_master_slave_split()
     {
         char *t1, *t2, *t3;
         npy_intp d1, d2, d3, d4, d5;
+        long l1;
         dndview *ary, *ary2, *ary3;
         MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
@@ -2697,6 +2841,18 @@ dnumpy_master_slave_split()
             case DNPY_ZEROFILL:
                 do_ZEROFILL(get_dndview(*((npy_intp*)msg_data)));
                 break;
+            case DNPY_DATAFILL:
+                d1 = ((npy_intp*)msg_data)[0]; // view uid
+                l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
+                t1 = msg_data+sizeof(npy_intp)+sizeof(long); // get filename
+                do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATAFILL);
+                break;               
+            case DNPY_DATADUMP:
+                d1 = ((npy_intp*)msg_data)[0]; // view uid
+                l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
+                t1 = msg_data+sizeof(npy_intp)+sizeof(long); // get filename
+                do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATADUMP);
+                break;               
             case DNPY_DIAGONAL:
                 ary  = get_dndview(((npy_intp*)msg_data)[0]);
                 ary2 = get_dndview(((npy_intp*)msg_data)[1]);

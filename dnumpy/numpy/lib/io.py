@@ -118,7 +118,8 @@ class NpzFile(object):
         else:
             raise KeyError, "%s is not a file in the archive" % key
 
-def load(file, mmap_mode=None):
+# DISTNUMPY
+def load(file, mmap_mode=None, dist=False):
     """
     Load a pickled, ``.npy``, or ``.npz`` binary file.
 
@@ -192,7 +193,8 @@ def load(file, mmap_mode=None):
         if mmap_mode:
             return format.open_memmap(file, mode=mmap_mode)
         else:
-            return format.read_array(fid)
+            # DISTNUMPY
+            return format.read_array(fid, dist)
     else:  # Try a pickle
         try:
             return _cload(fid)
