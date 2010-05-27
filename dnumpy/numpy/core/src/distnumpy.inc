@@ -8,6 +8,8 @@
 #endif
 #include CBLAS_HEADER
 
+#include "profiling.c"
+
 
 /*===================================================================
  *
@@ -261,8 +263,8 @@ static void msg2slaves(npy_intp *msg, int msgsize)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
+    _MPI_Barrier(MPI_COMM_WORLD);
+    _MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
 
 } /* msg2slaves */
 
@@ -496,11 +498,11 @@ comm_vblock(int Direction, dndview *view, dndvb *vblock)
         {
             MPI_Win_lock(MPI_LOCK_EXCLUSIVE, svb->rank,
                          0, view->base->comm_win);
-            MPI_Put(svb->data, svb->nelem, view->base->mpi_dtype,
+            _MPI_Put(svb->data, svb->nelem, view->base->mpi_dtype,
                     svb->rank,
                     svb->offset_view, 1, svb->comm_dtype_view,
                     view->base->comm_win);
-            MPI_Win_unlock(svb->rank, view->base->comm_win);
+            _MPI_Win_unlock(svb->rank, view->base->comm_win);
         }
         else
         {
@@ -508,11 +510,11 @@ comm_vblock(int Direction, dndview *view, dndvb *vblock)
             svb->data = malloc(svb->nelem * view->base->elsize);
             MPI_Win_lock(MPI_LOCK_SHARED, svb->rank,
                          0, view->base->comm_win);
-            MPI_Get(svb->data, svb->nelem, view->base->mpi_dtype,
+            _MPI_Get(svb->data, svb->nelem, view->base->mpi_dtype,
                     svb->rank,
                     svb->offset_view, 1, svb->comm_dtype_view,
                     view->base->comm_win);
-            MPI_Win_unlock(svb->rank, view->base->comm_win);
+            _MPI_Win_unlock(svb->rank, view->base->comm_win);
         }
     }
 } /* comm_vblock */
@@ -816,9 +818,9 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     //concurrently access nonoverlapping locations in a window
     //(MPI-2.1 s. 351).
     MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, dest_ary->comm_win);
-    MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
-            dest_ary_type, dest_ary->comm_win);
-    MPI_Win_unlock(rank, dest_ary->comm_win);
+    _MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
+             dest_ary_type, dest_ary->comm_win);
+    _MPI_Win_unlock(rank, dest_ary->comm_win);
 
     //Clean up
     MPI_Type_free(&src_ary_type);
@@ -858,6 +860,18 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
     return 0;
 
 } /* create_mpi_dtype */
+
+#ifdef HAS_PROFILING
+/*===================================================================
+ *
+ * Message handler for INIT_PROFILING.
+ * Private.
+ */
+static void do_INIT_PROFILING(npy_intp prof_status)
+{
+    prof_enabled = prof_status;
+} /* do_INIT_PROFILING */
+#endif /* HAS_PROFILING */
 
 /*===================================================================
  *
@@ -1124,20 +1138,20 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         MPI_Win_lock(MPI_LOCK_SHARED, vblock.sub[b].rank,
                      MPI_MODE_NOCHECK, view->base->comm_win);
         if(Direction)
-            MPI_Put(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
+            _MPI_Put(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
         else
-            MPI_Get(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
+            _MPI_Get(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
 
-        MPI_Win_unlock(vblock.sub[b].rank, view->base->comm_win);
+        _MPI_Win_unlock(vblock.sub[b].rank, view->base->comm_win);
 
         free_vblock(&vblock);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    _MPI_Barrier(MPI_COMM_WORLD);
 
 } /* do_PUTGET_ITEM */
 
@@ -1535,9 +1549,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
             //Send local output scalar to the master process.
             if(myrank > 0)
-                MPI_Send(PyArray_DATA(local_scalar),
-                         out_scalar_dtypesize, MPI_BYTE, 0, 0,
-                         MPI_COMM_WORLD);
+                _MPI_Send(PyArray_DATA(local_scalar),
+                          out_scalar_dtypesize, MPI_BYTE, 0, 0,
+                          MPI_COMM_WORLD);
             Py_DECREF(tmpobj);
         }
         if(myrank == 0)
@@ -1547,10 +1561,10 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             if(in_ary->localdims[0] == 0)
             {
                 int zero = 0;
-                MPI_Recv(PyArray_DATA(local_scalar),
-                         out_scalar_dtypesize, MPI_BYTE,
-                         cart2rank(1, &zero), 0, MPI_COMM_WORLD,
-                         MPI_STATUS_IGNORE);
+                _MPI_Recv(PyArray_DATA(local_scalar),
+                          out_scalar_dtypesize, MPI_BYTE,
+                          cart2rank(1, &zero), 0, MPI_COMM_WORLD,
+                          MPI_STATUS_IGNORE);
             }
 
             //We need a tmp scalar for receiving scalars.
@@ -1564,9 +1578,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                                 i, cart_dim_sizes[0][0]))
                     continue;
 
-                MPI_Recv(PyArray_DATA(tmp_scalar), out_scalar_dtypesize,
-                         MPI_BYTE, cart2rank(1, &i), 0, MPI_COMM_WORLD,
-                         MPI_STATUS_IGNORE);
+                _MPI_Recv(PyArray_DATA(tmp_scalar), out_scalar_dtypesize,
+                          MPI_BYTE, cart2rank(1, &i), 0, MPI_COMM_WORLD,
+                          MPI_STATUS_IGNORE);
                 PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)",
                                                     local_scalar,
                                                     tmp_scalar,
@@ -1641,9 +1655,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             //Receive the sub-result from the sender into 'tmpres'.
             PyObject *tmpres = PyArray_SimpleNew(out_ary->ndims,
                                recv_dims, out_ary->dtype);
-            MPI_Recv(PyArray_DATA(tmpres), PyArray_SIZE(tmpres) *
-                     out_ary->elsize, MPI_BYTE, rank, 0,
-                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            _MPI_Recv(PyArray_DATA(tmpres), PyArray_SIZE(tmpres) *
+                      out_ary->elsize, MPI_BYTE, rank, 0,
+                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
             //We use ufunc to "reduce" the two arrays over the
             //non-existing 'axis' dimension.
@@ -1683,14 +1697,14 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     {
         //Send subresult to receiver.
         cart_coords[axis] = 0;
-        MPI_Send(PyArray_DATA(subres),
-                 PyArray_SIZE(subres) * PyArray_ITEMSIZE(subres),
-                 MPI_BYTE, cart2rank(in_ary->ndims, cart_coords), 0,
-                 MPI_COMM_WORLD);
+        _MPI_Send(PyArray_DATA(subres),
+                  PyArray_SIZE(subres) * PyArray_ITEMSIZE(subres),
+                  MPI_BYTE, cart2rank(in_ary->ndims, cart_coords), 0,
+                  MPI_COMM_WORLD);
     }
 
     //Cleanup
-    MPI_Barrier(MPI_COMM_WORLD);
+    _MPI_Barrier(MPI_COMM_WORLD);
     Py_DECREF(subres);
     Py_DECREF(PyOp);
 
@@ -1760,10 +1774,10 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
     MPI_Status status;
     switch(op) {
         case DNPY_DATAFILL:
-            MPI_File_read_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            _MPI_File_read_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
             break;
         case DNPY_DATADUMP:
-            MPI_File_write_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            _MPI_File_write_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
             break;
         default:
             fprintf(stderr, "Huh? Unknown operation requested.\n");
@@ -1846,10 +1860,10 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
 
         //Transfer element.
         MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, in->base->comm_win);
-        MPI_Get(out_data, bsize, in->base->mpi_dtype, rank,
-                offset * in->base->elsize, 1, arraytype,
-                in->base->comm_win);
-        MPI_Win_unlock(rank, in->base->comm_win);
+        _MPI_Get(out_data, bsize, in->base->mpi_dtype, rank,
+                 offset * in->base->elsize, 1, arraytype,
+                 in->base->comm_win);
+        _MPI_Win_unlock(rank, in->base->comm_win);
 
         //Clean up
         MPI_Type_free(&arraytype);
@@ -1858,7 +1872,7 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         out_data += bsize * in->base->elsize;
     }
     //Sync.
-    MPI_Barrier(MPI_COMM_WORLD);
+    _MPI_Barrier(MPI_COMM_WORLD);
 }
 
 /*===================================================================
@@ -1948,9 +1962,9 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 //We have to recv since we are not icur.
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]-1+cart_dim[1])%cart_dim[1];
-                MPI_Recv(work0, A->base->localdims[0] * iwrk,
-                         A->base->mpi_dtype, cart2rank(2,tcoord),
-                         MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                _MPI_Recv(work0, A->base->localdims[0] * iwrk,
+                          A->base->mpi_dtype, cart2rank(2,tcoord),
+                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
             //Send the iwrk'th column to the right neighbour but
             //make sure we don't wrap around.
@@ -1958,9 +1972,9 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
             {
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]+1)%cart_dim[1];
-                MPI_Send(work0, A->base->localdims[0] * iwrk,
-                         A->base->mpi_dtype, cart2rank(2,tcoord), 0,
-                         MPI_COMM_WORLD);
+                _MPI_Send(work0, A->base->localdims[0] * iwrk,
+                          A->base->mpi_dtype, cart2rank(2,tcoord), 0,
+                          MPI_COMM_WORLD);
             }
         }
         if(cart_dim[0] > 1)
@@ -1971,9 +1985,9 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 //We have to recv, since we a not icur.
                 tcoord[0] = (mycoord[0]-1+cart_dim[0])%cart_dim[0];
                 tcoord[1] = mycoord[1];
-                MPI_Recv(work1, iwrk * B->base->localdims[1],
-                         A->base->mpi_dtype, cart2rank(2,tcoord),
-                         MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                _MPI_Recv(work1, iwrk * B->base->localdims[1],
+                          A->base->mpi_dtype, cart2rank(2,tcoord),
+                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
             //Send the iwrk'th row to the lower neighbour but
             //make sure we don't wrap around.
@@ -1981,9 +1995,9 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
             {
                 tcoord[0] = (mycoord[0]+1)%cart_dim[0];
                 tcoord[1] = mycoord[1];
-                MPI_Send(work1, iwrk * B->base->localdims[1],
-                         A->base->mpi_dtype, cart2rank(2,tcoord), 0,
-                         MPI_COMM_WORLD);
+                _MPI_Send(work1, iwrk * B->base->localdims[1],
+                          A->base->mpi_dtype, cart2rank(2,tcoord), 0,
+                          MPI_COMM_WORLD);
             }
         }
         //If available we use the BLAS library else we fall back to the
@@ -2620,7 +2634,7 @@ dnumpy_init(void)
 {
     int i,j,s;
     //Initilization of MPI.
-    MPI_Init(NULL, NULL);
+    _MPI_Init(NULL, NULL);
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &worldsize);
@@ -2711,6 +2725,7 @@ dnumpy_exit()
             printf("Rank 0 received msg: SHUTDOWN\n");
         #endif
     }
+
     //Free Cartesian Information.
     for(i=0; i < NPY_MAXDIMS; i++)
     {
@@ -2727,7 +2742,7 @@ dnumpy_exit()
         printf("DistNumPy - Warning %d distributed arrays didn't get "
                "deallocated.\n", nleaks);
 
-    MPI_Finalize();
+    _MPI_Finalize();
 } /* dnumpy_exit */
 
 /*NUMPY_API
@@ -2742,6 +2757,22 @@ dnumpy_master_slave_split()
 {
     if(myrank == 0)
     {
+#ifdef HAS_PROFILING
+        char *p = getenv("DNPY_PROFILING");
+        if (p == NULL)
+            prof_enabled = DNPY_PROFILING;
+        else
+            prof_enabled = atoi(p);
+
+        if (prof_enabled) {
+            printf("* Profiling enabled\n");
+            msg[0] = DNPY_INIT_PROFILING;
+            msg[1] = prof_enabled;
+            msg[2] = DNPY_MSG_END;
+            msg2slaves(msg, 3 * sizeof(npy_intp));
+        }
+#endif /* HAS_PROFILING */
+
         //Check for user-defined block size.
         char *bs = getenv("DNPY_BLOCKSIZE");
         if(bs == NULL)
@@ -2777,15 +2808,20 @@ dnumpy_master_slave_split()
         npy_intp d1, d2, d3, d4, d5;
         long l1;
         dndview *ary, *ary2, *ary3;
-        MPI_Barrier(MPI_COMM_WORLD);
+        _MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
-        MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
+        _MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
         char *msg_data = (char *) &msg[1];
         #ifdef DISTNUMPY_DEBUG
             printf("Rank %d received msg: ", myrank);
         #endif
         switch(msg[0])
         {
+#ifdef HAS_PROFILING
+            case DNPY_INIT_PROFILING:
+                do_INIT_PROFILING(*((npy_intp*)msg_data));
+                break;
+#endif /* HAS_PROFILING */
             case DNPY_INIT_BLOCKSIZE:
                 do_INIT_BLOCKSIZE(*((npy_intp*)msg_data));
                 break;

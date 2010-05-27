@@ -454,7 +454,9 @@ def configuration(parent_package='',top_path=None):
             join('src','hashdescr.c'),
             join('include','numpy','*object.h'),
             join('include','numpy','distnumpy.h'),#DISTNUMPY
+            join('include','numpy','profiling.h'),#DISTNUMPY
             join('src','distnumpy.inc'),#DISTNUMPY
+            join('src','profiling.c'),#DISTNUMPY
             'include/numpy/fenv/fenv.c',
             'include/numpy/fenv/fenv.h',
             join(codegen_dir,'genapi.py'),
