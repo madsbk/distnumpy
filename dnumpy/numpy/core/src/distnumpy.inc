@@ -446,7 +446,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         {
             //Count svbdims.
             vblock->svbdims[j]++;
-            
+
             scoord[j] += svb[s].nsteps[j];
             if(scoord[j] >= MIN(blocksize, nsteps[j] - ncoord[j]))
             {
@@ -465,7 +465,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         if(notfinished)
             for(i=view->base->ndims-1; i > j; i--)
                 vblock->svbdims[i] = 0;
-                
+
         s++;
     }
     //Save number of sub-vblocks.
@@ -490,7 +490,7 @@ comm_vblock(int Direction, dndview *view, dndvb *vblock)
 
         if(svb->rank == myrank)//Already located locally.
             continue;
-        
+
 
         if(Direction)
         {
@@ -560,7 +560,7 @@ idx_v2b(const dndview *view, npy_intp vindex)
             break;
         if(view->slice[i].nsteps != PseudoIndex)
             bindex++;
-        
+
         vindex--;
     }
     assert(bindex < view->base->ndims);
@@ -1163,7 +1163,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     dndvb vblocks[NPY_MAXARGS];
     PyObject *arrays[NPY_MAXARGS];//PyArrays objects.
     npy_intp ones[NPY_MAXDIMS];
-    
+
 
     //Get arrray structs.
     dndview *views[NPY_MAXARGS];
@@ -1221,14 +1221,14 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     PyUFuncGenericFunction ufunc_function =
                            ufunc_obj->functions[appropriate_function];
     void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
-    
+
 
     //Compute global start coordinate for the output array.
-    rank2cart(lastary->base->ndims, myrank, pcoord);
+    rank2cart(lastary->ndims, myrank, pcoord);
     for(v=nin; v<narys; v++)
         for(j=0; j < views[v]->ndims; j++)
         {
-            coord[j] = pcoord[idx_v2b(views[v],j)];//Start coord.
+            coord[j] = pcoord[j];//Start coord.
             if(coord[j] >= views[v]->blockdims[j])
                 notfinished=0;//This process does not own anything.
         }
@@ -1279,7 +1279,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //Do computation for view-block.
         memset(scoord, 0, lastary->ndims * sizeof(npy_intp));
         memset(svboffset, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
-        memset(csvb, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));        
+        memset(csvb, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
         int svb_notfinished = 1;
         while(svb_notfinished)
         {
@@ -1289,7 +1289,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             {
                 if(views[v]->base->ndims == 0)
                     continue;
-                
+
                 s=1;j=0;
                 for(i=views[v]->ndims-1; i>=0; i--)
                 {
@@ -1334,13 +1334,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 //Scalars is already updated.
                 if(views[v]->base->ndims == 0)
                     continue;
-                
+
                 //Convert sdims to match current view ndims.
                 for(i=0; i<views[v]->ndims; i++)
                     csdims[views[v]->ndims-1-i] =
                                     MIN(vdims[v][views[v]->ndims-1-i],
                                         sdims[lastary->ndims-1-i]);
-                
+
                 //Compute offset & stride for the Object.
                 //When the data is local it may be non-contiguous
                 //and when the data is from a remote source it is
@@ -1354,7 +1354,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                                      views[v]->base->elsize;
                         offset += svboffset[v][i] * sstride[i];
                     }
-                else            
+                else
                     for(i=views[v]->ndims-1; i>=0; i--)
                     {
                         sstride[i] = s;
@@ -1370,7 +1370,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 //Which corresponds to the following:
                 //    PyArray_New(&PyArray_Type,
                 //                views[v]->ndims, csdims,
-                //                views[v]->base->dtype, sstride, 
+                //                views[v]->base->dtype, sstride,
                 //                svbs[v]->data + offset,
                 //                views[v]->base->elsize,
                 //                NPY_BEHAVED, NULL);
@@ -1418,7 +1418,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 {
                     if(svboffset[v][i] == 0)
                         csvb[v][i]++;
-                        
+
                     if(csvb[v][i] >=
                        vblocks[v].svbdims[idx_v2b(views[v],i)])
                         csvb[v][i] = 0;
@@ -1431,7 +1431,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         for(v=nin; v<narys; v++)
             for(j=0; j<vblocks[v].nsub; j++)
                 comm_vblock(1, views[v], &vblocks[v]);
-                
+
         //Cleanup.
         for(v=0; v<narys; v++)
         {
@@ -1442,8 +1442,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
         {
-            s = idx_v2b(lastary,j);
-            coord[j] += cart_dim_sizes[lastary->base->ndims-1][s];
+            coord[j] += cart_dim_sizes[lastary->ndims-1][j];
             if(coord[j] >= lastary->blockdims[j])
             {
                 //We are finished, if wrapping around.
@@ -1452,13 +1451,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     notfinished = 0;
                     break;
                 }
-                coord[j] = pcoord[s];//Start coord.
+                coord[j] = pcoord[j];//Start coord.
             }
             else
                 break;
         }
-    }    
-    
+    }
+
     //Clean up
     Py_DECREF(PyOp);
     for(i=0; i<narys; i++)
@@ -1724,10 +1723,18 @@ static void do_ZEROFILL(dndview *view)
  * Generic message handler for DATAFILL and DATADUMP.
  * Private.
  */
-static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
+static void do_FILEIO(dndview *view, const char *filename, long filepos,
+                      int op)
 {
     /* MPI data type */
     MPI_Datatype dtype;
+
+    //Check if the views covers the whole array.
+    if(view->alterations != 0)
+    {
+        fprintf(stderr, "FILEIO with views not implemented\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
 
     /* File access mode */
     int mode = 0;
@@ -1746,7 +1753,8 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
             MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    MPI_File_open(MPI_COMM_WORLD, (char *) filename, // MPI_File_open discards const
+    //MPI_File_open discards const
+    MPI_File_open(MPI_COMM_WORLD, (char *) filename,
                   mode, MPI_INFO_NULL, &fh);
 
     /* Setup MPI data type */
@@ -1760,10 +1768,12 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos, int op)
     MPI_Status status;
     switch(op) {
         case DNPY_DATAFILL:
-            MPI_File_read_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            MPI_File_read_all(fh, view->base->data, view->base->nelements,
+                              view->base->mpi_dtype, &status);
             break;
         case DNPY_DATADUMP:
-            MPI_File_write_all(fh, view->base->data, view->base->nelements, view->base->mpi_dtype, &status);
+            MPI_File_write_all(fh, view->base->data, view->base->nelements,
+                               view->base->mpi_dtype, &status);
             break;
         default:
             fprintf(stderr, "Huh? Unknown operation requested.\n");
@@ -2846,13 +2856,13 @@ dnumpy_master_slave_split()
                 l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
                 t1 = msg_data+sizeof(npy_intp)+sizeof(long); // get filename
                 do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATAFILL);
-                break;               
+                break;
             case DNPY_DATADUMP:
                 d1 = ((npy_intp*)msg_data)[0]; // view uid
                 l1 = (long) ((npy_intp*)msg_data)[1]; // filepos
                 t1 = msg_data+sizeof(npy_intp)+sizeof(long); // get filename
                 do_FILEIO(get_dndview(d1), t1, l1, DNPY_DATADUMP);
-                break;               
+                break;
             case DNPY_DIAGONAL:
                 ary  = get_dndview(((npy_intp*)msg_data)[0]);
                 ary2 = get_dndview(((npy_intp*)msg_data)[1]);
