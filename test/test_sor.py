@@ -1,6 +1,5 @@
 import numpy as np
 import dnumpytest
-import random
 
 def sor(W,H,Dist):
     full = np.zeros((W+2,H+2), dtype=np.double, dist=Dist)
@@ -46,4 +45,4 @@ def run():
     return (False, "")
 
 if __name__ == "__main__":
-    run()
+    print run()
