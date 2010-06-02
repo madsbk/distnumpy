@@ -9,6 +9,8 @@ import os
 DataSetDir = os.path.join(os.path.join(\
              os.path.dirname(sys.argv[0]), "datasets"), "")
 
+TmpSetDir = os.path.join("/",os.path.join("tmp", ""))
+
 def array_equal(A,B):
     if type(A) is not type(B):
         return False
