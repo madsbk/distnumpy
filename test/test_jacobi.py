@@ -28,16 +28,18 @@ def jacobi(A, B, tol=0.005):
     return h
 
 def run():
-    Ad = array([[4, -1, -1, 0], [-1, 4, 0, -1], [-1, 0, 4, -1], [0, -1, -1, 4]], float, dist=True)
-    Bd = array([1,2,0,1], float, dist=True)
-    Af = array([[4, -1, -1, 0], [-1, 4, 0, -1], [-1, 0, 4, -1], [0, -1, -1, 4]], float, dist=False)
-    Bf = array([1,2,0,1], float, dist=False)
-        
-    Seq = jacobi(Af,Bf)
-    Par = jacobi(Ad,Bd)
+    try:
+        import zlib
+    except ImportError:
+        return (True, "Test ignored since zlib was not available.\n")
+    
+    A = load("%sJacobi_Amatrix.npy"%dnumpytest.DataSetDir, dist=True)
+    B = load("%sJacobi_Bvector.npy"%dnumpytest.DataSetDir, dist=True)
+    C = load("%sJacobi_Cvector.npy"%dnumpytest.DataSetDir, dist=True)
+    result = jacobi(A,B)
 
-    if not dnumpytest.array_equal(Seq,Par):
-        return (True, "Uncorrect result matrix\n")
+    if not dnumpytest.array_equal(C,result):
+        return (True, "Uncorrect result vector\n")
     return (False, "")
 
 if __name__ == "__main__":
