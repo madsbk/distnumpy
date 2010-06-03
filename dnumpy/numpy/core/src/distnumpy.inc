@@ -506,7 +506,7 @@ comm_vblock(int Direction, dndview *view, dndvb *vblock)
         {
             assert(svb->data == NULL);
             svb->data = malloc(svb->nelem * view->base->elsize);
-            MPI_Win_lock(MPI_LOCK_SHARED, svb->rank,
+            MPI_Win_lock(MPI_LOCK_EXCLUSIVE, svb->rank,
                          0, view->base->comm_win);
             MPI_Get(svb->data, svb->nelem, view->base->mpi_dtype,
                     svb->rank,
