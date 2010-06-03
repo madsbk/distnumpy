@@ -51,7 +51,7 @@ if __name__ == "__main__":
     except IndexError:
         seed = time.time()
     random.seed(seed)
-    
+
     print "*"*100
     print "*"*31, "Testing Distributed Numerical Python", "*"*31
     for f in os.listdir(os.path.dirname(sys.argv[0])):
@@ -62,7 +62,11 @@ if __name__ == "__main__":
             print "Testing %s"%f
             if pydebug:
                 r1 = sys.gettotalrefcount()
-                (err, msg) = m.run()
+                try:
+                    (err, msg) = m.run()
+                except Exception as errer:
+                    err = True
+                    msg = "Error message: %s"%errer
                 r2 = sys.gettotalrefcount()
                 if r2 != r1:
                     print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
@@ -77,4 +81,4 @@ if __name__ == "__main__":
     print "*"*100
     print "*"*46, "Finish", "*"*46
     print "*"*100
-    
+

@@ -491,7 +491,6 @@ comm_vblock(int Direction, dndview *view, dndvb *vblock)
         if(svb->rank == myrank)//Already located locally.
             continue;
 
-
         if(Direction)
         {
             MPI_Win_lock(MPI_LOCK_EXCLUSIVE, svb->rank,
