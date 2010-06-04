@@ -1096,21 +1096,18 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         s=1;b=0;
         for(i=view->base->ndims-1; i>=0; i--)//Row-major.
         {
-            npy_intp subdimsize=1;
             j = vblock.sub[b].nsteps[i];
             while(tcoord[i] >= vblock.sub[b].nsteps[i])
             {
                 tcoord[i] -= vblock.sub[b].nsteps[i];
                 j += vblock.sub[b].nsteps[i];
-                subdimsize++;
                 b += s;
             }
             while(j < MIN(blocksize, nsteps[i] - rcoord[i]))
             {
                 j += vblock.sub[b].nsteps[i];
-                subdimsize++;
             }
-            s *= subdimsize;
+            s *= vblock.svbdims[i];
         }
 
         //Compute offset.
@@ -1120,7 +1117,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
                       vblock.sub[b].stride[i];
 
         //Do the communication.
-        MPI_Win_lock(MPI_LOCK_SHARED, vblock.sub[b].rank,
+        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, vblock.sub[b].rank,
                      MPI_MODE_NOCHECK, view->base->comm_win);
         if(Direction)
             MPI_Put(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
@@ -1130,7 +1127,6 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
             MPI_Get(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
-
         MPI_Win_unlock(vblock.sub[b].rank, view->base->comm_win);
 
         free_vblock(&vblock);
