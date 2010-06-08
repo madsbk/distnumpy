@@ -4,11 +4,12 @@ import random
 import subprocess
 
 def run():
+    import zlib#Make sure that it fails here if zlib is not available
     max_ndim = 6
     for i in xrange(1,max_ndim+1):
         src = dnumpytest.random_list(random.sample(xrange(1, 10),i))
         A = np.array(src, dtype=float, dist=True)
-        fname = "%sdistnumpt_test_matrix.npy"
+        fname = "distnumpt_test_matrix.npy"
         np.save(fname,A)
         Bf = np.load(fname, dist=False)
         Bd = np.load(fname, dist=True)
