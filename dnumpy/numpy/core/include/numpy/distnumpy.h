@@ -2,6 +2,31 @@
 #define DISTNUMPY_H
 #include "mpi.h"
 
+//ufunc definitions from numpy/ufuncobject.h.
+//They are included here instead.
+typedef void (*PyUFuncGenericFunction)
+             (char **, npy_intp *, npy_intp *, void *);
+typedef struct {
+    PyObject_HEAD
+    int nin, nout, nargs;
+    int identity;
+    PyUFuncGenericFunction *functions;
+    void **data;
+    int ntypes;
+    int check_return;
+    char *name, *types;
+    char *doc;
+    void *ptr;
+    PyObject *obj;
+    PyObject *userloops;
+    int core_enabled;
+    int core_num_dim_ix;
+    int *core_num_dims;
+    int *core_dim_ixs;
+    int *core_offsets;
+    char *core_signature;
+} PyUFuncObject;
+
 //#define DISTNUMPY_DEBUG
 
 //Easy retrieval of dnduid
@@ -9,6 +34,9 @@
 
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*10
+
+//Maximum size of the execution tree
+#define DNPY_EXEC_TREE_SIZE 10
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
@@ -86,7 +114,7 @@ typedef struct
 
     //Number of elements in this sub-block.
     npy_intp nelem;
-    //Pointer to data. NULL if data needs to be fetched. 
+    //Pointer to data. NULL if data needs to be fetched.
     char *data;
 } dndsvb;
 
@@ -133,5 +161,25 @@ typedef struct
     //Number of view-blocks in each viewable dimension.
     npy_intp blockdims[NPY_MAXDIMS];
 } dndview;
+
+//Type describing an array operation.
+typedef struct
+{
+    //The operation type, i.e. UFUNC.
+    int type;
+    //Number of array views involved.
+    int narys;
+    //Number of output array views.
+    int nout;
+    //List of array views involved.
+    dndview *arys[NPY_MAXARGS];
+    //The operation described as a Python, function
+    //and data pointer.
+    PyObject *PyOp;
+    PyUFuncGenericFunction func;
+    void *funcdata;
+} dndop;
+
+
 
 #endif

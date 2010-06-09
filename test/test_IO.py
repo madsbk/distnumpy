@@ -13,7 +13,7 @@ def run():
         np.save(fname,A)
         Bf = np.load(fname, dist=False)
         Bd = np.load(fname, dist=True)
-                
+
         if not dnumpytest.array_equal(Bf,Bd):
             err = "Input array:\n %s\n"%str(A)
             err += "The loaded array from DistNumPy:\n%s\n"%str(Bd)

@@ -8,36 +8,6 @@
 #endif
 #include CBLAS_HEADER
 
-
-/*===================================================================
- *
- * ufunc definitions from numpy/ufuncobject.h.
- * They are include here to avoid compiler warnings.
-*/
-typedef void (*PyUFuncGenericFunction)
-             (char **, npy_intp *, npy_intp *, void *);
-typedef struct {
-    PyObject_HEAD
-    int nin, nout, nargs;
-    int identity;
-    PyUFuncGenericFunction *functions;
-    void **data;
-    int ntypes;
-    int check_return;
-    char *name, *types;
-    char *doc;
-    void *ptr;
-    PyObject *obj;
-    PyObject *userloops;
-    int core_enabled;
-    int core_num_dim_ix;
-    int *core_num_dims;
-    int *core_dim_ixs;
-    int *core_offsets;
-    char *core_signature;
-} PyUFuncObject;
-/* end of ufunc definitions */
-
 /*===================================================================
  *
  * MPI process variables.
@@ -56,13 +26,18 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
-
+//The execution tree and its current size.
+static dndop exec_tree[DNPY_EXEC_TREE_SIZE];
+static npy_intp exec_tree_size=0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
 static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
+
+//Prototype for operation_flush.
+static void operation_flush(void);
 
 /*===================================================================
  *
@@ -650,79 +625,6 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
 
 /*===================================================================
  *
- * Putting the element 'src' into the distributed array 'dest_ary' at
- * coordinates 'lcoords' (local to the 'src_ary' array).
- * No broadcasting, but if 'reduce_axis' >= 0, the 'reduce_axis'
- * dimension will be removed.
- * The coordinates are in Row-major.
- * Private.
- */
- /*
-static int remote_put(char *src, dndarray *src_ary, dndarray *dest_ary,
-                      int reduce_axis, MPI_Win *win,
-                      npy_intp lcoords[NPY_MAXDIMS])
-{
-    //Convert local coordinates to global coordinates.
-    npy_intp gcoords[NPY_MAXDIMS];
-    int count = 0;
-    int i;
-    int *cdimsizes = cart_dim_sizes[src_ary->ndims-1];
-    for(i=0; i<src_ary->ndims; i++)
-    {
-        int tcoords[NPY_MAXDIMS];
-        rank2cart(src_ary->ndims, myrank, tcoords);
-        if(reduce_axis != i)
-            gcoords[count++] = tcoords[i] * blocksize + //process offset
-                               (lcoords[i] / blocksize) * //block index
-                               (cdimsizes[i] * blocksize) + //jump per block
-                               lcoords[i] % blocksize; //index inside block
-    }
-    if(count != dest_ary->ndims)
-    {
-        fprintf(stderr, "remote_put, the src_ary->ndims should be the "
-                        "same as dest_ary->ndims or one higher if "
-                        "reduce_axis >= 0\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-
-    //Find process cartesian coords and local offset.
-    int pcoords[NPY_MAXDIMS];
-    npy_intp offset = 0;
-    for(i=dest_ary->ndims-1; i>=0; i--)
-    {
-        npy_intp B = gcoords[i] / blocksize;
-        int P = cart_dim_sizes[dest_ary->ndims-1][i];
-        pcoords[i] = B % P;
-        npy_intp block_index = B / P;
-        npy_intp index = gcoords[i] % blocksize;
-
-        npy_intp stride = 1;
-        int s;
-        for(s=i+1; s<dest_ary->ndims; s++)
-            stride *= dnumroc(dest_ary->dims[s], blocksize,
-                              pcoords[s],
-                              cart_dim_sizes[dest_ary->ndims-1][s]);
-
-        offset += stride * (block_index * blocksize +
-                            index);
-    }
-
-    //Convert to a MPI rank number.
-    int rank = cart2rank(dest_ary->ndims, pcoords);
-
-    //Transfer element.
-    int itemsize = dest_ary->elsize;
-    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, *win);
-    MPI_Put(src, itemsize, MPI_BYTE, rank, offset*dest_ary->elsize,
-            dest_ary->elsize, MPI_BYTE, *win);
-    MPI_Win_unlock(rank, *win);
-
-    return 0;
-}*/
-/* remote_put */
-
-/*===================================================================
- *
  * Putting the block 'src' into the distributed array 'dest_ary' at
  * block-coordinate 'lcoords' (local to the 'src_ary' array).
  * No broadcasting, but if 'reduce_axis' >= 0, the 'reduce_axis'
@@ -858,6 +760,7 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 
 } /* create_mpi_dtype */
 
+
 /*===================================================================
  *
  * Message handler for INIT_BLOCKSIZE.
@@ -964,6 +867,9 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     #ifdef DISTNUMPY_DEBUG
         printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
+
+    operation_flush();
+
     rm_dndview(uid);
 
 } /* do_DESTROY_ARRAY */
@@ -995,6 +901,8 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
                                       (long)orgview->slice[i].nsteps);
         printf("\n");
     #endif
+
+    operation_flush();
 
     //Add the base to the new view.
     newview->base = orgview->base;
@@ -1051,6 +959,8 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
             printf(")\n");
         }
     #endif
+
+    operation_flush();
 
     if(myrank == 0)
     {
@@ -1136,15 +1046,15 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 
 } /* do_PUTGET_ITEM */
 
+
 /*===================================================================
  *
  * Message handler for UFUNC.
  * Private.
  */
-static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
-                     int nout_arys, int appropriate_function,
-                     int scalar_dtype, int scalar_size,
-                     char* scalar, char* op)
+static void do_UFUNC(int narys, int nout,
+                     dndview *views[NPY_MAXARGS], PyObject *PyOp,
+             PyUFuncGenericFunction func, void *funcdata)
 {
     npy_intp i, j, s, n, v;
     npy_intp coord[NPY_MAXDIMS], bcoord[NPY_MAXDIMS];
@@ -1158,65 +1068,19 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     dndvb vblocks[NPY_MAXARGS];
     PyObject *arrays[NPY_MAXARGS];//PyArrays objects.
     npy_intp ones[NPY_MAXDIMS];
-
-
-    //Get arrray structs.
-    dndview *views[NPY_MAXARGS];
-    int nin = narys - nout_arys;
-
-    if(nout_arys != 1)
-    {
-        fprintf(stderr, "At the moment distnumpy only supports "
-                        "ufunc with one output array\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-
-    for(i=0; i<narys; i++)
-        if(arylist[i])
-        {
-            views[i] = get_dndview(arylist[i]);
-        }
-        else
-        {    //Create a dummy view for the scalar.
-            views[i] = malloc(sizeof(dndview));
-            views[i]->uid = 0;
-            views[i]->nslice = 0;
-            views[i]->base = malloc(sizeof(dndarray));
-            views[i]->base->ndims = 0;
-            views[i]->ndims = 0;
-            views[i]->base->dtype = scalar_dtype;
-            views[i]->base->nelements = 1;
-            views[i]->base->data = scalar;
-            views[i]->base->elsize = scalar_size;
-        }
-
     dndview *lastary = views[narys-1];
+    int nin = narys - nout;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
-        printf("UFUNC (%s) on - in:", op);
+        printf("UFUNC on - in:");
         for(i=0; i<nin; i++)
             printf(" %ld", (long)views[i]->uid);
         printf(" out:");
         for(i=nin; i<narys; i++)
             printf(" %ld", (long)views[i]->uid);
-        printf(", scalar-size: %d\n", scalar_size);
+        printf("\n");
     #endif
-
-    //Get Python function.
-    PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
-    assert(PyOp != NULL);
-    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
-    if(appropriate_function < 0)
-    {
-        fprintf(stderr, "do_UFUNC was called on a view but no "
-                        "appropriate_function was provided\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-    PyUFuncGenericFunction ufunc_function =
-                           ufunc_obj->functions[appropriate_function];
-    void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
-
 
     //Compute global start coordinate for the output array.
     rank2cart(lastary->ndims, myrank, pcoord);
@@ -1371,7 +1235,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 //                NPY_BEHAVED, NULL);
             }
 
-            apply_ufunc(narys, arrays, ufunc_function, ufunc_funcdata);
+            apply_ufunc(narys, arrays, func, funcdata);
 
             //Iterate coord one chunk.
             for(i=lastary->ndims-1; i>=0; i--)
@@ -1460,6 +1324,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         Py_DECREF(arrays[i]);
         if(views[i]->base->ndims == 0)//Scalar dummy.
         {
+            free(views[i]->base->data);
             free(views[i]->base);
             free(views[i]);
         }
@@ -1491,6 +1356,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         fprintf(stderr, "UFUNC_REDUCE: unknown operator: %s\n", op);
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
+
+    operation_flush();
 
     //At the moment we don't support views.
     if(in_view->alterations != 0)
@@ -1709,6 +1576,8 @@ static void do_ZEROFILL(dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
+    operation_flush();
+
     memset(view->base->data, 0, view->base->nelements *
                                 view->base->elsize);
 } /* do_ZEROFILL */
@@ -1730,6 +1599,8 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos,
         fprintf(stderr, "FILEIO with views not implemented\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
+
+    operation_flush();
 
     /* File access mode */
     int mode = 0;
@@ -1801,6 +1672,8 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
                "(%d, %d)\n",(long)in->uid, (long)out->uid, offset,
                             axis1, axis2);
     #endif
+
+    operation_flush();
 
     //Find process coord in output vector.
     rank2cart(1, myrank, &mypcoord);
@@ -1880,6 +1753,8 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                                                        (long)B->uid,
                                                        (long)C->uid);
     #endif
+
+    operation_flush();
 
     //Check if the views covers the whole array.
     if(A->alterations != 0 || B->alterations != 0 ||
@@ -2032,6 +1907,124 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     free(work1);
     free(temp);
 } /* do_MATMUL */
+
+
+/*===================================================================
+ *
+ * Execute all operations in the execution tree.
+ * Private.
+ */
+static void operation_flush(void)
+{
+    int i;
+    for(i=0; i<exec_tree_size; i++)
+    {
+       MPI_Barrier(MPI_COMM_WORLD);
+       do_UFUNC(exec_tree[i].narys,
+                exec_tree[i].nout,
+                exec_tree[i].arys,
+                exec_tree[i].PyOp,
+                exec_tree[i].func,
+                exec_tree[i].funcdata);
+    }
+    //Empty tree.
+    exec_tree_size = 0;
+} /* operation_flush */
+
+/*===================================================================
+ *
+ * Add a operation to the execution tree.
+ * Private.
+ */
+static void operation_add(int type, int narys, int nout,
+                          dndview *arys[NPY_MAXARGS], PyObject *PyOp,
+                          PyUFuncGenericFunction func, void *funcdata)
+{
+    //Append the operation to the execution tree.
+    exec_tree[exec_tree_size].type = type;
+    exec_tree[exec_tree_size].narys = narys;
+    exec_tree[exec_tree_size].nout = nout;
+    memcpy(exec_tree[exec_tree_size].arys, arys, narys*sizeof(dndview*));
+    exec_tree[exec_tree_size].PyOp = PyOp;
+    exec_tree[exec_tree_size].func = func;
+    exec_tree[exec_tree_size].funcdata = funcdata;
+    exec_tree_size++;
+
+    if(exec_tree_size == DNPY_EXEC_TREE_SIZE)//Check for overflow.
+       operation_flush();
+
+
+} /* operation_add */
+
+/*===================================================================
+ *
+ * Message registration for UFUNC.
+ * Private.
+ */
+static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
+                      int nout_arys, int appropriate_function,
+                      int scalar_dtype, int scalar_size,
+                      char* scalar, char* op)
+{
+    int i;
+    dndview *views[NPY_MAXARGS];
+
+    if(nout_arys != 1)
+    {
+        fprintf(stderr, "At the moment distnumpy only supports "
+                        "ufunc with one output array\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    for(i=0; i<narys; i++)
+        if(arylist[i])
+        {
+            views[i] = get_dndview(arylist[i]);
+        }
+        else
+        {    //Create a dummy view for the scalar.
+            views[i] = malloc(sizeof(dndview));
+            views[i]->uid = 0;
+            views[i]->nslice = 0;
+            views[i]->base = malloc(sizeof(dndarray));
+            views[i]->base->ndims = 0;
+            views[i]->ndims = 0;
+            views[i]->base->dtype = scalar_dtype;
+            views[i]->base->nelements = 1;
+            views[i]->base->data = malloc(scalar_size);
+            memcpy(views[i]->base->data, scalar, scalar_size);
+            views[i]->base->elsize = scalar_size;
+        }
+
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("Reg UFUNC (%s) on - in:", op);
+        for(i=0; i<narys-nout_arys; i++)
+            printf(" %ld", (long)views[i]->uid);
+        printf(" out:");
+        for(i=narys-nout_arys; i<narys; i++)
+            printf(" %ld", (long)views[i]->uid);
+        printf(", scalar-size: %d\n", scalar_size);
+    #endif
+
+    //Get Python function.
+    PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
+    assert(PyOp != NULL);
+    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
+    if(appropriate_function < 0)
+    {
+        fprintf(stderr, "do_UFUNC was called on a view but no "
+                        "appropriate_function was provided\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+    PyUFuncGenericFunction ufunc_function =
+                           ufunc_obj->functions[appropriate_function];
+    void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
+
+    operation_add(DNPY_UFUNC, narys, nout_arys, views, PyOp,
+                  ufunc_function, ufunc_funcdata);
+
+} /* reg_UFUNC */
 
 
 /*NUMPY_API
@@ -2243,7 +2236,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
 
     do_CREATE_VIEW(orgview->uid, &newview);
     return uid_count;
-} /* dnumpy_destroy_dndarray */
+} /* dnumpy_create_dndview */
 
 
 /*NUMPY_API
@@ -2382,8 +2375,8 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC((npy_intp*)(((char*)(msg+6))+msg[5]), msg[1], msg[2], msg[3],
-             msg[4], msg[5], (char*) (msg+6), op);
+    reg_UFUNC((npy_intp*)(((char*)(msg+6))+msg[5]), msg[1], msg[2], msg[3],
+              msg[4], msg[5], (char*) (msg+6), op);
     return 0;
 } /* dnumpy_ufunc */
 
@@ -2832,7 +2825,7 @@ dnumpy_master_slave_split()
                 t1 = msg_data+sizeof(npy_intp)*5;
                 t2 = t1+d5;
                 t3 = t2+d1*sizeof(npy_intp);
-                do_UFUNC((npy_intp *)t2,d1,d2,d3,d4,d5,t1,t3);
+                reg_UFUNC((npy_intp *)t2,d1,d2,d3,d4,d5,t1,t3);
                 break;
             case DNPY_UFUNC_REDUCE:
                 d1 = *((npy_intp*)msg_data);

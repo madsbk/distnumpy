@@ -1,7 +1,7 @@
 import numpy as np
 import dnumpytest
 
-def sor(W,H,Dist):
+def jacobi_sencil(W,H,Dist):
     full = np.zeros((W+2,H+2), dtype=np.double, dist=Dist)
     work = np.zeros((W,H), dtype=np.double, dist=Dist)
     diff = np.zeros((W,H), dtype=np.double, dist=Dist)
@@ -24,21 +24,21 @@ def sor(W,H,Dist):
     i=0
     while epsilon<delta:
       i+=1
-      np.add(cells,0,work)
+      work[:] = cells
       work += up
       work += left
       work += right
       work += down
-      work *= 0.2                            
+      work *= 0.2
       np.subtract(cells,work,diff)
       diff=np.absolute(diff)
       delta=np.sum(diff)
-      np.add(work,0,cells)
+      cells[:] = work
     return cells
 
 def run():
-    Seq = sor(5,5,False)
-    Par = sor(5,5,True)
+    Seq = jacobi_sencil(5,5,False)
+    Par = jacobi_sencil(5,5,True)
 
     if not dnumpytest.array_equal(Seq,Par):
         return (True, "Uncorrect result matrix\n")
