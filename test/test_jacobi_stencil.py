@@ -1,23 +1,21 @@
 import numpy as np
 import dnumpytest
 
-def jacobi_sencil(W,H,Dist):
-    full = np.zeros((W+2,H+2), dtype=np.double, dist=Dist)
-    work = np.zeros((W,H), dtype=np.double, dist=Dist)
-    diff = np.zeros((W,H), dtype=np.double, dist=Dist)
+def jacobi_sencil(H,W,Dist):
+    full = np.zeros((H+2,W+2), dtype=np.double, dist=Dist)
+    work = np.zeros((H,W), dtype=np.double, dist=Dist)
+    diff = np.zeros((H,W), dtype=np.double, dist=Dist)
 
-    cells = full[1:W+1,1:H+1]
-    up = full[1:W+1, 0:H]
-    left = full[0:W, 1:H+1]
-    right = full[2:W+2, 1:H+1]
-    down = full[1:W+1, 2:H+2]
+    cells = full[1:-1, 1:-1]
+    up    = full[1:-1, 0:-2]
+    left  = full[0:-2, 1:-1]
+    right = full[2:  , 1:-1]
+    down  = full[1:-1, 2:  ]
 
-    for i in range(1,W+1):
-      full[i][0]=-273.15
-      full[i][-1]=-273.15
-
-    full[0,:] += 40.0
-    full[W+1,:] += -273.13
+    full[:,0]  += -273.15
+    full[:,-1] += -273.15
+    full[0,:]  +=  40.0
+    full[-1,:] += -273.13
 
     epsilon=W*H*0.002
     delta=epsilon+1
