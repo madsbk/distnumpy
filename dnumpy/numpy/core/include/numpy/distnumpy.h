@@ -35,14 +35,17 @@ typedef struct {
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*10
 
-//Maximum size of the execution tree
-#define DNPY_EXEC_TREE_SIZE 10
+//Maximum size of the Operation DAG
+#define DNPY_DAG_OP_MAXSIZE 10
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
 
 //Default blocksize
 #define DNPY_BLOCKSIZE 2
+
+//Maximum number of dependency per sub-view-block.
+#define DNPY_MAX_DEPENDENCY 10
 
 //Operation types
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
@@ -93,44 +96,6 @@ typedef struct
     npy_intp nsteps;
 } dndslice;
 
-//Type describing a sub-section of a view block.
-typedef struct
-{
-    //The rank of the MPI-process that owns this sub-block.
-    int rank;
-    //Start index (one per base-dimension).
-    npy_intp start[NPY_MAXDIMS];
-    //Number of elements (one per base-dimension).
-    npy_intp nsteps[NPY_MAXDIMS];
-    //Number of elements to next dimension (one per base-dimension).
-    npy_intp stride[NPY_MAXDIMS];
-
-    //The MPI datatype for the view.
-    MPI_Datatype comm_dtype_view;
-    npy_intp offset_view;
-    //The MPI datatype and offset for the buffer (in bytes).
-    MPI_Datatype comm_dtype_buf;
-    npy_intp offset_buf;
-
-    //Number of elements in this sub-block.
-    npy_intp nelem;
-    //Pointer to data. NULL if data needs to be fetched.
-    char *data;
-} dndsvb;
-
-//Type describing a view block.
-typedef struct
-{
-    //The id of the view block.
-    npy_intp id;
-    //All sub-view-blocks in this view block (Row-major).
-    dndsvb *sub;
-    //Number of sub-view-blocks.
-    npy_intp nsub;
-    //Number of sub-view-blocks in each dimension.
-    npy_intp svbdims[NPY_MAXDIMS];
-} dndvb;
-
 //View-alteration flags.
 #define DNPY_NDIMS    0x001
 #define DNPY_STEP     0x002
@@ -173,13 +138,68 @@ typedef struct
     int nout;
     //List of array views involved.
     dndview *arys[NPY_MAXARGS];
-    //The operation described as a Python, function
-    //and data pointer.
-    PyObject *PyOp;
+    //The operation described as a function and a data pointer.
     PyUFuncGenericFunction func;
     void *funcdata;
 } dndop;
 
+//Type describing an array view update.
+//This type is used for updating an existing PyArray Object to
+//repesent a new memory area.
+typedef struct
+{
+    npy_intp dims[NPY_MAXDIMS];
+    npy_intp strides[NPY_MAXDIMS];
+    void *bytes;
+} dndview_update;
 
+//Type describing the applying of an array operation on main memory.
+typedef struct
+{
+    //The operation to apply, which also contains the number of
+    //array views involved.
+    dndop *op;
+    //List of array view updates involved.
+    dndview_update viewup[NPY_MAXARGS];
+} dndapply;
+
+//Type describing a sub-section of a view block.
+typedef struct
+{
+    //The rank of the MPI-process that owns this sub-block.
+    int rank;
+    //Start index (one per base-dimension).
+    npy_intp start[NPY_MAXDIMS];
+    //Number of elements (one per base-dimension).
+    npy_intp nsteps[NPY_MAXDIMS];
+    //Number of elements to next dimension (one per base-dimension).
+    npy_intp stride[NPY_MAXDIMS];
+    //The MPI datatype for the view.
+    MPI_Datatype comm_dtype_view;
+    npy_intp offset_view;
+    //The MPI datatype and offset for the buffer (in bytes).
+    MPI_Datatype comm_dtype_buf;
+    npy_intp offset_buf;
+    //Number of elements in this sub-block.
+    npy_intp nelem;
+    //Pointer to data. NULL if data needs to be fetched.
+    char *data;
+    //List of ufunc applies that depend on this sub-view-block.
+    npy_intp apply_ndepend;
+    dndapply *apply_depend[DNPY_MAX_DEPENDENCY];
+} dndsvb;
+
+//Type describing a view block.
+typedef struct
+{
+    //The id of the view block.
+    npy_intp id;
+    //All sub-view-blocks in this view block (Row-major).
+    dndsvb *sub;
+    //Number of sub-view-blocks.
+    npy_intp nsub;
+    //Number of sub-view-blocks in each dimension.
+    npy_intp svbdims[NPY_MAXDIMS];
+} dndvb;
 
 #endif

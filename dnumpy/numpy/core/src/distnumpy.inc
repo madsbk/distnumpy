@@ -26,9 +26,9 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
-//The execution tree and its current size.
-static dndop exec_tree[DNPY_EXEC_TREE_SIZE];
-static npy_intp exec_tree_size=0;
+//The Operation DAG and its current size.
+static dndop dag_op[DNPY_DAG_OP_MAXSIZE];
+static npy_intp dag_op_size=0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -36,8 +36,8 @@ static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 
-//Prototype for operation_flush.
-static void operation_flush(void);
+//Prototype for dag_op_flush.
+static void dag_op_flush(void);
 
 /*===================================================================
  *
@@ -491,6 +491,7 @@ comm_vblock(int Direction, dndview *view, dndvb *vblock)
     }
 } /* comm_vblock */
 
+
 /*===================================================================
  *
  * Deallocate the specified view block.
@@ -868,7 +869,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
         printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
 
-    operation_flush();
+    dag_op_flush();
 
     rm_dndview(uid);
 
@@ -902,7 +903,7 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
         printf("\n");
     #endif
 
-    operation_flush();
+    dag_op_flush();
 
     //Add the base to the new view.
     newview->base = orgview->base;
@@ -960,7 +961,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         }
     #endif
 
-    operation_flush();
+    dag_op_flush();
 
     if(myrank == 0)
     {
@@ -1052,9 +1053,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
  * Message handler for UFUNC.
  * Private.
  */
-static void do_UFUNC(int narys, int nout,
-                     dndview *views[NPY_MAXARGS], PyObject *PyOp,
-             PyUFuncGenericFunction func, void *funcdata)
+static void do_UFUNC(dndop *operation)
 {
     npy_intp i, j, s, n, v;
     npy_intp coord[NPY_MAXDIMS], bcoord[NPY_MAXDIMS];
@@ -1068,8 +1067,16 @@ static void do_UFUNC(int narys, int nout,
     dndvb vblocks[NPY_MAXARGS];
     PyObject *arrays[NPY_MAXARGS];//PyArrays objects.
     npy_intp ones[NPY_MAXDIMS];
-    dndview *lastary = views[narys-1];
+
+    dndview **views = operation->arys;
+    int narys = operation->narys;
+    int nout = operation->nout;
+    PyUFuncGenericFunction func = operation->func;
+    void *funcdata = operation->funcdata;
     int nin = narys - nout;
+
+    dndview *lastary = views[narys-1];
+
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -1235,6 +1242,9 @@ static void do_UFUNC(int narys, int nout,
                 //                NPY_BEHAVED, NULL);
             }
 
+
+            //dag_svb_add(narys, svbs, arrays, func, funcdata)
+
             apply_ufunc(narys, arrays, func, funcdata);
 
             //Iterate coord one chunk.
@@ -1318,7 +1328,6 @@ static void do_UFUNC(int narys, int nout,
     }
 
     //Clean up
-    Py_DECREF(PyOp);
     for(i=0; i<narys; i++)
     {
         Py_DECREF(arrays[i]);
@@ -1357,7 +1366,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    operation_flush();
+    dag_op_flush();
 
     //At the moment we don't support views.
     if(in_view->alterations != 0)
@@ -1576,7 +1585,7 @@ static void do_ZEROFILL(dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    operation_flush();
+    dag_op_flush();
 
     memset(view->base->data, 0, view->base->nelements *
                                 view->base->elsize);
@@ -1600,7 +1609,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    operation_flush();
+    dag_op_flush();
 
     /* File access mode */
     int mode = 0;
@@ -1673,7 +1682,7 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
                             axis1, axis2);
     #endif
 
-    operation_flush();
+    dag_op_flush();
 
     //Find process coord in output vector.
     rank2cart(1, myrank, &mypcoord);
@@ -1754,7 +1763,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                                                        (long)C->uid);
     #endif
 
-    operation_flush();
+    dag_op_flush();
 
     //Check if the views covers the whole array.
     if(A->alterations != 0 || B->alterations != 0 ||
@@ -1911,50 +1920,43 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
 
 /*===================================================================
  *
- * Execute all operations in the execution tree.
+ * Execute all operations in the Operation DAG.
  * Private.
  */
-static void operation_flush(void)
+static void dag_op_flush(void)
 {
     int i;
-    for(i=0; i<exec_tree_size; i++)
+    for(i=0; i<dag_op_size; i++)
     {
        MPI_Barrier(MPI_COMM_WORLD);
-       do_UFUNC(exec_tree[i].narys,
-                exec_tree[i].nout,
-                exec_tree[i].arys,
-                exec_tree[i].PyOp,
-                exec_tree[i].func,
-                exec_tree[i].funcdata);
+       do_UFUNC(&dag_op[i]);
     }
     //Empty tree.
-    exec_tree_size = 0;
-} /* operation_flush */
+    dag_op_size = 0;
+} /* dag_op_flush */
 
 /*===================================================================
  *
- * Add a operation to the execution tree.
+ * Add a operation to the Operation DAG.
  * Private.
  */
-static void operation_add(int type, int narys, int nout,
-                          dndview *arys[NPY_MAXARGS], PyObject *PyOp,
+static void dag_op_add(int type, int narys, int nout,
+                          dndview *arys[NPY_MAXARGS],
                           PyUFuncGenericFunction func, void *funcdata)
 {
     //Append the operation to the execution tree.
-    exec_tree[exec_tree_size].type = type;
-    exec_tree[exec_tree_size].narys = narys;
-    exec_tree[exec_tree_size].nout = nout;
-    memcpy(exec_tree[exec_tree_size].arys, arys, narys*sizeof(dndview*));
-    exec_tree[exec_tree_size].PyOp = PyOp;
-    exec_tree[exec_tree_size].func = func;
-    exec_tree[exec_tree_size].funcdata = funcdata;
-    exec_tree_size++;
+    dag_op[dag_op_size].type = type;
+    dag_op[dag_op_size].narys = narys;
+    dag_op[dag_op_size].nout = nout;
+    memcpy(dag_op[dag_op_size].arys, arys, narys*sizeof(dndview*));
+    dag_op[dag_op_size].func = func;
+    dag_op[dag_op_size].funcdata = funcdata;
+    dag_op_size++;
 
-    if(exec_tree_size == DNPY_EXEC_TREE_SIZE)//Check for overflow.
-       operation_flush();
+    if(dag_op_size == DNPY_DAG_OP_MAXSIZE)//Check for overflow.
+       dag_op_flush();
 
-
-} /* operation_add */
+} /* dag_op_add */
 
 /*===================================================================
  *
@@ -2021,8 +2023,10 @@ static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                            ufunc_obj->functions[appropriate_function];
     void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
 
-    operation_add(DNPY_UFUNC, narys, nout_arys, views, PyOp,
-                  ufunc_function, ufunc_funcdata);
+    dag_op_add(DNPY_UFUNC, narys, nout_arys, views,
+               ufunc_function, ufunc_funcdata);
+
+    Py_DECREF(PyOp);
 
 } /* reg_UFUNC */
 
