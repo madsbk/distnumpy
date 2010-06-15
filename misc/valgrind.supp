@@ -127,12 +127,12 @@
   fun:*
   fun:PyDict_SetItemString
 }
-{                                                                               
+{
    Python leak (ignore all memory allocated by python itself....)
-   Memcheck:Leak                                                                
-   fun:malloc                                                                   
-   fun:_PyObject_GC_Malloc                                                      
-   fun:PyType_GenericAlloc  
+   Memcheck:Leak
+   fun:malloc
+   fun:_PyObject_GC_Malloc
+   fun:PyType_GenericAlloc
 }
 {
   Python leak (ignore all memory allocated by python itself....)
@@ -233,7 +233,7 @@
    fun:PyString_FromString
    ...
    fun:import_submodule
-   
+
 }
 {
    From NumPy 1.3.0 (python 2.6)
@@ -516,4 +516,19 @@
    fun:PyImport_ImportModuleLevel
    fun:builtin___import__
 }
-
+{
+   From DistNumPy (python 2.6).
+   Memcheck:Leak
+   fun:malloc
+   fun:fill_free_list
+   fun:PyInt_FromLong
+   fun:PyLong_FromVoidPtr
+   fun:py_dl_open
+   fun:PyCFunction_Call
+   fun:call_function
+   fun:PyEval_EvalFrameEx
+   fun:PyEval_EvalCodeEx
+   fun:function_call
+   fun:PyObject_Call
+   fun:instancemethod_call
+}
