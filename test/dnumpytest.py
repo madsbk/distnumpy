@@ -64,9 +64,9 @@ if __name__ == "__main__":
                 r1 = sys.gettotalrefcount()
                 try:
                     (err, msg) = m.run()
-                except Exception as errer:
+                except:
                     err = True
-                    msg = "Error message: %s"%errer
+                    msg = "Error message: %s"%sys.exc_info()[1]
                 r2 = sys.gettotalrefcount()
                 if r2 != r1:
                     print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
