@@ -271,7 +271,7 @@ PyArray_Ravel(PyArrayObject *a, NPY_ORDER fortran)
     //with a distributed array.
     if(PyArray_ISDISTRIBUTED(a))
         return PyArray_Flatten(a, fortran);
-    
+
     newdim.ptr = val;
     if (!fortran && PyArray_ISCONTIGUOUS(a)) {
         return PyArray_Newshape(a, &newdim, PyArray_CORDER);
@@ -483,7 +483,7 @@ PyArray_Flatten(PyArrayObject *a, NPY_ORDER order)
     if (ret == NULL) {
         return NULL;
     }
-                               
+
     /* DISTNUMPY */
     if(PyArray_ISDISTRIBUTED(a))
     {
@@ -498,7 +498,7 @@ PyArray_Flatten(PyArrayObject *a, NPY_ORDER order)
             data += PyArray_ITEMSIZE(a);
 
             //Iterate coords one element.
-            for(j = PyArray_NDIM(a)-1; j >= 0; j--) 
+            for(j = PyArray_NDIM(a)-1; j >= 0; j--)
             {
                 if(++coord[j] >= PyArray_DIM(a,j))
                     coord[j] = 0;
@@ -778,7 +778,7 @@ PyArray_Newshape(PyArrayObject *self, PyArray_Dims *newdims,
                         "distributed array is not implemented\n");
         return NULL;
     }
-    
+
     /*  Quick check to make sure anything actually needs to be done */
     if (n == self->nd) {
         same = TRUE;
@@ -1753,7 +1753,7 @@ PyArray_Diagonal(PyArrayObject *self, int offset, int axis1, int axis2)
     /* DISTNUMPY */
     if(PyArray_ISDISTRIBUTED(self))
     {
-        return dnumpy_diagonal(PyArray_DNDUID(self), offset, axis1, 
+        return dnumpy_diagonal(PyArray_DNDUID(self), offset, axis1,
                                axis2);
     }
 
@@ -1808,7 +1808,7 @@ PyArray_Diagonal(PyArrayObject *self, int offset, int axis1, int axis2)
         if (a == NULL) {
             Py_DECREF(indices);
             return NULL;
-        } 
+        }
         ret = PyObject_GetItem(a, indices);
         Py_DECREF(a);
         Py_DECREF(indices);
@@ -2238,6 +2238,14 @@ PyArray_Transpose(PyArrayObject *ap, PyArray_Dims *permute)
     intp i, n;
     intp permutation[MAX_DIMS], reverse_permutation[MAX_DIMS];
     PyArrayObject *ret = NULL;
+
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(ap))
+    {
+        PyErr_SetString(PyExc_ValueError,
+                "Transpose is not supported for distributed arrays.");
+        return NULL;
+    }
 
     if (permute == NULL) {
         n = ap->nd;
@@ -2681,7 +2689,7 @@ PyArray_Choose(PyArrayObject *ip, PyObject *op, PyArrayObject *ret,
     if (ap == NULL) {
         goto fail;
     }
-    /* Broadcast all arrays to each other, index array at the end. */ 
+    /* Broadcast all arrays to each other, index array at the end. */
     multi = (PyArrayMultiIterObject *)
     PyArray_MultiIterFromObjects((PyObject **)mps, n, 1, ap);
     if (multi == NULL) {
@@ -3608,7 +3616,7 @@ new_array_for_sum(PyArrayObject *ap1, PyArrayObject *ap2,
     PyTypeObject *subtype;
     double prior1, prior2;
     int flags = 0;
-    
+
     /*
      * Need to choose an output array that can hold a sum
      * -- use priority to determine which subtype.
@@ -3634,7 +3642,7 @@ new_array_for_sum(PyArrayObject *ap1, PyArrayObject *ap2,
         {
             PyErr_SetString(PyExc_RuntimeError, "Can't do the operation"
                      " on a distributed and a non-distributed array.");
-            return NULL;            
+            return NULL;
         }
     }
 
@@ -3838,16 +3846,16 @@ PyArray_MatrixProduct(PyObject *op1, PyObject *op2)
     {
         typenum = PyArray_TYPE(ret);
         if ((typenum != PyArray_DOUBLE && typenum != PyArray_CDOUBLE &&
-             typenum != PyArray_FLOAT && typenum != PyArray_CFLOAT) || 
-            ap1->nd != 2 || ap2->nd != 2) 
+             typenum != PyArray_FLOAT && typenum != PyArray_CFLOAT) ||
+            ap1->nd != 2 || ap2->nd != 2)
         {
             PyErr_SetString(PyExc_ValueError, "only 2-dim distributed "
                             "arrays of type float, double, cfloat & "
                             "cdouble are supported");
-            goto fail;   
+            goto fail;
         }
         dnumpy_zerofill(PyArray_DNDUID(ret));
-        dnumpy_matrix_multiplication(PyArray_DNDUID(ap1), 
+        dnumpy_matrix_multiplication(PyArray_DNDUID(ap1),
                                      PyArray_DNDUID(ap2),
                                      PyArray_DNDUID(ret));
         Py_DECREF(ap1);
@@ -6363,7 +6371,7 @@ _array_fromobject(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kws)
                                     /* DISTNUMPY */
                                     PyArray_BoolConverter, &dist)) {
         goto clean_type;
-    }   
+    }
 
     if (ndmin > NPY_MAXDIMS) {
         PyErr_Format(PyExc_ValueError,
@@ -6428,7 +6436,7 @@ _array_fromobject(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kws)
     /* DISTNUMPY */
     if(dist)
         flags |= DNPY_DISTRIBUTED;
-   
+
     ret = PyArray_CheckFromAny(op, type, 0, 0, flags, NULL);
 
  finish:
@@ -6637,7 +6645,7 @@ array_zeros(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
                                      PyArray_BoolConverter, &dist)) {
         goto fail;
     }
-    
+
     if (order == PyArray_FORTRANORDER) {
         flags |= NPY_FORTRAN;
     }
@@ -8402,7 +8410,7 @@ static struct PyMethodDef array_module_methods[] = {
         METH_VARARGS, NULL},
     {"dnumpy_init",
         (PyCFunction)dnumpy_master_slave_split,
-        METH_VARARGS, NULL},        
+        METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}                /* sentinel */
 };
 
