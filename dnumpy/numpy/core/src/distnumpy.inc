@@ -566,19 +566,33 @@ idx_v2s(const dndview *view, npy_intp vindex)
 
 /*===================================================================
  *
- * Apply the ufunc 'function' on 'arys'.
- * 'narys' are both input and output arrays.
+ * Apply the universal function decribed in 'apply'.
  * Private.
  */
 static void
-apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
-            PyUFuncGenericFunction function,
-            void *funcdata)
+apply_ufunc(dndapply *apply, PyObject *arys[NPY_MAXARGS])
 {
-    int j;
-    npy_intp *lastdims = PyArray_DIMS(arys[narys-1]);
-    npy_intp lastndim = PyArray_NDIM(arys[narys-1]);
+    int j, i;
     PyObject *iters[NPY_MAXARGS];
+    npy_intp *lastdims, lastndim;
+    int narys = apply->op->narys;
+
+    for(i=0; i<narys; i++)
+    {
+        //Scalars are already finished.
+        if(PyArray_NDIM(arys[i]) == 0)
+            continue;
+        npy_intp s = PyArray_NDIM(arys[i]) * sizeof(npy_intp);
+        memcpy(PyArray_DIMS(arys[i]), apply->viewup[i].dims, s);
+        memcpy(PyArray_STRIDES(arys[i]), apply->viewup[i].stride, s);
+        PyArray_BYTES(arys[i]) = apply->svb[i]->data +
+                                 apply->viewup[i].offset;
+    }
+
+    lastdims = PyArray_DIMS(arys[narys-1]);
+    lastndim = PyArray_NDIM(arys[narys-1]);
+
+
 
     //Create broadcasted iterators.
     for(j=0; j<narys; j++)
@@ -613,7 +627,7 @@ apply_ufunc(int narys, PyObject *arys[NPY_MAXARGS],
         for(j=0; j<narys; j++)
             tdata[j] = PyArray_ITER_DATA(iters[j]);
         //Apply operation.
-        function(tdata, &lastdims[axis], steps, funcdata);
+        apply->op->func(tdata, &lastdims[axis], steps, apply->op->funcdata);
         //Go to next block.
         for(j=0; j<narys; j++)
             PyArray_ITER_NEXT(iters[j]);
@@ -1071,8 +1085,6 @@ static void do_UFUNC(dndop *operation)
     dndview **views = operation->arys;
     int narys = operation->narys;
     int nout = operation->nout;
-    PyUFuncGenericFunction func = operation->func;
-    void *funcdata = operation->funcdata;
     int nin = narys - nout;
 
     dndview *lastary = views[narys-1];
@@ -1149,6 +1161,9 @@ static void do_UFUNC(dndop *operation)
         int svb_notfinished = 1;
         while(svb_notfinished)
         {
+            dndapply *apply = malloc(sizeof(dndapply));
+            apply->op = operation;
+
             //Find current sub-view-block for all arrays.
             dndsvb *svbs[NPY_MAXARGS];
             for(v=0; v<narys; v++)
@@ -1240,12 +1255,16 @@ static void do_UFUNC(dndop *operation)
                 //                svbs[v]->data + offset,
                 //                views[v]->base->elsize,
                 //                NPY_BEHAVED, NULL);
+                memcpy(apply->viewup[v].dims, csdims, s);
+                memcpy(apply->viewup[v].stride, sstride, s);
+                apply->viewup[v].offset = offset;
+                apply->svb[v] = svbs[v];
+                //dag_svg_add(0, svbs[v], NULL);
             }
 
 
-            //dag_svb_add(narys, svbs, arrays, func, funcdata)
-
-            apply_ufunc(narys, arrays, func, funcdata);
+            apply_ufunc(apply, arrays);
+            //dag_svg_add(0, svbs[v], apply);
 
             //Iterate coord one chunk.
             for(i=lastary->ndims-1; i>=0; i--)
@@ -1295,6 +1314,7 @@ static void do_UFUNC(dndop *operation)
                         break;
                 }
             }
+            free(apply);
         }
         //Write vblocks to output arrays.
         for(v=nin; v<narys; v++)
@@ -1957,6 +1977,7 @@ static void dag_op_add(int type, int narys, int nout,
        dag_op_flush();
 
 } /* dag_op_add */
+
 
 /*===================================================================
  *
