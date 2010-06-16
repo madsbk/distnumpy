@@ -3036,6 +3036,14 @@ PyArray_Sort(PyArrayObject *op, int axis, NPY_SORTKIND which)
     char *ip;
     int i, n, m, elsize, orign;
 
+    /* DISTNUMPY */
+    if(PyArray_ISDISTRIBUTED(op))
+    {
+        PyErr_SetString(PyExc_ValueError,
+                "Sort is not supported for distributed arrays.");
+        return -1;
+    }
+
     n = op->nd;
     if ((n == 0) || (PyArray_SIZE(op) == 1)) {
         return 0;
