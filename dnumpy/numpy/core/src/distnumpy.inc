@@ -751,26 +751,98 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
  */
 static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 {
-    /* Setup DARRAY parameters */
-    int i;
-    int distribs[view->base->ndims];
-    int dargs[view->base->ndims];
-    int dims[view->base->ndims];
+    /* Get cartesian coords */
+    int coords[NPY_MAXDIMS];
+    rank2cart(view->base->ndims, myrank, coords);
+    int *stride = cart_dim_sizes[view->base->ndims-1];
 
-    for(i = 0; i < view->base->ndims; i++) {
-        distribs[i] = MPI_DISTRIBUTE_CYCLIC;
-        dargs[i] = blocksize;
-        dims[i] = view->base->dims[i];
+    /* Counters */
+    int i, j, n, extent;
+
+    /* Convenience */
+    int ndims = view->base->ndims;
+
+    /* Holds arrays of displacements and blocklengths for each dimension */
+    int *displacements[ndims];
+    int *blocklengths[ndims];
+
+    /* Copies for reverse enumeration */
+    int mydims[ndims];
+    int mylocalblockdims[ndims];
+    int mycoords[ndims];
+    int mystride[ndims];
+
+    /* We want to reverse the dimension enumeration for convenience */
+    i = 0;
+    for(n = ndims-1; n >= 0; n--) {
+        mydims[i] = view->base->dims[n];
+        mylocalblockdims[i] = view->base->localblockdims[n];
+        mycoords[i] = coords[n];
+        mystride[i++] = stride[n];
     }
 
-    /* Create and commit data type */
-    MPI_Type_create_darray(worldsize, myrank, view->base->ndims, dims,
-                           distribs, dargs,
-                           cart_dim_sizes[view->base->ndims-1], MPI_ORDER_C,
-                           view->base->mpi_dtype, dtype);
+    /* Allocate room for mylocalblockdims[n] elements in each dimension */
+    for(n = 0; n < ndims; n++) {
+        if(NULL == (displacements[n] = malloc(sizeof(int)*mylocalblockdims[n]))) {
+            fprintf(stderr, "Failed to allocate memory for displacements.\n");
+            return -1;
+        }
+        if(NULL == (blocklengths[n] = malloc(sizeof(int)*mylocalblockdims[n]))) {
+            fprintf(stderr, "Failed to allocate memory for block lengths.\n");
+            return -1;
+        }
+    }
+
+    /* Iterate over dimensions */
+    for(n = 0; n < ndims; n++) {
+        j = 0; // Reset internal counter
+
+        /* Iterate over a dimension to calculate displacements */
+        for(i = mycoords[n]*blocksize; i < mydims[n]; ) {
+            displacements[n][j] = i;
+
+            if(blocksize+i > mydims[n]) {
+                blocklengths[n][j] = mydims[n] % blocksize;
+            } else {
+                blocklengths[n][j] = blocksize;
+            }
+
+            i += mystride[n]*blocksize;
+            j++;
+        }
+    }
+
+    /* Stores derived data types */
+    MPI_Datatype derived_type[ndims];
+    MPI_Datatype tmp_type;
+
+    /* Setup derived data type for elements */
+    MPI_Type_dup(view->base->mpi_dtype, &(derived_type[0]));
+
+    /* Setup derived data types for rest of dimensions */
+    for(n = 1; n <= ndims; n++) {
+        extent = view->base->elsize;
+        for(i = 0; i < n; i++) {
+            extent *= mydims[i];
+        }
+
+        MPI_Type_indexed(mylocalblockdims[n-1], blocklengths[n-1],
+                         displacements[n-1], derived_type[n-1], &tmp_type);
+        if(n < ndims) {
+            MPI_Type_create_resized(tmp_type, 0, extent, &derived_type[n]);
+        } else {
+            MPI_Type_create_resized(tmp_type, 0, extent, dtype);
+        }
+    }
+
+    /* Free allocated data */
+    MPI_Type_free(&tmp_type);
+    for(n = 1; n < ndims; n++) {
+        MPI_Type_free(&derived_type[n]);
+        free(displacements[n]);
+    }
 
     MPI_Type_commit(dtype);
-
     return 0;
 
 } /* create_mpi_dtype */
