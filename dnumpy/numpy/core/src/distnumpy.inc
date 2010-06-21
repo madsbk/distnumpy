@@ -1302,6 +1302,13 @@ static void do_UFUNC(dndop *operation)
                 if(svbs[v]->rank == myrank)
                     for(i=views[v]->ndims-1; i>=0; i--)
                     {
+                        //PseudoIndex should have 0 in stride.
+                        if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
+                           PseudoIndex)
+                        {
+                            sstride[i] = 0;
+                            continue;
+                        }
                         sstride[i] = svbs[v]->stride[idx_v2b(views[v],i)] *
                                      views[v]->slice[idx_v2s(views[v],i)].step *
                                      views[v]->base->elsize;
@@ -1310,6 +1317,13 @@ static void do_UFUNC(dndop *operation)
                 else
                     for(i=views[v]->ndims-1; i>=0; i--)
                     {
+                        //PseudoIndex should have 0 in stride.
+                        if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
+                           PseudoIndex)
+                        {
+                            sstride[i] = 0;
+                            continue;
+                        }
                         sstride[i] = s;
                         offset += svboffset[v][i] * s;
                         s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
@@ -1356,9 +1370,10 @@ static void do_UFUNC(dndop *operation)
                 }
 
                 scoord[i] += sdims[i];
-                if(scoord[i] >= MIN(blocksize,
-                            lastary->slice[idx_v2s(lastary,i)].nsteps -
-                            coord[i] * blocksize))
+                n = lastary->slice[idx_v2s(lastary,i)].nsteps;
+                if(n == PseudoIndex)
+                    n = 0;
+                if(scoord[i] >= MIN(blocksize, n - coord[i] * blocksize))
                 {
                     //We a finished, if wrapping around.
                     if(i == 0)
