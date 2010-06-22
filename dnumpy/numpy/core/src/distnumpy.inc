@@ -1173,6 +1173,15 @@ static void do_UFUNC(dndop *operation)
         printf("\n");
     #endif
 
+    int dtype = views[0]->base->dtype;
+    for(v=1; v<narys; v++)
+        if(dtype != views[v]->base->dtype)
+        {
+            fprintf(stderr, "At the moment distnumpy only supports "
+                        "ufunc on arrays with identical datatypes\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+
     //Compute global start coordinate for the output array.
     rank2cart(lastary->ndims, myrank, pcoord);
     for(v=nin; v<narys; v++)
