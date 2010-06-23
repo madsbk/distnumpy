@@ -5,6 +5,7 @@ import sys
 import time
 import subprocess
 import os
+import getopt
 
 DataSetDir = os.path.join(os.path.join(\
              os.path.dirname(sys.argv[0]), "datasets"), "")
@@ -42,19 +43,35 @@ def random_list(dims):
 
 if __name__ == "__main__":
     pydebug = True
+    seed = time.time()
+    script_list = os.listdir(os.path.dirname(sys.argv[0]))
+
     try:
         sys.gettotalrefcount()
     except AttributeError:
         pydebug = False
+
     try:
-        seed = int(sys.argv[1])
-    except IndexError:
-        seed = time.time()
+        opts, args = getopt.getopt(sys.argv[1:],"s:f:",["seed=", "file="])
+    except getopt.GetoptError, err:
+        print str(err)
+        sys.exit(2)
+
+    for o, a in opts:
+        if o == "-s":
+            verbose = True
+        elif o in ("-s", "--seed"):
+            seed = int(a)
+        elif o in ("-f", "--file"):
+            script_list = [a]
+        else:
+            assert False, "unhandled option"
+
     random.seed(seed)
 
     print "*"*100
     print "*"*31, "Testing Distributed Numerical Python", "*"*31
-    for f in os.listdir(os.path.dirname(sys.argv[0])):
+    for f in script_list:
         if f.startswith("test_") and f.endswith("py"):
             m = f[:-3]#Remove ".py"
             m = __import__(m)
