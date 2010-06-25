@@ -69,9 +69,13 @@ if __name__ == "__main__":
 
     random.seed(seed)
 
+    script_list.append("test_sor.py")
+
+
     print "*"*100
     print "*"*31, "Testing Distributed Numerical Python", "*"*31
-    for f in script_list:
+    for i in xrange(len(script_list)):
+        f = script_list[i]
         if f.startswith("test_") and f.endswith("py"):
             m = f[:-3]#Remove ".py"
             m = __import__(m)
@@ -85,6 +89,8 @@ if __name__ == "__main__":
                     err = True
                     msg = "Error message: %s"%sys.exc_info()[1]
                 r2 = sys.gettotalrefcount()
+                if i == 0:
+                    r2 -= 6 #The first load has 6 extra references.
                 if r2 != r1:
                     print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
             else:
