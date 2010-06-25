@@ -12,11 +12,8 @@ def run():
             Cd = np.add.reduce(Ad,j)
             Cf = np.add.reduce(Af,j)
             if not dnumpytest.array_equal(Cd,Cf):
-                err = "Input A:\n %s\n Input B:\n%s\n"%(str(Af),str(Bf))
-                err += "The result from DistNumPy:\n%s\n"%str(Cd)
-                err += "The result from NumPy:\n%s\n"%str(Cf)
-                return (True, err)
+                raise Exception("Uncorrect result array\n")
     return (False, "")
 
 if __name__ == "__main__":
-    print run()
+    run()

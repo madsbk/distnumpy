@@ -87,8 +87,7 @@ def run():
     Par = SOR(10,10,True)
 
     if not dnumpytest.array_equal(Seq,Par):
-        return (True, "Uncorrect result matrix\n")
-    return (False, "")
+        raise Exception("Uncorrect result matrix\n")
 
 if __name__ == "__main__":
-    print run()
+    run()

@@ -44,7 +44,8 @@ def random_list(dims):
 if __name__ == "__main__":
     pydebug = True
     seed = time.time()
-    script_list = os.listdir(os.path.dirname(sys.argv[0]))
+    script_list = []
+    exclude_list = []
 
     try:
         sys.gettotalrefcount()
@@ -52,49 +53,52 @@ if __name__ == "__main__":
         pydebug = False
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:],"s:f:",["seed=", "file="])
+        opts, args = getopt.getopt(sys.argv[1:],"s:f:e:",["seed=", "file=", "exclude="])
     except getopt.GetoptError, err:
         print str(err)
         sys.exit(2)
-
     for o, a in opts:
         if o == "-s":
             verbose = True
         elif o in ("-s", "--seed"):
             seed = int(a)
         elif o in ("-f", "--file"):
-            script_list = [a]
+            script_list.append(a)
+        elif o in ("-e", "--exclude"):
+            exclude_list.append(a)
         else:
             assert False, "unhandled option"
 
+    if len(script_list) == 0:
+        script_list = os.listdir(os.path.dirname(sys.argv[0]))
+
     random.seed(seed)
-
-    script_list.append("test_sor.py")
-
 
     print "*"*100
     print "*"*31, "Testing Distributed Numerical Python", "*"*31
     for i in xrange(len(script_list)):
         f = script_list[i]
-        if f.startswith("test_") and f.endswith("py"):
+        if f.startswith("test_") and f.endswith("py")\
+           and f not in exclude_list:
             m = f[:-3]#Remove ".py"
             m = __import__(m)
             print "*"*100
             print "Testing %s"%f
+            err = False
+            msg = ""
             if pydebug:
+                r1 = 0; r2 = 0
                 r1 = sys.gettotalrefcount()
                 try:
-                    (err, msg) = m.run()
+                    m.run()
                 except:
                     err = True
                     msg = "Error message: %s"%sys.exc_info()[1]
                 r2 = sys.gettotalrefcount()
-                if i == 0:
-                    r2 -= 6 #The first load has 6 extra references.
                 if r2 != r1:
                     print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
             else:
-                (err, msg) = m.run()
+                m.run()
             if err:
                 print "Error in %s! Random seed: %d"%(f, seed)
                 print msg

@@ -15,14 +15,9 @@ def run():
         Bd = np.load(fname, dist=True)
 
         if not dnumpytest.array_equal(Bf,Bd):
-            err = "Input array:\n %s\n"%str(A)
-            err += "The loaded array from DistNumPy:\n%s\n"%str(Bd)
-            err += "The loaded array from NumPy:\n%s\n"%str(Bf)
             subprocess.check_call(('rm %s'%fname), shell=True)
-            return (True, err)
+            raise Exception("Uncorrect result array\n")
         subprocess.check_call(('rm %s'%fname), shell=True)
-    return (False, "")
 
 if __name__ == "__main__":
-    (err,msg) = run()
-    print msg
+    run()

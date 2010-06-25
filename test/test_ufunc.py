@@ -27,10 +27,7 @@ def run():
         Cd[1:] = Cd[:-1]
         Cf[1:] = Cf[:-1]
         if not dnumpytest.array_equal(Cd,Cf):
-            err = "Input A:\n %s\n Input B:\n%s\n"%(str(Af),str(Bf))
-            err += "The result from DistNumPy:\n%s\n"%str(Cd)
-            err += "The result from NumPy:\n%s\n"%str(Cf)
-            return (True, err)
+            raise Exception("Uncorrect result array\n")
 
     for i in xrange(3,max_ndim+3):
         src = dnumpytest.random_list([i,i,i])
@@ -41,12 +38,7 @@ def run():
         Cd = Ad[::2, ::2, ::2] + Bd[::2, ::2, ::2] + Ad[::2,1,2]
         Cf = Af[::2, ::2, ::2] + Bf[::2, ::2, ::2] + Af[::2,1,2]
         if not dnumpytest.array_equal(Cd,Cf):
-            err = "Input A:\n %s\n Input B:\n%s\n"%(str(Af),str(Bf))
-            err += "The result from DistNumPy:\n%s\n"%str(Cd)
-            err += "The result from NumPy:\n%s\n"%str(Cf)
-            return (True, err)
-
-    return (False, "")
+            raise Exception("Uncorrect result array\n")
 
 if __name__ == "__main__":
-    print run()
+    run()

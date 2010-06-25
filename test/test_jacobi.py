@@ -32,15 +32,14 @@ def run():
         import zlib
     except ImportError:
         return (True, "Test ignored since zlib was not available.\n")
-    
+
     A = load("%sJacobi_Amatrix.npy"%dnumpytest.DataSetDir, dist=True)
     B = load("%sJacobi_Bvector.npy"%dnumpytest.DataSetDir, dist=True)
     C = load("%sJacobi_Cvector.npy"%dnumpytest.DataSetDir, dist=True)
     result = jacobi(A,B)
 
     if not dnumpytest.array_equal(C,result):
-        return (True, "Uncorrect result vector\n")
-    return (False, "")
+        raise Exception("Uncorrect result vector\n")
 
 if __name__ == "__main__":
-    print run()
+    run()

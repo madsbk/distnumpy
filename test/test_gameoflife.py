@@ -39,7 +39,7 @@ def gameoflife(W,H,ITER,DIST,random_state):
         neighbors += mr
         neighbors += ll
         neighbors += lm
-        neighbors += lr                            
+        neighbors += lr
         # extract live cells neighbors
         np.multiply(neighbors, cells, live)
         # find all living cells among the already living
@@ -48,7 +48,7 @@ def gameoflife(W,H,ITER,DIST,random_state):
         # merge living cells into 'live'
         np.bitwise_or(live, live2, live)
         # extract dead cell neighbors
-        np.equal(cells, 0, dead) 
+        np.equal(cells, 0, dead)
         dead *= neighbors
         np.equal(dead,ALIVE,dead)
         # make sure all threads have read their values
@@ -59,10 +59,8 @@ def run():
     random_state = random.getstate()
     Seq = gameoflife(100,100,5,False,random_state)
     Par = gameoflife(100,100,5,True,random_state)
-
     if not dnumpytest.array_equal(Seq,Par):
-        return (True, "Uncorrect result matrix\n")
-    return (False, "")
-    
+        raise Exception("Uncorrect result matrix\n")
+
 if __name__ == "__main__":
-    print run()
+    run()
