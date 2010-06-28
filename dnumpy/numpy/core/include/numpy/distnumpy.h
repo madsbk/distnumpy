@@ -175,9 +175,10 @@ typedef struct
     int nout;
     //List of array views involved.
     dndview *arys[NPY_MAXARGS];
-    //The operation described as a function and a data pointer.
+    //The operation described as a function, a data and a Python pointer.
     PyUFuncGenericFunction func;
     void *funcdata;
+    PyObject *PyOp;
 } dndop;
 
 //Type describing an array view update.

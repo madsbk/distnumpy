@@ -582,7 +582,8 @@ apply_ufunc(dndapply *apply, PyObject *arys[NPY_MAXARGS])
         //Scalars are already finished.
         if(PyArray_NDIM(arys[i]) == 0)
             continue;
-        npy_intp s = PyArray_NDIM(arys[i]) * sizeof(npy_intp);
+
+        int s = PyArray_NDIM(arys[i]) * sizeof(npy_intp);
         memcpy(PyArray_DIMS(arys[i]), apply->viewup[i].dims, s);
         memcpy(PyArray_STRIDES(arys[i]), apply->viewup[i].stride, s);
         PyArray_BYTES(arys[i]) = apply->svb[i]->data +
@@ -592,7 +593,28 @@ apply_ufunc(dndapply *apply, PyObject *arys[NPY_MAXARGS])
     lastdims = PyArray_DIMS(arys[narys-1]);
     lastndim = PyArray_NDIM(arys[narys-1]);
 
-
+    if(apply->op->func == NULL)//Compatible Mode.
+    {
+        PyObject *tuple = PyTuple_New(narys);
+        for(i=0; i<narys; i++)
+        {
+            PyObject *tary = PyArray_New(&PyArray_Type,
+                                         PyArray_NDIM(arys[i]),
+                                         PyArray_DIMS(arys[i]),
+                                         PyArray_TYPE(arys[i]),
+                                         PyArray_STRIDES(arys[i]),
+                                         PyArray_DATA(arys[i]),
+                                         PyArray_ITEMSIZE(arys[i]),
+                                         NPY_BEHAVED, NULL);
+            assert(tary != NULL);
+            PyTuple_SET_ITEM(tuple, i, tary);
+        }
+        PyObject *t = PyObject_CallObject(apply->op->PyOp, tuple);
+        assert(t != NULL);
+        Py_DECREF(t);
+        Py_DECREF(tuple);
+        return;
+    }
 
     //Create broadcasted iterators.
     for(j=0; j<narys; j++)
@@ -1161,7 +1183,6 @@ static void do_UFUNC(dndop *operation)
 
     dndview *lastary = views[narys-1];
 
-
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         printf("UFUNC on - in:");
@@ -1172,15 +1193,6 @@ static void do_UFUNC(dndop *operation)
             printf(" %ld", (long)views[i]->uid);
         printf("\n");
     #endif
-
-    int dtype = views[0]->base->dtype;
-    for(v=1; v<narys; v++)
-        if(dtype != views[v]->base->dtype)
-        {
-            fprintf(stderr, "At the moment distnumpy only supports "
-                        "ufunc on arrays with identical datatypes\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
 
     //Compute global start coordinate for the output array.
     rank2cart(lastary->ndims, myrank, pcoord);
@@ -1454,6 +1466,7 @@ static void do_UFUNC(dndop *operation)
             free(views[i]);
         }
     }
+    Py_DECREF(operation->PyOp);
 } /* do_UFUNC */
 
 /*===================================================================
@@ -2057,8 +2070,9 @@ static void dag_op_flush(void)
  * Private.
  */
 static void dag_op_add(int type, int narys, int nout,
-                          dndview *arys[NPY_MAXARGS],
-                          PyUFuncGenericFunction func, void *funcdata)
+                       dndview *arys[NPY_MAXARGS],
+                       PyUFuncGenericFunction func, void *funcdata,
+                       PyObject *PyOp)
 {
     //Append the operation to the execution tree.
     dag_op[dag_op_size].type = type;
@@ -2067,6 +2081,7 @@ static void dag_op_add(int type, int narys, int nout,
     memcpy(dag_op[dag_op_size].arys, arys, narys*sizeof(dndview*));
     dag_op[dag_op_size].func = func;
     dag_op[dag_op_size].funcdata = funcdata;
+    dag_op[dag_op_size].PyOp = PyOp;
     dag_op_size++;
 
     if(dag_op_size == DNPY_DAG_OP_MAXSIZE)//Check for overflow.
@@ -2087,6 +2102,8 @@ static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 {
     int i;
     dndview *views[NPY_MAXARGS];
+    PyUFuncGenericFunction func = NULL;
+    void *funcdata = NULL;
 
     if(nout_arys != 1)
     {
@@ -2130,21 +2147,13 @@ static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
     assert(PyOp != NULL);
     PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
-    if(appropriate_function < 0)
+    if(appropriate_function >= 0)
     {
-        fprintf(stderr, "do_UFUNC was called on a view but no "
-                        "appropriate_function was provided\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
+        func = ufunc_obj->functions[appropriate_function];
+        funcdata = ufunc_obj->data[appropriate_function];
     }
-    PyUFuncGenericFunction ufunc_function =
-                           ufunc_obj->functions[appropriate_function];
-    void *ufunc_funcdata = ufunc_obj->data[appropriate_function];
-
-    dag_op_add(DNPY_UFUNC, narys, nout_arys, views,
-               ufunc_function, ufunc_funcdata);
-
-    Py_DECREF(PyOp);
-
+    dag_op_add(DNPY_UFUNC, narys, nout_arys, views, func, funcdata, 
+               PyOp);
 } /* reg_UFUNC */
 
 

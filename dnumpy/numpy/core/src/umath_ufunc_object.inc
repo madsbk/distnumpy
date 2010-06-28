@@ -1064,17 +1064,17 @@ construct_arrays(PyUFuncLoopObject *loop, PyObject *args, PyArrayObject **mps,
             context = NULL;
         }
         mps[i] = (PyArrayObject *)PyArray_FromAny(obj, NULL, 0, 0, 0, context);
-        Py_XDECREF(context);       
+        Py_XDECREF(context);
         if (mps[i] == NULL) {
             return -1;
         }
-        
+
         /* DISTNUMPY */
         if(PyArray_ISDISTRIBUTED(mps[i]))
             nin_dist++;
         if(mps[i]->nd)
             nin_scalars++;
-        
+
         arg_types[i] = PyArray_TYPE(mps[i]);
         if (!flexible && PyTypeNum_ISFLEXIBLE(arg_types[i])) {
             flexible = 1;
@@ -1135,9 +1135,9 @@ construct_arrays(PyUFuncLoopObject *loop, PyObject *args, PyArrayObject **mps,
 
     /* Select an appropriate function for these argument types. */
     /* DISTNUMPY need to save the function and funcdata id*/
-    loop->appropriate_function = select_types(loop->ufunc, arg_types, 
-                                              &(loop->function), 
-                                              &(loop->funcdata), 
+    loop->appropriate_function = select_types(loop->ufunc, arg_types,
+                                              &(loop->function),
+                                              &(loop->funcdata),
                                               scalars, typetup);
     if (loop->appropriate_function == -1) {
         return -1;
@@ -1879,8 +1879,12 @@ PyUFunc_GenericFunction(PyUFuncObject *self, PyObject *args, PyObject *kwds,
     for(i=0; i<self->nargs; i++)
         if(PyArray_ISDISTRIBUTED(mps[i]))
         {
+            int appropriate = loop->appropriate_function;
+            if(loop->meth == BUFFER_UFUNCLOOP)
+                appropriate = -1;//Force compatible mode.
+
             int ret = dnumpy_ufunc(mps, self->nargs, self->nout,
-                                self->name, loop->appropriate_function);
+                                   self->name, appropriate);
             //Cleanup and return.
             ufuncloop_dealloc(loop);
             return ret;
@@ -2377,7 +2381,7 @@ construct_reduce(PyUFuncObject *self, PyArrayObject **arr, PyArrayObject *out,
                 loop_i[j++] = (aar)->dimensions[i];
             }
         }
-        if (out == NULL) {           
+        if (out == NULL) {
             loop->ret = (PyArrayObject *)
                 PyArray_New(aar->ob_type, aar->nd-1, loop_i,
                             otype, NULL, NULL, 0,
@@ -2585,7 +2589,7 @@ PyUFunc_Reduce(PyUFuncObject *self, PyArrayObject *arr, PyArrayObject *out,
         ret = loop->ret;
         Py_INCREF(ret);
         ufuncreduce_dealloc(loop);
-        return (PyObject *)ret;   
+        return (PyObject *)ret;
     }
 
     NPY_LOOP_BEGIN_THREADS;
