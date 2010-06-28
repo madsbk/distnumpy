@@ -15,7 +15,7 @@ def kNN(src, dist):
     return compute_targets(base, targets)
 
 def run():
-    db_length = 1000
+    db_length = 100
     ndims = 64
     src = dnumpytest.random_list((db_length, ndims))
     Seq = kNN(src, False)
