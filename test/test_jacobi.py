@@ -28,11 +28,6 @@ def jacobi(A, B, tol=0.005):
     return h
 
 def run():
-    try:
-        import zlib
-    except ImportError:
-        return (True, "Test ignored since zlib was not available.\n")
-
     A = load("%sJacobi_Amatrix.npy"%dnumpytest.DataSetDir, dist=True)
     B = load("%sJacobi_Bvector.npy"%dnumpytest.DataSetDir, dist=True)
     C = load("%sJacobi_Cvector.npy"%dnumpytest.DataSetDir, dist=True)
