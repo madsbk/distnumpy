@@ -1349,10 +1349,6 @@ static void do_UFUNC(dndop *operation)
                         s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
                     }
                 //Apply update to PyArray object.
-                s = views[v]->ndims * sizeof(npy_intp);
-                memcpy(PyArray_DIMS(arrays[v]), csdims, s);
-                memcpy(PyArray_STRIDES(arrays[v]), sstride, s);
-                PyArray_BYTES(arrays[v]) = svbs[v]->data + offset;
                 //Which corresponds to the following:
                 //    PyArray_New(&PyArray_Type,
                 //                views[v]->ndims, csdims,
@@ -1360,11 +1356,11 @@ static void do_UFUNC(dndop *operation)
                 //                svbs[v]->data + offset,
                 //                views[v]->base->elsize,
                 //                NPY_BEHAVED, NULL);
+                s = views[v]->ndims * sizeof(npy_intp);
                 memcpy(apply->viewup[v].dims, csdims, s);
                 memcpy(apply->viewup[v].stride, sstride, s);
                 apply->viewup[v].offset = offset;
                 apply->svb[v] = svbs[v];
-                //dag_svg_add(0, svbs[v], NULL);
             }
 
             if(coord_owner == myrank)
