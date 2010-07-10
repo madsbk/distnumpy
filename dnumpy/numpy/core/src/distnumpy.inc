@@ -151,6 +151,7 @@ static int cart2rank(int ndims, const int coords[NPY_MAXDIMS])
     int i;
     for(i=0; i<cart_used_ndims[ndims-1]; i++)
         rank += coords[i] * strides[i];
+    assert(rank < worldsize);
     return rank;
 }
 static void rank2cart(int ndims, int rank, int coords[NPY_MAXDIMS])
@@ -294,6 +295,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         }
         start[j++] = view->slice[i].start;
     }
+    assert(j == view->base->ndims);
 
     //Compute Non-block coord relative to array-view and the
     //number of sub-view-blocks in worse case.
@@ -303,6 +305,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         ncoord[i] = coord[i] * blocksize;
         nsub_in_worse_case *= MIN(blocksize, nsteps[i] - ncoord[i]);
     }
+    nsub_in_worse_case = MAX(1, nsub_in_worse_case);
     vblock->sub = malloc(nsub_in_worse_case * sizeof(dndsvb));
     svb = vblock->sub;
 
@@ -348,13 +351,15 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             bufs *= vblocksize;
             //Debug check.
             assert(bufstride[i] > 0);
-            assert(svb[s].nsteps[i] > 0);
+            assert(svb[s].nsteps[i] >= 0);
         }
         //Find rank.
         svb[s].rank = cart2rank(view->base->ndims, pcoord);
-
+        assert(svb[s].rank >= 0);
         //Data has not been fetched.
         svb[s].data = NULL;
+        //Communication has not been handled.
+        svb[s].comm_handled = 0;
 
         //Compute the strides (we need the rank to do this).
         stride = 1;
@@ -1163,7 +1168,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
  */
 static void do_UFUNC(dndop *operation)
 {
-    npy_intp i, j, s, n, v;
+    npy_intp i, j, s, n, v, mpi_tag;
     npy_intp coord[NPY_MAXDIMS], bcoord[NPY_MAXDIMS];
     npy_intp vdims[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp offset, scoord[NPY_MAXDIMS], sdims[NPY_MAXDIMS];
@@ -1173,7 +1178,7 @@ static void do_UFUNC(dndop *operation)
     int pcoord[NPY_MAXDIMS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
-    PyObject *arrays[NPY_MAXARGS];//PyArrays objects.
+    PyObject *arrays[NPY_MAXARGS];
     npy_intp ones[NPY_MAXDIMS];
 
     dndview **views = operation->arys;
@@ -1194,16 +1199,6 @@ static void do_UFUNC(dndop *operation)
         printf("\n");
     #endif
 
-    //Compute global start coordinate for the output array.
-    rank2cart(lastary->ndims, myrank, pcoord);
-    for(v=nin; v<narys; v++)
-        for(j=0; j < views[v]->ndims; j++)
-        {
-            coord[j] = pcoord[j];//Start coord.
-            if(coord[j] >= views[v]->blockdims[j])
-                notfinished=0;//This process does not own anything.
-        }
-
     //Initiate input and output arrays to PyArrays objects.
     for(i=0; i<lastary->ndims; i++)
         ones[i] = 1; //Just need some ones.
@@ -1214,7 +1209,8 @@ static void do_UFUNC(dndop *operation)
 
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
-    while(notfinished)
+    memset(coord, 0, lastary->ndims * sizeof(npy_intp));
+    for(mpi_tag=0; notfinished; mpi_tag++)
     {
         //Get one vblock from all arrays.
         for(v=0; v<narys; v++)
@@ -1242,17 +1238,20 @@ static void do_UFUNC(dndop *operation)
 
             //Get view block info.
             calc_vblock(views[v], bcoord, &vblocks[v]);
-
-            //Do required communication.
-            comm_vblock(0, views[v], &vblocks[v]);
         }
+
+        //Compute the owner of the current coord.
+        int coord_owner;
+        for(i=0; i<lastary->ndims; i++)
+            pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
+        coord_owner = cart2rank(lastary->ndims, pcoord);
 
         //Do computation for view-block.
         memset(scoord, 0, lastary->ndims * sizeof(npy_intp));
         memset(svboffset, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
         memset(csvb, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
         int svb_notfinished = 1;
-        while(svb_notfinished)
+        for(; svb_notfinished; mpi_tag++)
         {
             dndapply *apply = malloc(sizeof(dndapply));
             apply->op = operation;
@@ -1297,7 +1296,7 @@ static void do_UFUNC(dndop *operation)
                         svboffset[v][j];
                     sdims[i] = MIN(sdims[i], s);
                 }
-                assert(sdims[i] > 0 &&
+                assert(sdims[i] >= 0 &&
                        sdims[i] <= blocksize);
             }
 
@@ -1349,7 +1348,6 @@ static void do_UFUNC(dndop *operation)
                         offset += svboffset[v][i] * s;
                         s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
                     }
-
                 //Apply update to PyArray object.
                 s = views[v]->ndims * sizeof(npy_intp);
                 memcpy(PyArray_DIMS(arrays[v]), csdims, s);
@@ -1369,9 +1367,49 @@ static void do_UFUNC(dndop *operation)
                 //dag_svg_add(0, svbs[v], NULL);
             }
 
-
-            apply_ufunc(apply, arrays);
-            //dag_svg_add(0, svbs[v], apply);
+            if(coord_owner == myrank)
+            {
+                for(v=0; v<narys; v++)
+                {
+                    if(views[v]->base->ndims == 0)
+                        continue;
+                    //We did the comm already.
+                    if(svbs[v]->comm_handled != 0)
+                        continue;
+                    //The data is located locally.
+                    if(svbs[v]->rank == myrank)
+                        continue;
+                    //Get the data.
+                    assert(svbs[v]->data == NULL);
+                    svbs[v]->data = malloc(svbs[v]->nelem *
+                                           views[v]->base->elsize);
+                    MPI_Recv(svbs[v]->data, svbs[v]->nelem,
+                             views[v]->base->mpi_dtype, svbs[v]->rank,
+                             mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    //Communication has now been handled.
+                    svbs[v]->comm_handled = 1;
+                }
+                apply_ufunc(apply, arrays);
+            }
+            else
+            {
+                for(v=0; v<narys; v++)
+                {
+                    if(views[v]->base->ndims == 0)
+                        continue;
+                    //The data is not located on this proc.
+                    if(svbs[v]->rank != myrank)
+                        continue;
+                    if(svbs[v]->comm_handled != 0)
+                        continue;
+                    //Get the data.
+                    MPI_Send(views[v]->base->data + svbs[v]->offset_view,
+                             1, svbs[v]->comm_dtype_view, coord_owner,
+                             mpi_tag, MPI_COMM_WORLD);
+                    //Communication has now been handled.
+                    svbs[v]->comm_handled = 1;
+                }
+            }
 
             //Iterate coord one chunk.
             for(i=lastary->ndims-1; i>=0; i--)
@@ -1425,9 +1463,10 @@ static void do_UFUNC(dndop *operation)
             free(apply);
         }
         //Write vblocks to output arrays.
-        for(v=nin; v<narys; v++)
-            for(j=0; j<vblocks[v].nsub; j++)
-                comm_vblock(1, views[v], &vblocks[v]);
+        if(coord_owner == myrank)
+            for(v=nin; v<narys; v++)
+                for(j=0; j<vblocks[v].nsub; j++)
+                    comm_vblock(1, views[v], &vblocks[v]);
 
         //Cleanup.
         for(v=0; v<narys; v++)
@@ -1439,7 +1478,7 @@ static void do_UFUNC(dndop *operation)
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
         {
-            coord[j] += cart_dim_sizes[lastary->ndims-1][j];
+            coord[j]++;
             if(coord[j] >= lastary->blockdims[j])
             {
                 //We are finished, if wrapping around.
@@ -1448,7 +1487,7 @@ static void do_UFUNC(dndop *operation)
                     notfinished = 0;
                     break;
                 }
-                coord[j] = pcoord[j];//Start coord.
+                coord[j] = 0;//Start coord.
             }
             else
                 break;
@@ -2152,7 +2191,7 @@ static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         func = ufunc_obj->functions[appropriate_function];
         funcdata = ufunc_obj->data[appropriate_function];
     }
-    dag_op_add(DNPY_UFUNC, narys, nout_arys, views, func, funcdata, 
+    dag_op_add(DNPY_UFUNC, narys, nout_arys, views, func, funcdata,
                PyOp);
 } /* reg_UFUNC */
 

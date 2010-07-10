@@ -149,6 +149,8 @@ typedef struct
     npy_intp nelem;
     //Pointer to data. NULL if data needs to be fetched.
     char *data;
+    //Indicate whenever the communication is handled (Boolean).
+    char comm_handled;
 } dndsvb;
 
 //Type describing a view block.
