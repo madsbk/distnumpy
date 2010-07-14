@@ -126,6 +126,8 @@ typedef struct
     npy_intp nblocks;
     //Number of view-blocks in each viewable dimension.
     npy_intp blockdims[NPY_MAXDIMS];
+    //Python Object for this view.
+    PyObject *PyAry;
 } dndview;
 
 //Type describing a sub-section of a view block.

@@ -185,6 +185,15 @@ static dndview *get_dndview(npy_intp uid)
 static dndview *put_dndview(dndview *view)
 {
     npy_intp i;
+    npy_intp ones[NPY_MAXDIMS];
+
+    //Initiate the Python Array Object.
+    for(i=0; i<view->ndims; i++)
+        ones[i] = 1; //Just need ones for the dim.
+    view->PyAry = PyArray_SimpleNewFromData(view->ndims, ones,
+                                            view->base->dtype,
+                                            view->base->data);
+
     for(i=0; i < DNPY_MAX_NARRAYS; i++)
         if(dndviews_uid[i] == 0)
         {
@@ -205,6 +214,8 @@ static void rm_dndview(npy_intp uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
             {
+                //Deref the Python Array Object.
+                Py_DECREF(dndviews[i].PyAry);
                 //Cleanup base.
                 dndviews_uid[i] = 0;
                 if(--dndviews[i].base->refcount == 0)
@@ -575,7 +586,7 @@ idx_v2s(const dndview *view, npy_intp vindex)
  * Private.
  */
 static void
-apply_ufunc(dndapply *apply, PyObject *arys[NPY_MAXARGS])
+apply_ufunc(dndapply *apply)
 {
     int j, i;
     PyObject *iters[NPY_MAXARGS];
@@ -584,32 +595,35 @@ apply_ufunc(dndapply *apply, PyObject *arys[NPY_MAXARGS])
 
     for(i=0; i<narys; i++)
     {
+        PyObject *ary = apply->op->arys[i]->PyAry;
+        assert(ary != NULL);
         //Scalars are already finished.
-        if(PyArray_NDIM(arys[i]) == 0)
+        if(PyArray_NDIM(ary) == 0)
             continue;
 
-        int s = PyArray_NDIM(arys[i]) * sizeof(npy_intp);
-        memcpy(PyArray_DIMS(arys[i]), apply->viewup[i].dims, s);
-        memcpy(PyArray_STRIDES(arys[i]), apply->viewup[i].stride, s);
-        PyArray_BYTES(arys[i]) = apply->svb[i]->data +
+        int s = PyArray_NDIM(ary) * sizeof(npy_intp);
+        memcpy(PyArray_DIMS(ary), apply->viewup[i].dims, s);
+        memcpy(PyArray_STRIDES(ary), apply->viewup[i].stride, s);
+        PyArray_BYTES(ary) = apply->svb[i]->data +
                                  apply->viewup[i].offset;
     }
 
-    lastdims = PyArray_DIMS(arys[narys-1]);
-    lastndim = PyArray_NDIM(arys[narys-1]);
+    lastdims = PyArray_DIMS(apply->op->arys[narys-1]->PyAry);
+    lastndim = PyArray_NDIM(apply->op->arys[narys-1]->PyAry);
 
     if(apply->op->func == NULL)//Compatible Mode.
     {
         PyObject *tuple = PyTuple_New(narys);
         for(i=0; i<narys; i++)
         {
+            PyObject *ary = apply->op->arys[i]->PyAry;
             PyObject *tary = PyArray_New(&PyArray_Type,
-                                         PyArray_NDIM(arys[i]),
-                                         PyArray_DIMS(arys[i]),
-                                         PyArray_TYPE(arys[i]),
-                                         PyArray_STRIDES(arys[i]),
-                                         PyArray_DATA(arys[i]),
-                                         PyArray_ITEMSIZE(arys[i]),
+                                         PyArray_NDIM(ary),
+                                         PyArray_DIMS(ary),
+                                         PyArray_TYPE(ary),
+                                         PyArray_STRIDES(ary),
+                                         PyArray_DATA(ary),
+                                         PyArray_ITEMSIZE(ary),
                                          NPY_BEHAVED, NULL);
             assert(tary != NULL);
             PyTuple_SET_ITEM(tuple, i, tary);
@@ -623,7 +637,8 @@ apply_ufunc(dndapply *apply, PyObject *arys[NPY_MAXARGS])
 
     //Create broadcasted iterators.
     for(j=0; j<narys; j++)
-        iters[j] = PyArray_BroadcastToShape(arys[j], lastdims, lastndim);
+        iters[j] = PyArray_BroadcastToShape(apply->op->arys[j]->PyAry,
+                                            lastdims, lastndim);
 
     //The iterators should not iterate over the axis-dimension. That
     //will be done inside the function call.
@@ -1178,9 +1193,6 @@ static void do_UFUNC(dndop *operation)
     int pcoord[NPY_MAXDIMS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
-    PyObject *arrays[NPY_MAXARGS];
-    npy_intp ones[NPY_MAXDIMS];
-
     dndview **views = operation->arys;
     int narys = operation->narys;
     int nout = operation->nout;
@@ -1198,14 +1210,6 @@ static void do_UFUNC(dndop *operation)
             printf(" %ld", (long)views[i]->uid);
         printf("\n");
     #endif
-
-    //Initiate input and output arrays to PyArrays objects.
-    for(i=0; i<lastary->ndims; i++)
-        ones[i] = 1; //Just need some ones.
-    for(v=0; v<narys; v++)
-        arrays[v] = PyArray_SimpleNewFromData(views[v]->ndims, ones,
-                                              views[v]->base->dtype,
-                                              views[v]->base->data);
 
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
@@ -1385,7 +1389,7 @@ static void do_UFUNC(dndop *operation)
                     //Communication has now been handled.
                     svbs[v]->comm_handled = 1;
                 }
-                apply_ufunc(apply, arrays);
+                apply_ufunc(apply);
             }
             else
             {
@@ -1493,9 +1497,9 @@ static void do_UFUNC(dndop *operation)
     //Clean up
     for(i=0; i<narys; i++)
     {
-        Py_DECREF(arrays[i]);
         if(views[i]->base->ndims == 0)//Scalar dummy.
         {
+            Py_DECREF(views[i]->PyAry);
             free(views[i]->base->data);
             free(views[i]->base);
             free(views[i]);
@@ -2165,6 +2169,9 @@ static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             views[i]->base->data = malloc(scalar_size);
             memcpy(views[i]->base->data, scalar, scalar_size);
             views[i]->base->elsize = scalar_size;
+            views[i]->PyAry = PyArray_SimpleNewFromData(0, NULL,
+                                                views[i]->base->dtype,
+                                                views[i]->base->data);
         }
 
     //Print debug info.
