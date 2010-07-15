@@ -38,6 +38,9 @@ typedef struct {
 //Maximum size of the Operation DAG
 #define DNPY_DAG_OP_MAXSIZE 10
 
+//Maximum size of the sub-view block DAG
+#define DNPY_DAG_SVG_MAXSIZE 100
+
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
 
@@ -52,7 +55,7 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_PUT_ITEM, DNPY_GET_ITEM,
           DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL, DNPY_DATAFILL,
           DNPY_DATADUMP, DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL,
-          DNPY_WRITE, DNPY_READ};
+          DNPY_RECV, DNPY_SEND, DNPY_APPLY};
 
 //Type describing a distributed array.
 typedef struct
@@ -208,14 +211,14 @@ typedef struct
 } dndapply;
 
 //Type describing a DAG node for the execution.
-typedef struct dndnode_struct *dndnode;
+typedef struct dndnode_struct dndnode;
 struct dndnode_struct
 {
-    //Access type, i.e. READ or WRITE.
-    int access_type;
-    //The sub-view-block invloved.
-    dndsvb svb;
-    //List of ufunc applies that depend on this node.
+    //Type of the node, i.e. DNPY_SEND, DNPY_RECV.or DNPY_APPLY
+    char type;
+    //The sub-view-block involved. (NULL when no svb is involved).
+    dndsvb *svb;
+    //List of nodes that depend on this node.
     npy_intp ndepend;
     dndnode *depend[DNPY_MAX_DEPENDENCY];
     //The ufunc that should be apply when this node does not

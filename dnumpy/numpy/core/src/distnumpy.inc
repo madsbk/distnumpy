@@ -29,6 +29,9 @@ static PyObject *ufunc_module;
 //The Operation DAG and its current size.
 static dndop dag_op[DNPY_DAG_OP_MAXSIZE];
 static npy_intp dag_op_size=0;
+//The root of sub-view-block DAG and its current size.
+static dndnode *rootnode = NULL;
+static npy_intp dag_svg_size=0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -36,8 +39,10 @@ static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 
-//Prototype for dag_op_flush.
+//Prototype for the DAGs.
 static void dag_op_flush(void);
+static void dag_svb_add(char type, dndsvb *svb, dndapply *apply);
+static void dag_svb_flush(void);
 
 /*===================================================================
  *
@@ -1388,8 +1393,12 @@ static void do_UFUNC(dndop *operation)
                              mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     //Communication has now been handled.
                     svbs[v]->comm_handled = 1;
+
+                    //Add a new sub-view block DAG node.
+                    dag_svb_add(DNPY_RECV, svbs[v], NULL);
                 }
-                apply_ufunc(apply);
+                //Add a new sub-view block DAG node.
+                dag_svb_add(DNPY_APPLY, NULL, apply);
             }
             else
             {
@@ -1408,7 +1417,12 @@ static void do_UFUNC(dndop *operation)
                              mpi_tag, MPI_COMM_WORLD);
                     //Communication has now been handled.
                     svbs[v]->comm_handled = 1;
+
+                    //Add a new sub-view block DAG node.
+                    dag_svb_add(DNPY_SEND, svbs[v], NULL);
                 }
+                //The apply is not used.
+                free(apply);
             }
 
             //Iterate coord one chunk.
@@ -1460,8 +1474,11 @@ static void do_UFUNC(dndop *operation)
                         break;
                 }
             }
-            free(apply);
         }
+
+        //Make sure that all svb are fletched and applied.
+        dag_svb_flush();
+
         //Write vblocks to output arrays.
         if(coord_owner == myrank)
             for(v=nin; v<narys; v++)
@@ -2105,7 +2122,7 @@ static void dag_op_flush(void)
 
 /*===================================================================
  *
- * Add a operation to the Operation DAG.
+ * Add an operation to the Operation DAG.
  * Private.
  */
 static void dag_op_add(int type, int narys, int nout,
@@ -2123,11 +2140,80 @@ static void dag_op_add(int type, int narys, int nout,
     dag_op[dag_op_size].PyOp = PyOp;
     dag_op_size++;
 
-    if(dag_op_size == DNPY_DAG_OP_MAXSIZE)//Check for overflow.
+    if(dag_op_size >= DNPY_DAG_OP_MAXSIZE)//Check for overflow.
        dag_op_flush();
 
 } /* dag_op_add */
 
+
+/*===================================================================
+ *
+ * Flush the sub-view block DAG.
+ * Private.
+ */
+static void dag_svb_flush(void)
+{
+    while(rootnode != NULL)
+    {
+        if(rootnode->apply != NULL)
+        {
+            apply_ufunc(rootnode->apply);
+            free(rootnode->apply);
+        }
+
+        dndnode *old = rootnode;
+        if(rootnode->ndepend > 0)
+        {//At the moment the svb DAG is just a linked list.
+            assert(rootnode->ndepend == 1);
+            rootnode = rootnode->depend[0];
+        }
+        else
+            rootnode = NULL;
+        free(old);
+        dag_svg_size--;
+    }
+    //printf("flush dag_svg_size: %ld\n", dag_svg_size);
+    assert(dag_svg_size == 0);
+}/* dag_svb_flush */
+
+/*===================================================================
+ *
+ * Add a node to the sub-view block DAG.
+ * Private.
+ */
+static void dag_svb_add(char type, dndsvb *svb, dndapply *apply)
+{
+    assert((type == DNPY_RECV && svb != NULL) ||
+           (type == DNPY_SEND && svb != NULL) ||
+           (type == DNPY_APPLY && apply != NULL));
+
+    //Create a new node.
+    dag_svg_size++;
+    dndnode *node = malloc(sizeof(dndnode));
+    node->type = type;
+    node->svb = svb;
+    node->apply = apply;
+    node->ndepend = 0;
+
+    //Place the node in the end of the svb DAG, which at the moment
+    //is a simple linked list.
+    if(rootnode == NULL)
+        rootnode = node;
+    else
+    {
+        dndnode *tnode = rootnode;
+        while(tnode->ndepend > 0)
+        {
+            assert(tnode->ndepend == 1);
+            tnode = tnode->depend[0];
+        }
+        tnode->depend[0] = node;
+        tnode->ndepend++;
+    }
+    //printf("add dag_svg_size: %ld\n", dag_svg_size);
+    if(dag_svg_size >= DNPY_DAG_SVG_MAXSIZE)//Check for overflow.
+        dag_svb_flush();
+} /* dag_svb_add */
 
 /*===================================================================
  *
