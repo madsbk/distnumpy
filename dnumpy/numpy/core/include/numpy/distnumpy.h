@@ -216,8 +216,14 @@ struct dndnode_struct
 {
     //Type of the node, i.e. DNPY_SEND, DNPY_RECV.or DNPY_APPLY
     char type;
+    //The MPI tag used when type is DNPY_SEND or DNPY_RECV.
+    npy_intp mpi_tag;
+    //The MPI rank of the process that owns this node (coordinate).
+    int owner;
     //The sub-view-block involved. (NULL when no svb is involved).
     dndsvb *svb;
+    //The array view involved.
+    dndview *ary;
     //List of nodes that depend on this node.
     npy_intp ndepend;
     dndnode *depend[DNPY_MAX_DEPENDENCY];

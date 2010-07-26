@@ -41,9 +41,9 @@ static cblas_func_type *cblas_cgemm_func = NULL;
 
 //Prototype for the DAGs.
 static void dag_op_flush(void);
-static void dag_svb_add(char type, dndsvb *svb, dndapply *apply);
 static void dag_svb_flush(void);
-
+static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
+                        npy_intp mpi_tag, int owner, dndapply *apply);
 /*===================================================================
  *
  * Returns a string describing dtype.
@@ -1384,21 +1384,18 @@ static void do_UFUNC(dndop *operation)
                     //The data is located locally.
                     if(svbs[v]->rank == myrank)
                         continue;
-                    //Get the data.
+
                     assert(svbs[v]->data == NULL);
-                    svbs[v]->data = malloc(svbs[v]->nelem *
-                                           views[v]->base->elsize);
-                    MPI_Recv(svbs[v]->data, svbs[v]->nelem,
-                             views[v]->base->mpi_dtype, svbs[v]->rank,
-                             mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
                     //Communication has now been handled.
                     svbs[v]->comm_handled = 1;
 
                     //Add a new sub-view block DAG node.
-                    dag_svb_add(DNPY_RECV, svbs[v], NULL);
+                    dag_svb_add(DNPY_RECV, svbs[v], views[v], mpi_tag,
+                                myrank, NULL);
                 }
                 //Add a new sub-view block DAG node.
-                dag_svb_add(DNPY_APPLY, NULL, apply);
+                dag_svb_add(DNPY_APPLY, NULL, NULL, 0, myrank, apply);
             }
             else
             {
@@ -1411,15 +1408,13 @@ static void do_UFUNC(dndop *operation)
                         continue;
                     if(svbs[v]->comm_handled != 0)
                         continue;
-                    //Get the data.
-                    MPI_Send(views[v]->base->data + svbs[v]->offset_view,
-                             1, svbs[v]->comm_dtype_view, coord_owner,
-                             mpi_tag, MPI_COMM_WORLD);
+
                     //Communication has now been handled.
                     svbs[v]->comm_handled = 1;
 
                     //Add a new sub-view block DAG node.
-                    dag_svb_add(DNPY_SEND, svbs[v], NULL);
+                    dag_svb_add(DNPY_SEND, svbs[v], views[v], mpi_tag,
+                                coord_owner, NULL);
                 }
                 //The apply is not used.
                 free(apply);
@@ -2155,10 +2150,34 @@ static void dag_svb_flush(void)
 {
     while(rootnode != NULL)
     {
-        if(rootnode->apply != NULL)
+        if(rootnode->type == DNPY_RECV)
         {
+            assert(rootnode->svb->data == NULL);
+            rootnode->svb->data = malloc(rootnode->svb->nelem *
+                                   rootnode->ary->base->elsize);
+            MPI_Recv(rootnode->svb->data, rootnode->svb->nelem,
+                     rootnode->ary->base->mpi_dtype, rootnode->svb->rank,
+                     rootnode->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+        else if(rootnode->type == DNPY_SEND)
+        {
+            MPI_Send(rootnode->ary->base->data +
+                     rootnode->svb->offset_view,
+                     1, rootnode->svb->comm_dtype_view,
+                     rootnode->owner, rootnode->mpi_tag,
+                     MPI_COMM_WORLD);
+        }
+        else if(rootnode->type == DNPY_APPLY)
+        {
+            assert(rootnode->apply != NULL);
+            assert(rootnode->owner == myrank);
             apply_ufunc(rootnode->apply);
             free(rootnode->apply);
+        }
+        else
+        {
+            fprintf(stderr, "Unknown sub-view block type.\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
         dndnode *old = rootnode;
@@ -2181,17 +2200,21 @@ static void dag_svb_flush(void)
  * Add a node to the sub-view block DAG.
  * Private.
  */
-static void dag_svb_add(char type, dndsvb *svb, dndapply *apply)
+static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
+                        npy_intp mpi_tag, int owner, dndapply *apply)
 {
-    assert((type == DNPY_RECV && svb != NULL) ||
-           (type == DNPY_SEND && svb != NULL) ||
+    assert((type == DNPY_RECV && svb != NULL && ary != NULL) ||
+           (type == DNPY_SEND && svb != NULL && ary != NULL) ||
            (type == DNPY_APPLY && apply != NULL));
 
     //Create a new node.
     dag_svg_size++;
     dndnode *node = malloc(sizeof(dndnode));
     node->type = type;
+    node->mpi_tag = mpi_tag;
+    node->owner =  owner;
     node->svb = svb;
+    node->ary = ary;
     node->apply = apply;
     node->ndepend = 0;
 
@@ -2210,7 +2233,6 @@ static void dag_svb_add(char type, dndsvb *svb, dndapply *apply)
         tnode->depend[0] = node;
         tnode->ndepend++;
     }
-    //printf("add dag_svg_size: %ld\n", dag_svg_size);
     if(dag_svg_size >= DNPY_DAG_SVG_MAXSIZE)//Check for overflow.
         dag_svb_flush();
 } /* dag_svb_add */
