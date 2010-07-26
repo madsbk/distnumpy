@@ -43,7 +43,7 @@ static cblas_func_type *cblas_cgemm_func = NULL;
 static void dag_op_flush(void);
 static void dag_svb_flush(void);
 static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
-                        npy_intp mpi_tag, int owner, dndapply *apply);
+                    npy_intp mpi_tag, int remote_rank, dndapply *apply);
 /*===================================================================
  *
  * Returns a string describing dtype.
@@ -468,49 +468,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     vblock->nsub = s;
     assert(vblock->nsub > 0);
 } /* calc_vblock */
-
-/*===================================================================
- *
- * Do required communication and thereby making sure that every
- * sub-view-block is either received or send from remote location.
- * Direction: 0=Receive, 1=Send.
- * Private.
- */
-static void
-comm_vblock(int Direction, dndview *view, dndvb *vblock)
-{
-    npy_intp i;
-    for(i=0; i<vblock->nsub; i++)
-    {
-        dndsvb *svb = &vblock->sub[i];
-
-        if(svb->rank == myrank)//Already located locally.
-            continue;
-
-        if(Direction)
-        {
-            MPI_Win_lock(MPI_LOCK_EXCLUSIVE, svb->rank,
-                         0, view->base->comm_win);
-            MPI_Put(svb->data, svb->nelem, view->base->mpi_dtype,
-                    svb->rank,
-                    svb->offset_view, 1, svb->comm_dtype_view,
-                    view->base->comm_win);
-            MPI_Win_unlock(svb->rank, view->base->comm_win);
-        }
-        else
-        {
-            assert(svb->data == NULL);
-            svb->data = malloc(svb->nelem * view->base->elsize);
-            MPI_Win_lock(MPI_LOCK_EXCLUSIVE, svb->rank,
-                         0, view->base->comm_win);
-            MPI_Get(svb->data, svb->nelem, view->base->mpi_dtype,
-                    svb->rank,
-                    svb->offset_view, 1, svb->comm_dtype_view,
-                    view->base->comm_win);
-            MPI_Win_unlock(svb->rank, view->base->comm_win);
-        }
-    }
-} /* comm_vblock */
 
 
 /*===================================================================
@@ -1374,7 +1331,7 @@ static void do_UFUNC(dndop *operation)
 
             if(coord_owner == myrank)
             {
-                for(v=0; v<narys; v++)
+                for(v=0; v<narys; v++, mpi_tag++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
@@ -1391,15 +1348,15 @@ static void do_UFUNC(dndop *operation)
                     svbs[v]->comm_handled = 1;
 
                     //Add a new sub-view block DAG node.
-                    dag_svb_add(DNPY_RECV, svbs[v], views[v], mpi_tag,
-                                myrank, NULL);
+                    dag_svb_add(DNPY_BUF_RECV, svbs[v], views[v], mpi_tag,
+                                svbs[v]->rank, NULL);
                 }
                 //Add a new sub-view block DAG node.
                 dag_svb_add(DNPY_APPLY, NULL, NULL, 0, myrank, apply);
             }
             else
             {
-                for(v=0; v<narys; v++)
+                for(v=0; v<narys; v++, mpi_tag++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
@@ -1471,14 +1428,26 @@ static void do_UFUNC(dndop *operation)
             }
         }
 
+        //Write vblocks to output arrays.
+        for(v=nin; v<narys; v++)
+            for(j=0; j<vblocks[v].nsub; j++)
+            {
+                mpi_tag++;
+                dndsvb *svb = &vblocks[v].sub[j];
+                if(coord_owner == myrank && svb->rank != myrank)
+                {
+                    dag_svb_add(DNPY_BUF_SEND, svb, views[v], mpi_tag,
+                                svb->rank, NULL);
+                }
+                else if(coord_owner != myrank && svb->rank == myrank)
+                {
+                    dag_svb_add(DNPY_RECV, svb, views[v], mpi_tag,
+                                coord_owner, NULL);
+                }
+            }
+
         //Make sure that all svb are fletched and applied.
         dag_svb_flush();
-
-        //Write vblocks to output arrays.
-        if(coord_owner == myrank)
-            for(v=nin; v<narys; v++)
-                for(j=0; j<vblocks[v].nsub; j++)
-                    comm_vblock(1, views[v], &vblocks[v]);
 
         //Cleanup.
         for(v=0; v<narys; v++)
@@ -2150,13 +2119,22 @@ static void dag_svb_flush(void)
 {
     while(rootnode != NULL)
     {
+
         if(rootnode->type == DNPY_RECV)
+        {
+            MPI_Recv(rootnode->ary->base->data +
+                     rootnode->svb->offset_view,
+                     1, rootnode->svb->comm_dtype_view,
+                     rootnode->remote_rank, rootnode->mpi_tag,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+        else if(rootnode->type == DNPY_BUF_RECV)
         {
             assert(rootnode->svb->data == NULL);
             rootnode->svb->data = malloc(rootnode->svb->nelem *
                                    rootnode->ary->base->elsize);
             MPI_Recv(rootnode->svb->data, rootnode->svb->nelem,
-                     rootnode->ary->base->mpi_dtype, rootnode->svb->rank,
+                     rootnode->ary->base->mpi_dtype, rootnode->remote_rank,
                      rootnode->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
         else if(rootnode->type == DNPY_SEND)
@@ -2164,13 +2142,21 @@ static void dag_svb_flush(void)
             MPI_Send(rootnode->ary->base->data +
                      rootnode->svb->offset_view,
                      1, rootnode->svb->comm_dtype_view,
-                     rootnode->owner, rootnode->mpi_tag,
+                     rootnode->remote_rank, rootnode->mpi_tag,
+                     MPI_COMM_WORLD);
+        }
+        else if(rootnode->type == DNPY_BUF_SEND)
+        {
+            assert(rootnode->svb->data != NULL);
+            MPI_Send(rootnode->svb->data, rootnode->svb->nelem,
+                     rootnode->ary->base->mpi_dtype,
+                     rootnode->remote_rank, rootnode->mpi_tag,
                      MPI_COMM_WORLD);
         }
         else if(rootnode->type == DNPY_APPLY)
         {
             assert(rootnode->apply != NULL);
-            assert(rootnode->owner == myrank);
+            assert(rootnode->remote_rank == myrank);
             apply_ufunc(rootnode->apply);
             free(rootnode->apply);
         }
@@ -2191,7 +2177,6 @@ static void dag_svb_flush(void)
         free(old);
         dag_svg_size--;
     }
-    //printf("flush dag_svg_size: %ld\n", dag_svg_size);
     assert(dag_svg_size == 0);
 }/* dag_svb_flush */
 
@@ -2201,10 +2186,12 @@ static void dag_svb_flush(void)
  * Private.
  */
 static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
-                        npy_intp mpi_tag, int owner, dndapply *apply)
+                    npy_intp mpi_tag, int remote_rank, dndapply *apply)
 {
     assert((type == DNPY_RECV && svb != NULL && ary != NULL) ||
+           (type == DNPY_BUF_RECV && svb != NULL && ary != NULL) ||
            (type == DNPY_SEND && svb != NULL && ary != NULL) ||
+           (type == DNPY_BUF_SEND && svb != NULL && ary != NULL) ||
            (type == DNPY_APPLY && apply != NULL));
 
     //Create a new node.
@@ -2212,7 +2199,7 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
     dndnode *node = malloc(sizeof(dndnode));
     node->type = type;
     node->mpi_tag = mpi_tag;
-    node->owner =  owner;
+    node->remote_rank =  remote_rank;
     node->svb = svb;
     node->ary = ary;
     node->apply = apply;

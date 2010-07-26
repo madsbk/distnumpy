@@ -55,7 +55,7 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_PUT_ITEM, DNPY_GET_ITEM,
           DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL, DNPY_DATAFILL,
           DNPY_DATADUMP, DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL,
-          DNPY_RECV, DNPY_SEND, DNPY_APPLY};
+          DNPY_RECV, DNPY_SEND, DNPY_BUF_RECV, DNPY_BUF_SEND, DNPY_APPLY};
 
 //Type describing a distributed array.
 typedef struct
@@ -214,12 +214,13 @@ typedef struct
 typedef struct dndnode_struct dndnode;
 struct dndnode_struct
 {
-    //Type of the node, i.e. DNPY_SEND, DNPY_RECV.or DNPY_APPLY
+    //Type of the node, i.e. DNPY_RECV, DNPY_BUF_RECV, DNPY_SEND,
+    //DNPY_BUF_SEND or DNPY_APPLY.
     char type;
-    //The MPI tag used when type is DNPY_SEND or DNPY_RECV.
+    //The MPI tag used when type is not DNPY_APPLY.
     npy_intp mpi_tag;
-    //The MPI rank of the process that owns this node (coordinate).
-    int owner;
+    //The MPI rank of the process that is the remote communication peer.
+    int remote_rank;
     //The sub-view-block involved. (NULL when no svb is involved).
     dndsvb *svb;
     //The array view involved.
