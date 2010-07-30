@@ -16,7 +16,7 @@ static int myrank, worldsize;
 static npy_intp blocksize;
 static npy_intp msg[DNPY_MAX_MSG_SIZE];
 //Unique identification counter
-static npy_intp uid_count;
+static npy_intp uid_count=0;
 //Array-views belonging to local MPI process
 static dndview dndviews[DNPY_MAX_NARRAYS];
 static npy_intp dndviews_uid[DNPY_MAX_NARRAYS];
@@ -223,8 +223,13 @@ static void rm_dndview(npy_intp uid)
                 Py_DECREF(dndviews[i].PyAry);
                 //Cleanup base.
                 dndviews_uid[i] = 0;
-                if(--dndviews[i].base->refcount == 0)
+                if(dndviews[i].base->ndims == 0)//Dummy Scalar.
                 {
+                    free(dndviews[i].base);
+                }
+                else if(--dndviews[i].base->refcount == 0)
+                {
+
                     MPI_Win_free(&dndviews[i].base->comm_win);
                     MPI_Type_free(&dndviews[i].base->mpi_dtype);
                     MPI_Free_mem(dndviews[i].base->data);
@@ -1475,15 +1480,12 @@ static void do_UFUNC(dndop *operation)
         }
     }
 
-    //Clean up
+    //Clean up Scalar dummy.
     for(i=0; i<narys; i++)
     {
         if(views[i]->base->ndims == 0)//Scalar dummy.
         {
-            Py_DECREF(views[i]->PyAry);
-            free(views[i]->base->data);
-            free(views[i]->base);
-            free(views[i]);
+            rm_dndview(views[i]->uid);
         }
     }
     Py_DECREF(operation->PyOp);
@@ -2252,21 +2254,21 @@ static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             views[i] = get_dndview(arylist[i]);
         }
         else
-        {    //Create a dummy view for the scalar.
-            views[i] = malloc(sizeof(dndview));
-            views[i]->uid = 0;
-            views[i]->nslice = 0;
-            views[i]->base = malloc(sizeof(dndarray));
-            views[i]->base->ndims = 0;
-            views[i]->ndims = 0;
-            views[i]->base->dtype = scalar_dtype;
-            views[i]->base->nelements = 1;
-            views[i]->base->data = malloc(scalar_size);
-            memcpy(views[i]->base->data, scalar, scalar_size);
-            views[i]->base->elsize = scalar_size;
-            views[i]->PyAry = PyArray_SimpleNewFromData(0, NULL,
-                                                views[i]->base->dtype,
-                                                views[i]->base->data);
+        {   //Create a dummy view for the scalar.
+            dndview dummy;
+            //Use negated uid since positive uids are generated
+            //by the master process only.
+            dummy.uid = -(++uid_count);
+            dummy.nslice = 0;
+            dummy.base = malloc(sizeof(dndarray));
+            dummy.base->ndims = 0;
+            dummy.ndims = 0;
+            dummy.base->dtype = scalar_dtype;
+            dummy.base->nelements = 1;
+            dummy.base->data = malloc(scalar_size);
+            memcpy(dummy.base->data, scalar, scalar_size);
+            dummy.base->elsize = scalar_size;
+            views[i] = put_dndview(&dummy);
         }
 
     //Print debug info.
