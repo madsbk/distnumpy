@@ -1243,16 +1243,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         int svb_notfinished = 1;
         for(; svb_notfinished; mpi_tag++)
         {
-            dndapply *apply = malloc(sizeof(dndapply));
-            apply->type = DNPY_UFUNC;
-            apply->narys = narys;
-            apply->nout = nout_arys;
-            memcpy(apply->arys, views, narys * sizeof(dndview*));
-            apply->func = func;
-            apply->funcdata = funcdata;
-            Py_INCREF(PyOp);
-            apply->PyOp = PyOp;
-
             //Find current sub-view-block for all arrays.
             dndsvb *svbs[NPY_MAXARGS];
             for(v=0; v<narys; v++)
@@ -1297,71 +1287,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                        sdims[i] <= blocksize);
             }
 
-            //Update the PyArray Objects to match the current
-            //sub-view-block.
-            for(v=0; v<narys; v++)
-            {
-                //Scalars is already updated.
-                if(views[v]->base->ndims == 0)
-                    continue;
-
-                //Convert sdims to match current view ndims.
-                for(i=0; i<views[v]->ndims; i++)
-                    csdims[views[v]->ndims-1-i] =
-                                    MIN(vdims[v][views[v]->ndims-1-i],
-                                        sdims[lastary->ndims-1-i]);
-
-                //Compute offset & stride for the Object.
-                //When the data is local it may be non-contiguous
-                //and when the data is from a remote source it is
-                //contiguous.
-                offset=0; s=views[v]->base->elsize;
-                if(svbs[v]->rank == myrank)
-                    for(i=views[v]->ndims-1; i>=0; i--)
-                    {
-                        //PseudoIndex should have 0 in stride.
-                        if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
-                           PseudoIndex)
-                        {
-                            sstride[i] = 0;
-                            continue;
-                        }
-                        sstride[i] = svbs[v]->stride[idx_v2b(views[v],i)] *
-                                     views[v]->slice[idx_v2s(views[v],i)].step *
-                                     views[v]->base->elsize;
-                        offset += svboffset[v][i] * sstride[i];
-                    }
-                else
-                    for(i=views[v]->ndims-1; i>=0; i--)
-                    {
-                        //PseudoIndex should have 0 in stride.
-                        if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
-                           PseudoIndex)
-                        {
-                            sstride[i] = 0;
-                            continue;
-                        }
-                        sstride[i] = s;
-                        offset += svboffset[v][i] * s;
-                        s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
-                    }
-                //Apply update to PyArray object.
-                //Which corresponds to the following:
-                //    PyArray_New(&PyArray_Type,
-                //                views[v]->ndims, csdims,
-                //                views[v]->base->dtype, sstride,
-                //                svbs[v]->data + offset,
-                //                views[v]->base->elsize,
-                //                NPY_BEHAVED, NULL);
-                s = views[v]->ndims * sizeof(npy_intp);
-                memcpy(apply->viewup[v].dims, csdims, s);
-                memcpy(apply->viewup[v].stride, sstride, s);
-                apply->viewup[v].offset = offset;
-                apply->svb[v] = svbs[v];
-            }
-
             if(coord_owner == myrank)
             {
+                //Add receive request to the svb-DAG.
                 for(v=0; v<narys; v++, mpi_tag++)
                 {
                     if(views[v]->base->ndims == 0)
@@ -1382,11 +1310,84 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     dag_svb_add(DNPY_BUF_RECV, svbs[v], views[v], mpi_tag,
                                 svbs[v]->rank, NULL);
                 }
+                //Add the apply request to the svb-DAG.
+                dndapply *apply = malloc(sizeof(dndapply));
+                apply->type = DNPY_UFUNC;
+                apply->narys = narys;
+                apply->nout = nout_arys;
+                memcpy(apply->arys, views, narys * sizeof(dndview*));
+                apply->func = func;
+                apply->funcdata = funcdata;
+                Py_INCREF(PyOp);
+                apply->PyOp = PyOp;
+
+                //Update the PyArray Objects to match the current
+                //sub-view-block.
+                for(v=0; v<narys; v++)
+                {
+                    //Scalars is already updated.
+                    if(views[v]->base->ndims == 0)
+                        continue;
+
+                    //Convert sdims to match current view ndims.
+                    for(i=0; i<views[v]->ndims; i++)
+                        csdims[views[v]->ndims-1-i] =
+                                        MIN(vdims[v][views[v]->ndims-1-i],
+                                            sdims[lastary->ndims-1-i]);
+
+                    //Compute offset & stride for the Object.
+                    //When the data is local it may be non-contiguous
+                    //and when the data is from a remote source it is
+                    //contiguous.
+                    offset=0; s=views[v]->base->elsize;
+                    if(svbs[v]->rank == myrank)
+                        for(i=views[v]->ndims-1; i>=0; i--)
+                        {
+                            //PseudoIndex should have 0 in stride.
+                            if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
+                               PseudoIndex)
+                            {
+                                sstride[i] = 0;
+                                continue;
+                            }
+                            sstride[i] = svbs[v]->stride[idx_v2b(views[v],i)] *
+                                         views[v]->slice[idx_v2s(views[v],i)].step *
+                                         views[v]->base->elsize;
+                            offset += svboffset[v][i] * sstride[i];
+                        }
+                    else
+                        for(i=views[v]->ndims-1; i>=0; i--)
+                        {
+                            //PseudoIndex should have 0 in stride.
+                            if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
+                               PseudoIndex)
+                            {
+                                sstride[i] = 0;
+                                continue;
+                            }
+                            sstride[i] = s;
+                            offset += svboffset[v][i] * s;
+                            s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
+                        }
+                    //Apply update to PyArray object.
+                    //Which corresponds to the following:
+                    //    PyArray_New(&PyArray_Type,
+                    //                views[v]->ndims, csdims,
+                    //                views[v]->base->dtype, sstride,
+                    //                svbs[v]->data + offset,
+                    //                views[v]->base->elsize,
+                    //                NPY_BEHAVED, NULL);
+                    s = views[v]->ndims * sizeof(npy_intp);
+                    memcpy(apply->viewup[v].dims, csdims, s);
+                    memcpy(apply->viewup[v].stride, sstride, s);
+                    apply->viewup[v].offset = offset;
+                    apply->svb[v] = svbs[v];
+                }
                 //Add a new sub-view block DAG node.
                 dag_svb_add(DNPY_APPLY, NULL, NULL, 0, myrank, apply);
             }
             else
-            {
+            {   //Add send request to the svb-DAG.
                 for(v=0; v<narys; v++, mpi_tag++)
                 {
                     if(views[v]->base->ndims == 0)
@@ -1404,9 +1405,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     dag_svb_add(DNPY_SEND, svbs[v], views[v], mpi_tag,
                                 coord_owner, NULL);
                 }
-                //The apply is not used.
-                Py_DECREF(apply->PyOp);
-                free(apply);
             }
 
             //Iterate coord one chunk.
@@ -2098,63 +2096,57 @@ static void dag_svb_flush(void)
     npy_intp i;
     while(rootnode != NULL)
     {
+        switch(rootnode->type)
+        {
+            dndnode *R = rootnode;
+            case DNPY_RECV:
+                MPI_Recv(R->ary->base->data + R->svb->offset_view,
+                         1, R->svb->comm_dtype_view,
+                         R->remote_rank, R->mpi_tag,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                break;
+            case DNPY_BUF_RECV:
+                assert(R->svb->data == NULL);
+                R->svb->data = malloc(R->svb->nelem *
+                                      R->ary->base->elsize);
+                MPI_Recv(R->svb->data, R->svb->nelem,
+                         R->ary->base->mpi_dtype, R->remote_rank,
+                         R->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                break;
+            case DNPY_SEND:
+                MPI_Send(R->ary->base->data + R->svb->offset_view,
+                         1, R->svb->comm_dtype_view,
+                         R->remote_rank, R->mpi_tag,
+                         MPI_COMM_WORLD);
+                break;
+            case DNPY_BUF_SEND:
+                assert(R->svb->data != NULL);
+                MPI_Send(R->svb->data, R->svb->nelem,
+                         R->ary->base->mpi_dtype,
+                         R->remote_rank, R->mpi_tag,
+                         MPI_COMM_WORLD);
+                break;
+            case DNPY_APPLY:
+                assert(R->apply != NULL);
+                assert(R->remote_rank == myrank);
+                apply_ufunc(R->apply);
 
-        if(rootnode->type == DNPY_RECV)
-        {
-            MPI_Recv(rootnode->ary->base->data +
-                     rootnode->svb->offset_view,
-                     1, rootnode->svb->comm_dtype_view,
-                     rootnode->remote_rank, rootnode->mpi_tag,
-                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-        else if(rootnode->type == DNPY_BUF_RECV)
-        {
-            assert(rootnode->svb->data == NULL);
-            rootnode->svb->data = malloc(rootnode->svb->nelem *
-                                   rootnode->ary->base->elsize);
-            MPI_Recv(rootnode->svb->data, rootnode->svb->nelem,
-                     rootnode->ary->base->mpi_dtype, rootnode->remote_rank,
-                     rootnode->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-        else if(rootnode->type == DNPY_SEND)
-        {
-            MPI_Send(rootnode->ary->base->data +
-                     rootnode->svb->offset_view,
-                     1, rootnode->svb->comm_dtype_view,
-                     rootnode->remote_rank, rootnode->mpi_tag,
-                     MPI_COMM_WORLD);
-        }
-        else if(rootnode->type == DNPY_BUF_SEND)
-        {
-            assert(rootnode->svb->data != NULL);
-            MPI_Send(rootnode->svb->data, rootnode->svb->nelem,
-                     rootnode->ary->base->mpi_dtype,
-                     rootnode->remote_rank, rootnode->mpi_tag,
-                     MPI_COMM_WORLD);
-        }
-        else if(rootnode->type == DNPY_APPLY)
-        {
-            assert(rootnode->apply != NULL);
-            assert(rootnode->remote_rank == myrank);
-            apply_ufunc(rootnode->apply);
-
-/*
-            for(i=0; i<rootnode->apply->narys; i++)
-                if(rootnode->apply->arys[i]->base->ndims == 0)
-                {
-                    Py_DECREF(rootnode->apply->arys[i]->PyAry);
-                    free(rootnode->apply->arys[i]->base->data);
-                    free(rootnode->apply->arys[i]->base);
-                    free(rootnode->apply->arys[i]);
-                }
-*/
-            Py_DECREF(rootnode->apply->PyOp);
-            free(rootnode->apply);
-        }
-        else
-        {
-            fprintf(stderr, "Unknown sub-view block type.\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
+    /*
+                for(i=0; i<R->apply->narys; i++)
+                    if(R->apply->arys[i]->base->ndims == 0)
+                    {
+                        Py_DECREF(R->apply->arys[i]->PyAry);
+                        free(R->apply->arys[i]->base->data);
+                        free(R->apply->arys[i]->base);
+                        free(R->apply->arys[i]);
+                    }
+    */
+                Py_DECREF(R->apply->PyOp);
+                free(R->apply);
+                break;
+            default:
+                fprintf(stderr, "Unknown sub-view block type.\n");
+                MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
         dndnode *old = rootnode;
