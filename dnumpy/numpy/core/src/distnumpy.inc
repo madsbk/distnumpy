@@ -2096,9 +2096,9 @@ static void dag_svb_flush(void)
     npy_intp i;
     while(rootnode != NULL)
     {
+        dndnode *R = rootnode;
         switch(rootnode->type)
         {
-            dndnode *R = rootnode;
             case DNPY_RECV:
                 MPI_Recv(R->ary->base->data + R->svb->offset_view,
                          1, R->svb->comm_dtype_view,
