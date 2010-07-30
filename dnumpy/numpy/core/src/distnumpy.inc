@@ -26,12 +26,12 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
-//The Operation DAG and its current size.
-static dndop dag_op[DNPY_DAG_OP_MAXSIZE];
-static npy_intp dag_op_size=0;
 //The root of sub-view-block DAG and its current size.
 static dndnode *rootnode = NULL;
-static npy_intp dag_svg_size=0;
+static npy_intp dag_svb_size=0;
+//Sub-view-block buffer and its current sise.
+static dndsvb svbbuffer[DNPY_SVB_BUFFER_MAXSIZE];
+static npy_intp svbbuffer_size = 0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -40,7 +40,6 @@ static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 
 //Prototype for the DAGs.
-static void dag_op_flush(void);
 static void dag_svb_flush(void);
 static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
                     npy_intp mpi_tag, int remote_rank, dndapply *apply);
@@ -225,6 +224,7 @@ static void rm_dndview(npy_intp uid)
                 dndviews_uid[i] = 0;
                 if(dndviews[i].base->ndims == 0)//Dummy Scalar.
                 {
+                    free(dndviews[i].base->data);
                     free(dndviews[i].base);
                 }
                 else if(--dndviews[i].base->refcount == 0)
@@ -277,7 +277,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 {
     npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset, bufs;
     npy_intp notfinished, stride, vitems, vvitems, vblocksize;
-    npy_intp offset_view, offset_buf, nsub_in_worse_case, nelem;
+    npy_intp offset_view, offset_buf, nelem;
     npy_intp coord[NPY_MAXDIMS];
     npy_intp scoord[NPY_MAXDIMS];
     npy_intp ncoord[NPY_MAXDIMS];
@@ -320,14 +320,8 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 
     //Compute Non-block coord relative to array-view and the
     //number of sub-view-blocks in worse case.
-    nsub_in_worse_case=1;
-    for(i=0; i<view->base->ndims; i++)
-    {
-        ncoord[i] = coord[i] * blocksize;
-        nsub_in_worse_case *= MIN(blocksize, nsteps[i] - ncoord[i]);
-    }
-    nsub_in_worse_case = MAX(1, nsub_in_worse_case);
-    vblock->sub = malloc(nsub_in_worse_case * sizeof(dndsvb));
+    assert(svbbuffer_size < DNPY_SVB_BUFFER_MAXSIZE);
+    vblock->sub = &svbbuffer[svbbuffer_size];
     svb = vblock->sub;
 
     //Init number of sub-view-block in each dimension.
@@ -339,10 +333,12 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     notfinished=1; s=0;
     while(notfinished)
     {
-        assert(s < nsub_in_worse_case);
+        assert(svbbuffer_size <= DNPY_SVB_BUFFER_MAXSIZE);
         bufs=view->base->elsize;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
+            //Non-block coordinates.
+            ncoord[i] = coord[i] * blocksize;
             //View offset relative to array-view (non-block offset).
             voffset = ncoord[i] + scoord[i];
             //Global offset relative to array-base.
@@ -468,32 +464,12 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
                 vblock->svbdims[i] = 0;
 
         s++;
+        svbbuffer_size++;
     }
     //Save number of sub-vblocks.
     vblock->nsub = s;
     assert(vblock->nsub > 0);
 } /* calc_vblock */
-
-
-/*===================================================================
- *
- * Deallocate the specified view block.
- * Private.
- */
-static void
-free_vblock(dndvb *vblock)
-{
-    npy_intp i;
-    for(i=0; i<vblock->nsub; i++)
-    {
-        if(vblock->sub[i].rank != myrank && vblock->sub[i].data != NULL)
-            free(vblock->sub[i].data);
-        MPI_Type_free(&vblock->sub[i].comm_dtype_view);
-        MPI_Type_free(&vblock->sub[i].comm_dtype_buf);
-    }
-    free(vblock->sub);
-
-} /* free_vblock */
 
 /*===================================================================
  *
@@ -558,11 +534,11 @@ apply_ufunc(dndapply *apply)
     int j, i;
     PyObject *iters[NPY_MAXARGS];
     npy_intp *lastdims, lastndim;
-    int narys = apply->op->narys;
+    int narys = apply->narys;
 
     for(i=0; i<narys; i++)
     {
-        PyObject *ary = apply->op->arys[i]->PyAry;
+        PyObject *ary = apply->arys[i]->PyAry;
         assert(ary != NULL);
         //Scalars are already finished.
         if(PyArray_NDIM(ary) == 0)
@@ -575,15 +551,15 @@ apply_ufunc(dndapply *apply)
                                  apply->viewup[i].offset;
     }
 
-    lastdims = PyArray_DIMS(apply->op->arys[narys-1]->PyAry);
-    lastndim = PyArray_NDIM(apply->op->arys[narys-1]->PyAry);
+    lastdims = PyArray_DIMS(apply->arys[narys-1]->PyAry);
+    lastndim = PyArray_NDIM(apply->arys[narys-1]->PyAry);
 
-    if(apply->op->func == NULL)//Compatible Mode.
+    if(apply->func == NULL)//Compatible Mode.
     {
         PyObject *tuple = PyTuple_New(narys);
         for(i=0; i<narys; i++)
         {
-            PyObject *ary = apply->op->arys[i]->PyAry;
+            PyObject *ary = apply->arys[i]->PyAry;
             PyObject *tary = PyArray_New(&PyArray_Type,
                                          PyArray_NDIM(ary),
                                          PyArray_DIMS(ary),
@@ -595,7 +571,7 @@ apply_ufunc(dndapply *apply)
             assert(tary != NULL);
             PyTuple_SET_ITEM(tuple, i, tary);
         }
-        PyObject *t = PyObject_CallObject(apply->op->PyOp, tuple);
+        PyObject *t = PyObject_CallObject(apply->PyOp, tuple);
         assert(t != NULL);
         Py_DECREF(t);
         Py_DECREF(tuple);
@@ -604,7 +580,7 @@ apply_ufunc(dndapply *apply)
 
     //Create broadcasted iterators.
     for(j=0; j<narys; j++)
-        iters[j] = PyArray_BroadcastToShape(apply->op->arys[j]->PyAry,
+        iters[j] = PyArray_BroadcastToShape(apply->arys[j]->PyAry,
                                             lastdims, lastndim);
 
     //The iterators should not iterate over the axis-dimension. That
@@ -636,7 +612,7 @@ apply_ufunc(dndapply *apply)
         for(j=0; j<narys; j++)
             tdata[j] = PyArray_ITER_DATA(iters[j]);
         //Apply operation.
-        apply->op->func(tdata, &lastdims[axis], steps, apply->op->funcdata);
+        apply->func(tdata, &lastdims[axis], steps, apply->funcdata);
         //Go to next block.
         for(j=0; j<narys; j++)
             PyArray_ITER_NEXT(iters[j]);
@@ -964,7 +940,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
         printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
 
-    dag_op_flush();
+    dag_svb_flush();
 
     rm_dndview(uid);
 
@@ -998,7 +974,7 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
         printf("\n");
     #endif
 
-    dag_op_flush();
+    dag_svb_flush();
 
     //Add the base to the new view.
     newview->base = orgview->base;
@@ -1056,7 +1032,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         }
     #endif
 
-    dag_op_flush();
+    dag_svb_flush();
 
     if(myrank == 0)
     {
@@ -1134,9 +1110,9 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
                     view->base->comm_win);
         MPI_Win_unlock(vblock.sub[b].rank, view->base->comm_win);
-
-        free_vblock(&vblock);
     }
+
+    dag_svb_flush();//Will cleanup the used sub-view-blocks.
 
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -1148,7 +1124,10 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
  * Message handler for UFUNC.
  * Private.
  */
-static void do_UFUNC(dndop *operation)
+static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
+                      int nout_arys, int appropriate_function,
+                      int scalar_dtype, int scalar_size,
+                      char* scalar, char* op)
 {
     npy_intp i, j, s, n, v, mpi_tag;
     npy_intp coord[NPY_MAXDIMS], bcoord[NPY_MAXDIMS];
@@ -1160,10 +1139,40 @@ static void do_UFUNC(dndop *operation)
     int pcoord[NPY_MAXDIMS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
-    dndview **views = operation->arys;
-    int narys = operation->narys;
-    int nout = operation->nout;
-    int nin = narys - nout;
+    int nin = narys - nout_arys;
+    dndview *views[NPY_MAXARGS];
+    PyUFuncGenericFunction func = NULL;
+    void *funcdata = NULL;
+
+    if(nout_arys != 1)
+    {
+        fprintf(stderr, "At the moment distnumpy only supports "
+                        "ufunc with one output array\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    for(i=0; i<narys; i++)
+        if(arylist[i])
+        {
+            views[i] = get_dndview(arylist[i]);
+        }
+        else
+        {   //Create a dummy view for the scalar.
+            dndview dummy;
+            //Use negated uid since positive uids are generated
+            //by the master process only.
+            dummy.uid = -(++uid_count);
+            dummy.nslice = 0;
+            dummy.base = malloc(sizeof(dndarray));
+            dummy.base->ndims = 0;
+            dummy.ndims = 0;
+            dummy.base->dtype = scalar_dtype;
+            dummy.base->nelements = 1;
+            dummy.base->data = malloc(scalar_size);
+            memcpy(dummy.base->data, scalar, scalar_size);
+            dummy.base->elsize = scalar_size;
+            views[i] = put_dndview(&dummy);
+        }
 
     dndview *lastary = views[narys-1];
 
@@ -1177,6 +1186,16 @@ static void do_UFUNC(dndop *operation)
             printf(" %ld", (long)views[i]->uid);
         printf("\n");
     #endif
+
+    //Get Python function.
+    PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
+    assert(PyOp != NULL);
+    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
+    if(appropriate_function >= 0)
+    {
+        func = ufunc_obj->functions[appropriate_function];
+        funcdata = ufunc_obj->data[appropriate_function];
+    }
 
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
@@ -1225,7 +1244,14 @@ static void do_UFUNC(dndop *operation)
         for(; svb_notfinished; mpi_tag++)
         {
             dndapply *apply = malloc(sizeof(dndapply));
-            apply->op = operation;
+            apply->type = DNPY_UFUNC;
+            apply->narys = narys;
+            apply->nout = nout_arys;
+            memcpy(apply->arys, views, narys * sizeof(dndview*));
+            apply->func = func;
+            apply->funcdata = funcdata;
+            Py_INCREF(PyOp);
+            apply->PyOp = PyOp;
 
             //Find current sub-view-block for all arrays.
             dndsvb *svbs[NPY_MAXARGS];
@@ -1379,6 +1405,7 @@ static void do_UFUNC(dndop *operation)
                                 coord_owner, NULL);
                 }
                 //The apply is not used.
+                Py_DECREF(apply->PyOp);
                 free(apply);
             }
 
@@ -1454,13 +1481,6 @@ static void do_UFUNC(dndop *operation)
         //Make sure that all svb are fletched and applied.
         dag_svb_flush();
 
-        //Cleanup.
-        for(v=0; v<narys; v++)
-        {
-            if(views[v]->base->ndims != 0)//Not a scalar.
-                free_vblock(&vblocks[v]);
-        }
-
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
         {
@@ -1480,6 +1500,7 @@ static void do_UFUNC(dndop *operation)
         }
     }
 
+    Py_DECREF(PyOp);
     //Clean up Scalar dummy.
     for(i=0; i<narys; i++)
     {
@@ -1488,7 +1509,6 @@ static void do_UFUNC(dndop *operation)
             rm_dndview(views[i]->uid);
         }
     }
-    Py_DECREF(operation->PyOp);
 } /* do_UFUNC */
 
 /*===================================================================
@@ -1517,7 +1537,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    dag_op_flush();
+    dag_svb_flush();
 
     //At the moment we don't support views.
     if(in_view->alterations != 0)
@@ -1736,7 +1756,7 @@ static void do_ZEROFILL(dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    dag_op_flush();
+    dag_svb_flush();
 
     memset(view->base->data, 0, view->base->nelements *
                                 view->base->elsize);
@@ -1760,7 +1780,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    dag_op_flush();
+    dag_svb_flush();
 
     /* File access mode */
     int mode = 0;
@@ -1833,7 +1853,7 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
                             axis1, axis2);
     #endif
 
-    dag_op_flush();
+    dag_svb_flush();
 
     //Find process coord in output vector.
     rank2cart(1, myrank, &mypcoord);
@@ -1914,7 +1934,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                                                        (long)C->uid);
     #endif
 
-    dag_op_flush();
+    dag_svb_flush();
 
     //Check if the views covers the whole array.
     if(A->alterations != 0 || B->alterations != 0 ||
@@ -2068,50 +2088,6 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     free(temp);
 } /* do_MATMUL */
 
-
-/*===================================================================
- *
- * Execute all operations in the Operation DAG.
- * Private.
- */
-static void dag_op_flush(void)
-{
-    int i;
-    for(i=0; i<dag_op_size; i++)
-    {
-       MPI_Barrier(MPI_COMM_WORLD);
-       do_UFUNC(&dag_op[i]);
-    }
-    //Empty tree.
-    dag_op_size = 0;
-} /* dag_op_flush */
-
-/*===================================================================
- *
- * Add an operation to the Operation DAG.
- * Private.
- */
-static void dag_op_add(int type, int narys, int nout,
-                       dndview *arys[NPY_MAXARGS],
-                       PyUFuncGenericFunction func, void *funcdata,
-                       PyObject *PyOp)
-{
-    //Append the operation to the execution tree.
-    dag_op[dag_op_size].type = type;
-    dag_op[dag_op_size].narys = narys;
-    dag_op[dag_op_size].nout = nout;
-    memcpy(dag_op[dag_op_size].arys, arys, narys*sizeof(dndview*));
-    dag_op[dag_op_size].func = func;
-    dag_op[dag_op_size].funcdata = funcdata;
-    dag_op[dag_op_size].PyOp = PyOp;
-    dag_op_size++;
-
-    if(dag_op_size >= DNPY_DAG_OP_MAXSIZE)//Check for overflow.
-       dag_op_flush();
-
-} /* dag_op_add */
-
-
 /*===================================================================
  *
  * Flush the sub-view block DAG.
@@ -2119,6 +2095,7 @@ static void dag_op_add(int type, int narys, int nout,
  */
 static void dag_svb_flush(void)
 {
+    npy_intp i;
     while(rootnode != NULL)
     {
 
@@ -2160,6 +2137,18 @@ static void dag_svb_flush(void)
             assert(rootnode->apply != NULL);
             assert(rootnode->remote_rank == myrank);
             apply_ufunc(rootnode->apply);
+
+/*
+            for(i=0; i<rootnode->apply->narys; i++)
+                if(rootnode->apply->arys[i]->base->ndims == 0)
+                {
+                    Py_DECREF(rootnode->apply->arys[i]->PyAry);
+                    free(rootnode->apply->arys[i]->base->data);
+                    free(rootnode->apply->arys[i]->base);
+                    free(rootnode->apply->arys[i]);
+                }
+*/
+            Py_DECREF(rootnode->apply->PyOp);
             free(rootnode->apply);
         }
         else
@@ -2177,9 +2166,19 @@ static void dag_svb_flush(void)
         else
             rootnode = NULL;
         free(old);
-        dag_svg_size--;
+        dag_svb_size--;
     }
-    assert(dag_svg_size == 0);
+
+    //Cleanup the sub-view-block buffer.
+    for(i=0; i<svbbuffer_size; i++)
+    {
+        if(svbbuffer[i].rank != myrank && svbbuffer[i].data != NULL)
+            free(svbbuffer[i].data);
+        MPI_Type_free(&svbbuffer[i].comm_dtype_view);
+        MPI_Type_free(&svbbuffer[i].comm_dtype_buf);
+    }
+    svbbuffer_size = 0;
+
 }/* dag_svb_flush */
 
 /*===================================================================
@@ -2197,7 +2196,7 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
            (type == DNPY_APPLY && apply != NULL));
 
     //Create a new node.
-    dag_svg_size++;
+    dag_svb_size++;
     dndnode *node = malloc(sizeof(dndnode));
     node->type = type;
     node->mpi_tag = mpi_tag;
@@ -2222,78 +2221,9 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
         tnode->depend[0] = node;
         tnode->ndepend++;
     }
-    if(dag_svg_size >= DNPY_DAG_SVG_MAXSIZE)//Check for overflow.
+    if(dag_svb_size >= DNPY_DAG_SVB_MAXSIZE)//Check for overflow.
         dag_svb_flush();
 } /* dag_svb_add */
-
-/*===================================================================
- *
- * Message registration for UFUNC.
- * Private.
- */
-static void reg_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
-                      int nout_arys, int appropriate_function,
-                      int scalar_dtype, int scalar_size,
-                      char* scalar, char* op)
-{
-    int i;
-    dndview *views[NPY_MAXARGS];
-    PyUFuncGenericFunction func = NULL;
-    void *funcdata = NULL;
-
-    if(nout_arys != 1)
-    {
-        fprintf(stderr, "At the moment distnumpy only supports "
-                        "ufunc with one output array\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-
-    for(i=0; i<narys; i++)
-        if(arylist[i])
-        {
-            views[i] = get_dndview(arylist[i]);
-        }
-        else
-        {   //Create a dummy view for the scalar.
-            dndview dummy;
-            //Use negated uid since positive uids are generated
-            //by the master process only.
-            dummy.uid = -(++uid_count);
-            dummy.nslice = 0;
-            dummy.base = malloc(sizeof(dndarray));
-            dummy.base->ndims = 0;
-            dummy.ndims = 0;
-            dummy.base->dtype = scalar_dtype;
-            dummy.base->nelements = 1;
-            dummy.base->data = malloc(scalar_size);
-            memcpy(dummy.base->data, scalar, scalar_size);
-            dummy.base->elsize = scalar_size;
-            views[i] = put_dndview(&dummy);
-        }
-
-    //Print debug info.
-    #ifdef DISTNUMPY_DEBUG
-        printf("Reg UFUNC (%s) on - in:", op);
-        for(i=0; i<narys-nout_arys; i++)
-            printf(" %ld", (long)views[i]->uid);
-        printf(" out:");
-        for(i=narys-nout_arys; i<narys; i++)
-            printf(" %ld", (long)views[i]->uid);
-        printf(", scalar-size: %d\n", scalar_size);
-    #endif
-
-    //Get Python function.
-    PyObject *PyOp = PyObject_GetAttrString(ufunc_module, op);
-    assert(PyOp != NULL);
-    PyUFuncObject *ufunc_obj = (PyUFuncObject*) PyOp;
-    if(appropriate_function >= 0)
-    {
-        func = ufunc_obj->functions[appropriate_function];
-        funcdata = ufunc_obj->data[appropriate_function];
-    }
-    dag_op_add(DNPY_UFUNC, narys, nout_arys, views, func, funcdata,
-               PyOp);
-} /* reg_UFUNC */
 
 
 /*NUMPY_API
@@ -2644,7 +2574,7 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
         printf("Rank 0 received msg: ");
     #endif
 
-    reg_UFUNC((npy_intp*)(((char*)(msg+6))+msg[5]), msg[1], msg[2], msg[3],
+    do_UFUNC((npy_intp*)(((char*)(msg+6))+msg[5]), msg[1], msg[2], msg[3],
               msg[4], msg[5], (char*) (msg+6), op);
     return 0;
 } /* dnumpy_ufunc */
@@ -3094,7 +3024,7 @@ dnumpy_master_slave_split()
                 t1 = msg_data+sizeof(npy_intp)*5;
                 t2 = t1+d5;
                 t3 = t2+d1*sizeof(npy_intp);
-                reg_UFUNC((npy_intp *)t2,d1,d2,d3,d4,d5,t1,t3);
+                do_UFUNC((npy_intp *)t2,d1,d2,d3,d4,d5,t1,t3);
                 break;
             case DNPY_UFUNC_REDUCE:
                 d1 = *((npy_intp*)msg_data);

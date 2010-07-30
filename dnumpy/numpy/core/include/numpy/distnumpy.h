@@ -35,11 +35,8 @@ typedef struct {
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*10
 
-//Maximum size of the Operation DAG
-#define DNPY_DAG_OP_MAXSIZE 10
-
 //Maximum size of the sub-view block DAG
-#define DNPY_DAG_SVG_MAXSIZE 100
+#define DNPY_DAG_SVB_MAXSIZE 100
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
@@ -49,6 +46,10 @@ typedef struct {
 
 //Maximum number of dependency per sub-view-block.
 #define DNPY_MAX_DEPENDENCY 10
+
+//The maximum size of the sub-view-block buffer. Should be larger than
+//the total number of svbs located in the svb-DAG at any moment.
+#define DNPY_SVB_BUFFER_MAXSIZE (DNPY_DAG_SVB_MAXSIZE * NPY_MAXARGS * 10)
 
 //Operation types
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
@@ -171,23 +172,6 @@ typedef struct
     npy_intp svbdims[NPY_MAXDIMS];
 } dndvb;
 
-//Type describing an array operation.
-typedef struct
-{
-    //The operation type, i.e. UFUNC.
-    int type;
-    //Number of array views involved.
-    int narys;
-    //Number of output array views.
-    int nout;
-    //List of array views involved.
-    dndview *arys[NPY_MAXARGS];
-    //The operation described as a function, a data and a Python pointer.
-    PyUFuncGenericFunction func;
-    void *funcdata;
-    PyObject *PyOp;
-} dndop;
-
 //Type describing an array view update.
 //This type is used for updating an existing PyArray Object to
 //repesent a new memory area.
@@ -201,13 +185,25 @@ typedef struct
 //Type describing the applying of an array operation on main memory.
 typedef struct
 {
-    //The operation to apply, which also contains the number of
-    //array views involved.
-    dndop *op;
     //List of array view updates involved.
     dndview_update viewup[NPY_MAXARGS];
     //List of sub-view-blocks involved (one per array).
     dndsvb *svb[NPY_MAXARGS];
+    /* The operation to apply. */
+    //Number of dndapply that points to this operation.
+    npy_intp ref_count;
+    //The operation type, i.e. UFUNC.
+    int type;
+    //Number of array views involved.
+    int narys;
+    //Number of output array views.
+    int nout;
+    //List of array views involved.
+    dndview *arys[NPY_MAXARGS];
+    //The operation described as a function, a data and a Python pointer.
+    PyUFuncGenericFunction func;
+    void *funcdata;
+    PyObject *PyOp;
 } dndapply;
 
 //Type describing a DAG node for the execution.
