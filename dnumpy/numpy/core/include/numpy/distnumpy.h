@@ -33,10 +33,10 @@ typedef struct {
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
 
 //Maximum message size (in bytes)
-#define DNPY_MAX_MSG_SIZE 1024*10
+#define DNPY_MAX_MSG_SIZE 1024*4
 
-//Maximum size of the sub-view block DAG
-#define DNPY_DAG_SVB_MAXSIZE 100
+//Maximum number of view block operations in the sub-view-block DAG.
+#define DNPY_MAX_VB_IN_SVB_DAG 100
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
@@ -47,9 +47,8 @@ typedef struct {
 //Maximum number of dependency per sub-view-block.
 #define DNPY_MAX_DEPENDENCY 10
 
-//The maximum size of the sub-view-block buffer. Should be larger than
-//the total number of svbs located in the svb-DAG at any moment.
-#define DNPY_SVB_BUFFER_MAXSIZE (DNPY_DAG_SVB_MAXSIZE * NPY_MAXARGS * 10)
+//The maximum size of the work buffer in bytes (should be power of 2).
+#define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB
 
 //Operation types
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,

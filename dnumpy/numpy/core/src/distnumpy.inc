@@ -15,6 +15,12 @@
 static int myrank, worldsize;
 static npy_intp blocksize;
 static npy_intp msg[DNPY_MAX_MSG_SIZE];
+//The work buffer and its next free slot.
+static void *workbuf;
+static void *workbuf_nextfree;
+//The svb buffer and its next free slot.
+static dndsvb *svbbuf;
+static dndsvb *svbbuf_nextfree;
 //Unique identification counter
 static npy_intp uid_count=0;
 //Array-views belonging to local MPI process
@@ -26,12 +32,10 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
-//The root of sub-view-block DAG and its current size.
+//The root of sub-view-block DAG and the number of view block
+//operations in it.
 static dndnode *rootnode = NULL;
-static npy_intp dag_svb_size=0;
-//Sub-view-block buffer and its current sise.
-static dndsvb svbbuffer[DNPY_SVB_BUFFER_MAXSIZE];
-static npy_intp svbbuffer_size = 0;
+static npy_intp nvb_in_svb_dag=0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -318,10 +322,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     }
     assert(j == view->base->ndims);
 
-    //Compute Non-block coord relative to array-view and the
-    //number of sub-view-blocks in worse case.
-    assert(svbbuffer_size < DNPY_SVB_BUFFER_MAXSIZE);
-    vblock->sub = &svbbuffer[svbbuffer_size];
+    vblock->sub = svbbuf_nextfree;
     svb = vblock->sub;
 
     //Init number of sub-view-block in each dimension.
@@ -333,7 +334,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     notfinished=1; s=0;
     while(notfinished)
     {
-        assert(svbbuffer_size <= DNPY_SVB_BUFFER_MAXSIZE);
         bufs=view->base->elsize;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
@@ -464,11 +464,12 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
                 vblock->svbdims[i] = 0;
 
         s++;
-        svbbuffer_size++;
     }
     //Save number of sub-vblocks.
     vblock->nsub = s;
     assert(vblock->nsub > 0);
+    //And the next free work buffer slot.
+    svbbuf_nextfree += s;
 } /* calc_vblock */
 
 /*===================================================================
@@ -1476,8 +1477,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 }
             }
 
-        //Make sure that all svb are fletched and applied.
-        dag_svb_flush();
+        //We have added a whole view-block operation to the svb-DAG
+        //and we may therefore have to flush it before calculating
+        //new view-blocks.
+        if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
+            dag_svb_flush();
+
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
@@ -1497,6 +1502,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 break;
         }
     }
+    dag_svb_flush();
 
     Py_DECREF(PyOp);
     //Clean up Scalar dummy.
@@ -2088,12 +2094,11 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
 
 /*===================================================================
  *
- * Flush the sub-view block DAG.
+ * Flush the sub-view block DAG and the work buffer.
  * Private.
  */
 static void dag_svb_flush(void)
 {
-    npy_intp i;
     while(rootnode != NULL)
     {
         dndnode *R = rootnode;
@@ -2107,8 +2112,8 @@ static void dag_svb_flush(void)
                 break;
             case DNPY_BUF_RECV:
                 assert(R->svb->data == NULL);
-                R->svb->data = malloc(R->svb->nelem *
-                                      R->ary->base->elsize);
+                R->svb->data = workbuf_nextfree;
+                workbuf_nextfree += R->svb->nelem * R->ary->base->elsize;
                 MPI_Recv(R->svb->data, R->svb->nelem,
                          R->ary->base->mpi_dtype, R->remote_rank,
                          R->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -2148,8 +2153,7 @@ static void dag_svb_flush(void)
                 fprintf(stderr, "Unknown sub-view block type.\n");
                 MPI_Abort(MPI_COMM_WORLD, -1);
         }
-
-        dndnode *old = rootnode;
+        //Go to next node.
         if(rootnode->ndepend > 0)
         {//At the moment the svb DAG is just a linked list.
             assert(rootnode->ndepend == 1);
@@ -2157,19 +2161,20 @@ static void dag_svb_flush(void)
         }
         else
             rootnode = NULL;
-        free(old);
-        dag_svb_size--;
     }
 
     //Cleanup the sub-view-block buffer.
-    for(i=0; i<svbbuffer_size; i++)
+    while(svbbuf_nextfree > svbbuf)
     {
-        if(svbbuffer[i].rank != myrank && svbbuffer[i].data != NULL)
-            free(svbbuffer[i].data);
-        MPI_Type_free(&svbbuffer[i].comm_dtype_view);
-        MPI_Type_free(&svbbuffer[i].comm_dtype_buf);
+        svbbuf_nextfree--;
+        MPI_Type_free(&svbbuf_nextfree->comm_dtype_view);
+        MPI_Type_free(&svbbuf_nextfree->comm_dtype_buf);
     }
-    svbbuffer_size = 0;
+
+    //Resetting.
+    nvb_in_svb_dag = 0;
+    workbuf_nextfree = workbuf;
+    svbbuf_nextfree = svbbuf;
 
 }/* dag_svb_flush */
 
@@ -2187,9 +2192,12 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
            (type == DNPY_BUF_SEND && svb != NULL && ary != NULL) ||
            (type == DNPY_APPLY && apply != NULL));
 
+    if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
+        dag_svb_flush();
+
     //Create a new node.
-    dag_svb_size++;
-    dndnode *node = malloc(sizeof(dndnode));
+    dndnode *node = workbuf_nextfree;
+    workbuf_nextfree += sizeof(dndnode);
     node->type = type;
     node->mpi_tag = mpi_tag;
     node->remote_rank =  remote_rank;
@@ -2213,8 +2221,6 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
         tnode->depend[0] = node;
         tnode->ndepend++;
     }
-    if(dag_svb_size >= DNPY_DAG_SVB_MAXSIZE)//Check for overflow.
-        dag_svb_flush();
 } /* dag_svb_add */
 
 
@@ -2814,6 +2820,14 @@ dnumpy_init(void)
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &worldsize);
 
+    //Allocate buffers.
+    workbuf = malloc(DNPY_WORK_BUFFER_MAXSIZE);
+    workbuf_nextfree = workbuf;
+    assert(workbuf != NULL);
+    svbbuf = malloc(DNPY_WORK_BUFFER_MAXSIZE);
+    svbbuf_nextfree = svbbuf;
+    assert(svbbuf != NULL);
+
     //Initilization of cart_dim_strides.
     for(i=0; i<NPY_MAXDIMS; i++)
     {
@@ -2900,13 +2914,17 @@ dnumpy_exit()
             printf("Rank 0 received msg: SHUTDOWN\n");
         #endif
     }
+    //Make sure that the sub-view-block DAG is flushed.
+    dag_svb_flush();
+    //Free buffers.
+    free(workbuf);
+    free(svbbuf);
     //Free Cartesian Information.
     for(i=0; i < NPY_MAXDIMS; i++)
     {
         free(cart_dim_strides[i]);
         free(cart_dim_sizes[i]);
     }
-
     int nleaks = 0;
     for(i=0; i < DNPY_MAX_NARRAYS; i++)
         if(dndviews_uid[i] != 0)
