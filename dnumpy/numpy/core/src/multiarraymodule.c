@@ -8419,6 +8419,9 @@ static struct PyMethodDef array_module_methods[] = {
     {"dnumpy_init",
         (PyCFunction)dnumpy_master_slave_split,
         METH_VARARGS, NULL},
+    {"evalflush",
+        (PyCFunction)dnumpy_evalflush,
+        METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}                /* sentinel */
 };
 

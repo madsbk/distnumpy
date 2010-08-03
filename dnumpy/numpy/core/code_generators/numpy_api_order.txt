@@ -190,3 +190,4 @@ dnumpy_matrix_multiplication
 dnumpy_reg_ufunc_module
 dnumpy_get_reged_ufunc_module
 dnumpy_reg_cblas
+dnumpy_evalflush

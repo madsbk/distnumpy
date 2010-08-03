@@ -2175,7 +2175,6 @@ static void dag_svb_flush(void)
     nvb_in_svb_dag = 0;
     workbuf_nextfree = workbuf;
     svbbuf_nextfree = svbbuf;
-
 }/* dag_svb_flush */
 
 /*===================================================================
@@ -2434,6 +2433,27 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
     do_CREATE_VIEW(orgview->uid, &newview);
     return uid_count;
 } /* dnumpy_create_dndview */
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Executes all appending operations.
+ */
+static PyObject *
+dnumpy_evalflush(void)
+{
+    //Tell slaves
+    msg[0] = DNPY_EVALFLUSH;
+    msg[1] = DNPY_MSG_END;
+    msg2slaves(msg, 2 * sizeof(npy_intp));
+
+    //The master should also do the operation.
+    #ifdef DISTNUMPY_DEBUG
+        printf("Rank 0 received msg: EVALFLUSH\n");
+    #endif
+    dag_svb_flush();
+    Py_RETURN_NONE;
+} /* dnumpy_evalflush */
 
 
 /*NUMPY_API
@@ -2945,7 +2965,7 @@ dnumpy_exit()
  * If returning False the Python must call sys.exit(0) immediately.
  */
 static PyObject *
-dnumpy_master_slave_split()
+dnumpy_master_slave_split(void)
 {
     if(myrank == 0)
     {
@@ -3013,6 +3033,12 @@ dnumpy_master_slave_split()
                     printf("SHUTDOWN\n");
                 #endif
                 shutdown = 1;
+                break;
+            case DNPY_EVALFLUSH:
+                #ifdef DISTNUMPY_DEBUG
+                    printf("EVALFLUSH\n");
+                #endif
+                dag_svb_flush();
                 break;
             case DNPY_PUT_ITEM:
                 ary = get_dndview(*((npy_intp*)msg_data));
