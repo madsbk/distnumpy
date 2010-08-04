@@ -182,7 +182,7 @@ static void rank2cart(int ndims, int rank, int coords[NPY_MAXDIMS])
 static dndview *get_dndview(npy_intp uid)
 {
     npy_intp i;
-    if(uid > 0)
+    if(uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
                 return &dndviews[i];
@@ -941,9 +941,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
         printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
 
-    dag_svb_flush();
-
-    rm_dndview(uid);
+    dag_svb_add(DNPY_DESTROY_ARRAY, NULL, get_dndview(uid), 0, 0, NULL);
 
 } /* do_DESTROY_ARRAY */
 
@@ -1502,17 +1500,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 break;
         }
     }
-    dag_svb_flush();
-
     Py_DECREF(PyOp);
     //Clean up Scalar dummy.
     for(i=0; i<narys; i++)
-    {
         if(views[i]->base->ndims == 0)//Scalar dummy.
-        {
-            rm_dndview(views[i]->uid);
-        }
-    }
+            do_DESTROY_ARRAY(views[i]->uid);
 } /* do_UFUNC */
 
 /*===================================================================
@@ -2149,6 +2141,10 @@ static void dag_svb_flush(void)
                 Py_DECREF(R->apply->PyOp);
                 free(R->apply);
                 break;
+            case DNPY_DESTROY_ARRAY:
+                assert(R->ary != NULL);
+                rm_dndview(R->ary->uid);
+                break;
             default:
                 fprintf(stderr, "Unknown sub-view block type.\n");
                 MPI_Abort(MPI_COMM_WORLD, -1);
@@ -2189,7 +2185,8 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
            (type == DNPY_BUF_RECV && svb != NULL && ary != NULL) ||
            (type == DNPY_SEND && svb != NULL && ary != NULL) ||
            (type == DNPY_BUF_SEND && svb != NULL && ary != NULL) ||
-           (type == DNPY_APPLY && apply != NULL));
+           (type == DNPY_APPLY && apply != NULL) ||
+           (type == DNPY_DESTROY_ARRAY && ary != NULL));
 
     if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
         dag_svb_flush();
