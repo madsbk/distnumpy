@@ -44,7 +44,7 @@ typedef struct {
 //Default blocksize
 #define DNPY_BLOCKSIZE 2
 
-//Maximum number of dependency per sub-view-block.
+//Maximum number of dependency per sub-view-block. (< sizeof(char))
 #define DNPY_MAX_DEPENDENCY 10
 
 //Maximum number of nodes in the ready queue.
@@ -175,6 +175,34 @@ typedef struct
     npy_intp svbdims[NPY_MAXDIMS];
 } dndvb;
 
+//The Super-type of a DAG node.
+//op               - the operation, such as DNPY_RECV and DNPY_APPLY.
+//ndepend & depend - list of nodes that depend on this node.
+//mydepend         - number of nodes this node depend on.
+//narys & views    - list of array views involved.
+//svbs             - list of sub-view-blocks involved (one per array),
+//                   NULL when whole arrays are involved.
+#define DNDNODE_HEAD                        \
+    char op;                                \
+    char ndepend;                       \
+    dndnode *depend[DNPY_MAX_DEPENDENCY];   \
+    npy_intp mydepend;                      \
+    char narys;                             \
+    dndview *views[NPY_MAXARGS];            \
+    dndsvb *svbs[NPY_MAXARGS];
+typedef struct dndnode_struct dndnode;
+struct dndnode_struct {DNDNODE_HEAD};
+
+//Type describing a communication DAG node.
+typedef struct
+{
+    DNDNODE_HEAD
+    //The MPI tag used for the communication.
+    npy_intp mpi_tag;
+    //The MPI rank of the process that is the remote communication peer.
+    int remote_rank;
+} dndnode_comm;
+
 //Type describing an array view update.
 //This type is used for updating an existing PyArray Object to
 //repesent a new memory area.
@@ -185,53 +213,19 @@ typedef struct
     npy_intp offset;
 } dndview_update;
 
-//Type describing the applying of an array operation on main memory.
+//Type describing a universal function DAG node.
 typedef struct
 {
+    DNDNODE_HEAD
     //List of array view updates involved.
     dndview_update viewup[NPY_MAXARGS];
-    //List of sub-view-blocks involved (one per array).
-    dndsvb *svb[NPY_MAXARGS];
-    /* The operation to apply. */
-    //Number of dndapply that points to this operation.
-    npy_intp ref_count;
-    //The operation type, i.e. UFUNC.
-    int type;
-    //Number of array views involved.
-    int narys;
     //Number of output array views.
-    int nout;
-    //List of array views involved.
-    dndview *arys[NPY_MAXARGS];
+    char nout;
     //The operation described as a function, a data and a Python pointer.
     PyUFuncGenericFunction func;
     void *funcdata;
     PyObject *PyOp;
-} dndapply;
+} dndnode_ufunc;
 
-//Type describing a DAG node for the execution.
-typedef struct dndnode_struct dndnode;
-struct dndnode_struct
-{
-    //Type of the node, i.e. DNPY_RECV, DNPY_BUF_RECV, DNPY_SEND,
-    //DNPY_BUF_SEND or DNPY_APPLY.
-    char type;
-    //The MPI tag used when type is not DNPY_APPLY.
-    npy_intp mpi_tag;
-    //The MPI rank of the process that is the remote communication peer.
-    int remote_rank;
-    //The sub-view-block involved. (NULL when no svb is involved).
-    dndsvb *svb;
-    //The array view involved.
-    dndview *ary;
-    //List of nodes that depend on this node.
-    npy_intp ndepend;
-    dndnode *depend[DNPY_MAX_DEPENDENCY];
-    //The ufunc that should be apply when this node does not
-    //depend on other nodes (NULL when nothing should be applyed).
-    dndapply *apply;
-    //Number of nodes this node depend on.
-    npy_intp mydepend;
-};
 
 #endif

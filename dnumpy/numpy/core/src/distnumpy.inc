@@ -46,8 +46,7 @@ static cblas_func_type *cblas_cgemm_func = NULL;
 
 //Prototype for the DAGs.
 static void dag_svb_flush(void);
-static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
-                    npy_intp mpi_tag, int remote_rank, dndapply *apply);
+static void dag_svb_add(void *node);
 /*===================================================================
  *
  * Returns a string describing dtype.
@@ -531,7 +530,7 @@ idx_v2s(const dndview *view, npy_intp vindex)
  * Private.
  */
 static void
-apply_ufunc(dndapply *apply)
+apply_ufunc(dndnode_ufunc *apply)
 {
     int j, i;
     PyObject *iters[NPY_MAXARGS];
@@ -540,7 +539,7 @@ apply_ufunc(dndapply *apply)
 
     for(i=0; i<narys; i++)
     {
-        PyObject *ary = apply->arys[i]->PyAry;
+        PyObject *ary = apply->views[i]->PyAry;
         assert(ary != NULL);
         //Scalars are already finished.
         if(PyArray_NDIM(ary) == 0)
@@ -549,19 +548,19 @@ apply_ufunc(dndapply *apply)
         int s = PyArray_NDIM(ary) * sizeof(npy_intp);
         memcpy(PyArray_DIMS(ary), apply->viewup[i].dims, s);
         memcpy(PyArray_STRIDES(ary), apply->viewup[i].stride, s);
-        PyArray_BYTES(ary) = apply->svb[i]->data +
-                                 apply->viewup[i].offset;
+        PyArray_BYTES(ary) = apply->svbs[i]->data +
+                             apply->viewup[i].offset;
     }
 
-    lastdims = PyArray_DIMS(apply->arys[narys-1]->PyAry);
-    lastndim = PyArray_NDIM(apply->arys[narys-1]->PyAry);
+    lastdims = PyArray_DIMS(apply->views[narys-1]->PyAry);
+    lastndim = PyArray_NDIM(apply->views[narys-1]->PyAry);
 
     if(apply->func == NULL)//Compatible Mode.
     {
         PyObject *tuple = PyTuple_New(narys);
         for(i=0; i<narys; i++)
         {
-            PyObject *ary = apply->arys[i]->PyAry;
+            PyObject *ary = apply->views[i]->PyAry;
             PyObject *tary = PyArray_New(&PyArray_Type,
                                          PyArray_NDIM(ary),
                                          PyArray_DIMS(ary),
@@ -582,7 +581,7 @@ apply_ufunc(dndapply *apply)
 
     //Create broadcasted iterators.
     for(j=0; j<narys; j++)
-        iters[j] = PyArray_BroadcastToShape(apply->arys[j]->PyAry,
+        iters[j] = PyArray_BroadcastToShape(apply->views[j]->PyAry,
                                             lastdims, lastndim);
 
     //The iterators should not iterate over the axis-dimension. That
@@ -942,7 +941,13 @@ static void do_DESTROY_ARRAY(npy_intp uid)
         printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
 
-    dag_svb_add(DNPY_DESTROY_ARRAY, NULL, get_dndview(uid), 0, 0, NULL);
+    dndnode *node = workbuf_nextfree;
+    workbuf_nextfree += sizeof(dndnode);
+    node->op = DNPY_DESTROY_ARRAY;
+    node->narys = 1;
+    node->views[0] = get_dndview(uid);
+    node->svbs[0] = NULL;
+    dag_svb_add(node);
 
 } /* do_DESTROY_ARRAY */
 
@@ -1307,19 +1312,27 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     svbs[v]->comm_handled = 1;
 
                     //Add a new sub-view block DAG node.
-                    dag_svb_add(DNPY_BUF_RECV, svbs[v], views[v], mpi_tag,
-                                svbs[v]->rank, NULL);
+                    dndnode_comm *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode_comm);
+                    node->op = DNPY_BUF_RECV;
+                    node->narys = 1;
+                    node->views[0] = views[v];
+                    node->svbs[0] = svbs[v];
+                    node->mpi_tag = mpi_tag;
+                    node->remote_rank = svbs[v]->rank;
+                    dag_svb_add(node);
                 }
                 //Add the apply request to the svb-DAG.
-                dndapply *apply = malloc(sizeof(dndapply));
-                apply->type = DNPY_UFUNC;
-                apply->narys = narys;
-                apply->nout = nout_arys;
-                memcpy(apply->arys, views, narys * sizeof(dndview*));
-                apply->func = func;
-                apply->funcdata = funcdata;
+                dndnode_ufunc *node = workbuf_nextfree;
+                workbuf_nextfree += sizeof(dndnode_ufunc);
+                node->op = DNPY_UFUNC;
+                node->narys = narys;
+                node->nout = nout_arys;
+                memcpy(node->views, views, narys * sizeof(dndview*));
+                node->func = func;
+                node->funcdata = funcdata;
                 Py_INCREF(PyOp);
-                apply->PyOp = PyOp;
+                node->PyOp = PyOp;
 
                 //Update the PyArray Objects to match the current
                 //sub-view-block.
@@ -1378,13 +1391,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     //                views[v]->base->elsize,
                     //                NPY_BEHAVED, NULL);
                     s = views[v]->ndims * sizeof(npy_intp);
-                    memcpy(apply->viewup[v].dims, csdims, s);
-                    memcpy(apply->viewup[v].stride, sstride, s);
-                    apply->viewup[v].offset = offset;
-                    apply->svb[v] = svbs[v];
+                    memcpy(node->viewup[v].dims, csdims, s);
+                    memcpy(node->viewup[v].stride, sstride, s);
+                    node->viewup[v].offset = offset;
+                    node->svbs[v] = svbs[v];
                 }
                 //Add a new sub-view block DAG node.
-                dag_svb_add(DNPY_APPLY, NULL, NULL, 0, myrank, apply);
+                dag_svb_add(node);
             }
             else
             {   //Add send request to the svb-DAG.
@@ -1402,8 +1415,15 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     svbs[v]->comm_handled = 1;
 
                     //Add a new sub-view block DAG node.
-                    dag_svb_add(DNPY_SEND, svbs[v], views[v], mpi_tag,
-                                coord_owner, NULL);
+                    dndnode_comm *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode_comm);
+                    node->op = DNPY_SEND;
+                    node->narys = 1;
+                    node->views[0] = views[v];
+                    node->svbs[0] = svbs[v];
+                    node->mpi_tag = mpi_tag;
+                    node->remote_rank = coord_owner;
+                    dag_svb_add(node);
                 }
             }
 
@@ -1464,15 +1484,31 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             {
                 mpi_tag++;
                 dndsvb *svb = &vblocks[v].sub[j];
+
+                //Add a new sub-view block DAG node.
                 if(coord_owner == myrank && svb->rank != myrank)
                 {
-                    dag_svb_add(DNPY_BUF_SEND, svb, views[v], mpi_tag,
-                                svb->rank, NULL);
+                    dndnode_comm *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode_comm);
+                    node->narys = 1;
+                    node->views[0] = views[v];
+                    node->svbs[0] = svb;
+                    node->mpi_tag = mpi_tag;
+                    node->op = DNPY_BUF_SEND;
+                    node->remote_rank = svb->rank;
+                    dag_svb_add(node);
                 }
                 else if(coord_owner != myrank && svb->rank == myrank)
                 {
-                    dag_svb_add(DNPY_RECV, svb, views[v], mpi_tag,
-                                coord_owner, NULL);
+                    dndnode_comm *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode_comm);
+                    node->narys = 1;
+                    node->views[0] = views[v];
+                    node->svbs[0] = svb;
+                    node->mpi_tag = mpi_tag;
+                    node->op = DNPY_RECV;
+                    node->remote_rank = coord_owner;
+                    dag_svb_add(node);
                 }
             }
 
@@ -2096,70 +2132,67 @@ static void dag_svb_flush(void)
     while(ready_queue_size > 0)
     {
         //Get a ready node - using First In Last Out.
-        dndnode *R = ready_queue[--ready_queue_size];
-        switch(R->type)
+        dndnode *node = ready_queue[--ready_queue_size];
+        dndnode_comm *C = (dndnode_comm*) node;
+        dndnode_ufunc *F = (dndnode_ufunc*) node;
+        switch(node->op)
         {
             case DNPY_RECV:
-                MPI_Recv(R->ary->base->data + R->svb->offset_view,
-                         1, R->svb->comm_dtype_view,
-                         R->remote_rank, R->mpi_tag,
+                assert(C->narys == 1);
+                MPI_Recv(C->views[0]->base->data +
+                         C->svbs[0]->offset_view,
+                         1, C->svbs[0]->comm_dtype_view,
+                         C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 break;
             case DNPY_BUF_RECV:
-                assert(R->svb->data == NULL);
-                R->svb->data = workbuf_nextfree;
-                workbuf_nextfree += R->svb->nelem * R->ary->base->elsize;
-                MPI_Recv(R->svb->data, R->svb->nelem,
-                         R->ary->base->mpi_dtype, R->remote_rank,
-                         R->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                assert(C->narys == 1);
+                assert(C->svbs[0]->data == NULL);
+                C->svbs[0]->data = workbuf_nextfree;
+                workbuf_nextfree += C->svbs[0]->nelem *
+                                    C->views[0]->base->elsize;
+                MPI_Recv(C->svbs[0]->data, C->svbs[0]->nelem,
+                         C->views[0]->base->mpi_dtype, C->remote_rank,
+                         C->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 break;
             case DNPY_SEND:
-                MPI_Send(R->ary->base->data + R->svb->offset_view,
-                         1, R->svb->comm_dtype_view,
-                         R->remote_rank, R->mpi_tag,
+                assert(C->narys == 1);
+                MPI_Send(C->views[0]->base->data +
+                          C->svbs[0]->offset_view,
+                         1, C->svbs[0]->comm_dtype_view,
+                         C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD);
                 break;
             case DNPY_BUF_SEND:
-                assert(R->svb->data != NULL);
-                MPI_Send(R->svb->data, R->svb->nelem,
-                         R->ary->base->mpi_dtype,
-                         R->remote_rank, R->mpi_tag,
+                assert(C->narys == 1);
+                assert(C->svbs[0]->data != NULL);
+                MPI_Send(C->svbs[0]->data, C->svbs[0]->nelem,
+                         C->views[0]->base->mpi_dtype,
+                         C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD);
                 break;
-            case DNPY_APPLY:
-                assert(R->apply != NULL);
-                assert(R->remote_rank == myrank);
-                apply_ufunc(R->apply);
-
-    /*
-                for(i=0; i<R->apply->narys; i++)
-                    if(R->apply->arys[i]->base->ndims == 0)
-                    {
-                        Py_DECREF(R->apply->arys[i]->PyAry);
-                        free(R->apply->arys[i]->base->data);
-                        free(R->apply->arys[i]->base);
-                        free(R->apply->arys[i]);
-                    }
-    */
-                Py_DECREF(R->apply->PyOp);
-                free(R->apply);
+            case DNPY_UFUNC:
+                apply_ufunc(F);
+                Py_DECREF(F->PyOp);
                 break;
             case DNPY_DESTROY_ARRAY:
-                assert(R->ary != NULL);
-                rm_dndview(R->ary->uid);
+                assert(node->narys == 1);
+                assert(node->views[0] != NULL);
+                rm_dndview(node->views[0]->uid);
                 break;
             default:
-                fprintf(stderr, "Unknown sub-view block type.\n");
+                fprintf(stderr, "Unknown DAG operation: %d.\n",
+                        (int)node->op);
                 MPI_Abort(MPI_COMM_WORLD, -1);
         }
 
         //Remove the node from the svb DAG.
-        for(i=0; i<R->ndepend; i++)
+        for(i=0; i<node->ndepend; i++)
         {
-            assert(R->depend[i]->mydepend > 0);
-            R->depend[i]->mydepend--;
-            if(R->depend[i]->mydepend == 0)//The node is ready.
-                ready_queue[ready_queue_size++] = R->depend[i];
+            assert(node->depend[i]->mydepend > 0);
+            node->depend[i]->mydepend--;
+            if(node->depend[i]->mydepend == 0)//The node is ready.
+                ready_queue[ready_queue_size++] = node->depend[i];
         }
     }
 
@@ -2182,28 +2215,18 @@ static void dag_svb_flush(void)
  * Add a node to the sub-view block DAG.
  * Private.
  */
-static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
-                    npy_intp mpi_tag, int remote_rank, dndapply *apply)
+static void dag_svb_add(void *node_input)
 {
-    assert((type == DNPY_RECV && svb != NULL && ary != NULL) ||
-           (type == DNPY_BUF_RECV && svb != NULL && ary != NULL) ||
-           (type == DNPY_SEND && svb != NULL && ary != NULL) ||
-           (type == DNPY_BUF_SEND && svb != NULL && ary != NULL) ||
-           (type == DNPY_APPLY && apply != NULL) ||
-           (type == DNPY_DESTROY_ARRAY && ary != NULL));
+    dndnode *node = node_input;
+    int t;
+    if(node->op == 0)
+        t = *((int*)NULL);
+
 
     if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
         dag_svb_flush();
 
-    //Create a new node.
-    dndnode *node = workbuf_nextfree;
-    workbuf_nextfree += sizeof(dndnode);
-    node->type = type;
-    node->mpi_tag = mpi_tag;
-    node->remote_rank =  remote_rank;
-    node->svb = svb;
-    node->ary = ary;
-    node->apply = apply;
+    //Init DAG pointers.
     node->ndepend = 0;
     node->mydepend = 0;
 
