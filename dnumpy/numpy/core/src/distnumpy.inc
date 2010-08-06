@@ -32,10 +32,11 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
-//The root of sub-view-block DAG and the number of view block
-//operations in it.
-static dndnode *rootnode = NULL;
+//Number of view block operations in the sub-view-block DAG.
 static npy_intp nvb_in_svb_dag=0;
+//The ready queue for the sub-view-block DAG and its current size.
+static dndnode *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
+static npy_intp ready_queue_size=0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -2091,10 +2092,12 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
  */
 static void dag_svb_flush(void)
 {
-    while(rootnode != NULL)
+    npy_intp i;
+    while(ready_queue_size > 0)
     {
-        dndnode *R = rootnode;
-        switch(rootnode->type)
+        //Get a ready node - using First In Last Out.
+        dndnode *R = ready_queue[--ready_queue_size];
+        switch(R->type)
         {
             case DNPY_RECV:
                 MPI_Recv(R->ary->base->data + R->svb->offset_view,
@@ -2149,14 +2152,15 @@ static void dag_svb_flush(void)
                 fprintf(stderr, "Unknown sub-view block type.\n");
                 MPI_Abort(MPI_COMM_WORLD, -1);
         }
-        //Go to next node.
-        if(rootnode->ndepend > 0)
-        {//At the moment the svb DAG is just a linked list.
-            assert(rootnode->ndepend == 1);
-            rootnode = rootnode->depend[0];
+
+        //Remove the node from the svb DAG.
+        for(i=0; i<R->ndepend; i++)
+        {
+            assert(R->depend[i]->mydepend > 0);
+            R->depend[i]->mydepend--;
+            if(R->depend[i]->mydepend == 0)//The node is ready.
+                ready_queue[ready_queue_size++] = R->depend[i];
         }
-        else
-            rootnode = NULL;
     }
 
     //Cleanup the sub-view-block buffer.
@@ -2201,14 +2205,15 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
     node->ary = ary;
     node->apply = apply;
     node->ndepend = 0;
+    node->mydepend = 0;
 
     //Place the node in the end of the svb DAG, which at the moment
     //is a simple linked list.
-    if(rootnode == NULL)
-        rootnode = node;
+    if(ready_queue_size == 0)
+        ready_queue[ready_queue_size++] = node;
     else
     {
-        dndnode *tnode = rootnode;
+        dndnode *tnode = ready_queue[0];
         while(tnode->ndepend > 0)
         {
             assert(tnode->ndepend == 1);
@@ -2216,6 +2221,9 @@ static void dag_svb_add(char type, dndsvb *svb, dndview *ary,
         }
         tnode->depend[0] = node;
         tnode->ndepend++;
+        node->mydepend++;
+        assert(tnode->ndepend  <= DNPY_MAX_DEPENDENCY);
+        assert(tnode->mydepend <= DNPY_MAX_DEPENDENCY);
     }
 } /* dag_svb_add */
 

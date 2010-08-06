@@ -47,6 +47,9 @@ typedef struct {
 //Maximum number of dependency per sub-view-block.
 #define DNPY_MAX_DEPENDENCY 10
 
+//Maximum number of nodes in the ready queue.
+#define DNPY_RDY_QUEUE_MAXSIZE 100
+
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB
 
@@ -227,8 +230,8 @@ struct dndnode_struct
     //The ufunc that should be apply when this node does not
     //depend on other nodes (NULL when nothing should be applyed).
     dndapply *apply;
+    //Number of nodes this node depend on.
+    npy_intp mydepend;
 };
-
-
 
 #endif
