@@ -29,6 +29,8 @@ typedef struct {
 
 //#define DISTNUMPY_DEBUG
 
+//#define DNPY_STATISTICS
+
 //Easy retrieval of dnduid
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
 
@@ -44,7 +46,7 @@ typedef struct {
 //Default blocksize
 #define DNPY_BLOCKSIZE 2
 
-//Maximum number of dependency per sub-view-block. (< sizeof(char))
+//Maximum number of dependency per sub-view-block.
 #define DNPY_MAX_DEPENDENCY 10
 
 //Maximum number of nodes in the ready queue.
@@ -182,14 +184,22 @@ typedef struct
 //narys & views    - list of array views involved.
 //svbs             - list of sub-view-blocks involved (one per array),
 //                   NULL when whole arrays are involved.
-#define DNDNODE_HEAD                        \
+//next             - used for traversing all nodes.
+//uid              - unique identification - only used for statistics.
+#define DNDNODE_HEAD_BASE                        \
     char op;                                \
-    char ndepend;                       \
+    int ndepend;                            \
     dndnode *depend[DNPY_MAX_DEPENDENCY];   \
     npy_intp mydepend;                      \
     char narys;                             \
     dndview *views[NPY_MAXARGS];            \
-    dndsvb *svbs[NPY_MAXARGS];
+    dndsvb *svbs[NPY_MAXARGS];              \
+    dndnode *next;
+#ifdef DNPY_STATISTICS
+    #define DNDNODE_HEAD    DNDNODE_HEAD_BASE int uid;
+#else
+    #define DNDNODE_HEAD    DNDNODE_HEAD_BASE
+#endif
 typedef struct dndnode_struct dndnode;
 struct dndnode_struct {DNDNODE_HEAD};
 

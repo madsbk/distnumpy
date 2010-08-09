@@ -43,10 +43,15 @@ static cblas_func_type *cblas_dgemm_func = NULL;
 static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
-
 //Prototype for the DAGs.
 static void dag_svb_flush(void);
 static void dag_svb_add(void *node);
+//Variables for statistics.
+#ifdef DNPY_STATISTICS
+    static int node_uid_count = 0;
+#endif
+
+
 /*===================================================================
  *
  * Returns a string describing dtype.
@@ -110,6 +115,50 @@ static char *types_numpy2str(int dtype)
     }
 } /* types_numpy2str */
 #endif
+
+
+/*===================================================================
+ *
+ * Dumping the sub-view-block DAG to a file using the DOT language.
+ * Private
+ */
+#ifdef DNPY_STATISTICS
+static void dag_svb_dump(void)
+{
+    FILE *pFile;
+    dndnode *tnode;
+    int i;
+
+    if(ready_queue_size < 1)
+        return;
+
+    pFile = fopen("stat", "a");
+    assert(pFile != NULL);
+
+    //Write the DOT header.
+    fputs("digraph {\n", pFile);
+
+    tnode = ready_queue[0];
+    while(tnode != NULL)
+    {
+        if(tnode->ndepend == 0)
+            fprintf(pFile, "n%d;\n", tnode->uid);
+
+        for(i=0; i<tnode->ndepend; i++)
+            fprintf(pFile, "n%d -> n%d;\n",
+                    tnode->uid, tnode->depend[i]->uid);
+
+        //Go to next node.
+        tnode = tnode->next;
+    }
+
+    //Write the DOT tail.
+    fputs("}\n", pFile);
+
+    fclose(pFile);
+}/* dag_svb_dump */
+#endif
+
 
 /*===================================================================
  *
@@ -1516,8 +1565,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //and we may therefore have to flush it before calculating
         //new view-blocks.
         if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
+        {
+            #ifdef DNPY_STATISTICS
+            if(myrank == 0)
+                dag_svb_dump();
+            #endif
             dag_svb_flush();
-
+        }
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
@@ -2218,10 +2272,6 @@ static void dag_svb_flush(void)
 static void dag_svb_add(void *node_input)
 {
     dndnode *node = node_input;
-    int t;
-    if(node->op == 0)
-        t = *((int*)NULL);
-
 
     if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
         dag_svb_flush();
@@ -2229,6 +2279,10 @@ static void dag_svb_add(void *node_input)
     //Init DAG pointers.
     node->ndepend = 0;
     node->mydepend = 0;
+    node->next = NULL;
+    #ifdef DNPY_STATISTICS
+        node->uid = ++node_uid_count;
+    #endif
 
     //Place the node in the end of the svb DAG, which at the moment
     //is a simple linked list.
@@ -2243,6 +2297,7 @@ static void dag_svb_add(void *node_input)
             tnode = tnode->depend[0];
         }
         tnode->depend[0] = node;
+        tnode->next = node;
         tnode->ndepend++;
         node->mydepend++;
         assert(tnode->ndepend  <= DNPY_MAX_DEPENDENCY);
