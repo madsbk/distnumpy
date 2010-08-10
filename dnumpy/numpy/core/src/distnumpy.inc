@@ -282,8 +282,6 @@ static void rm_dndview(npy_intp uid)
                 }
                 else if(--dndviews[i].base->refcount == 0)
                 {
-
-                    MPI_Win_free(&dndviews[i].base->comm_win);
                     MPI_Type_free(&dndviews[i].base->mpi_dtype);
                     MPI_Free_mem(dndviews[i].base->data);
                     free(dndviews[i].base);
@@ -683,7 +681,7 @@ apply_ufunc(dndnode_ufunc *apply)
  * Private.
  */
 static int remote_blockput(PyObject *src, dndarray *src_ary,
-                           dndarray *dest_ary,
+                           dndarray *dest_ary, MPI_Win comm_win,
                            int reduce_axis,
                            npy_intp lcoords[NPY_MAXDIMS])
 {
@@ -766,10 +764,10 @@ static int remote_blockput(PyObject *src, dndarray *src_ary,
     //A exclusive lock is required since two put updates must not
     //concurrently access nonoverlapping locations in a window
     //(MPI-2.1 s. 351).
-    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, dest_ary->comm_win);
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, comm_win);
     MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
-            dest_ary_type, dest_ary->comm_win);
-    MPI_Win_unlock(rank, dest_ary->comm_win);
+            dest_ary_type, comm_win);
+    MPI_Win_unlock(rank, comm_win);
 
     //Clean up
     MPI_Type_free(&src_ary_type);
@@ -940,14 +938,9 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    //Create the window for one-sided communication.
-    MPI_Win_create(ary->data, nelements * ary->elsize, 1, MPI_INFO_NULL,
-                   MPI_COMM_WORLD, &ary->comm_win);
-
     //Create a MPI-datatype that correspond to an array element.
     MPI_Type_contiguous(ary->elsize, MPI_BYTE, &ary->mpi_dtype);
     MPI_Type_commit(&ary->mpi_dtype);
-
 
     //Compute number of blocks.
     view->nblocks = 1;
@@ -1088,6 +1081,12 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 
     dag_svb_flush();
 
+    //Create the window for one-sided communication.
+    MPI_Win comm_win;
+    MPI_Win_create(view->base->data, view->base->nelements *
+                   view->base->elsize, 1, MPI_INFO_NULL, MPI_COMM_WORLD,
+                   &comm_win);
+
     if(myrank == 0)
     {
         //Convert to block coordinates.
@@ -1154,21 +1153,21 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 
         //Do the communication.
         MPI_Win_lock(MPI_LOCK_EXCLUSIVE, vblock.sub[b].rank,
-                     MPI_MODE_NOCHECK, view->base->comm_win);
+                     MPI_MODE_NOCHECK, comm_win);
         if(Direction)
             MPI_Put(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
-                    view->base->comm_win);
+                    comm_win);
         else
             MPI_Get(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
                     offset*view->base->elsize, 1, view->base->mpi_dtype,
-                    view->base->comm_win);
-        MPI_Win_unlock(vblock.sub[b].rank, view->base->comm_win);
+                    comm_win);
+        MPI_Win_unlock(vblock.sub[b].rank, comm_win);
     }
 
     dag_svb_flush();//Will cleanup the used sub-view-blocks.
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Win_free(&comm_win);
 
 } /* do_PUTGET_ITEM */
 
@@ -1724,6 +1723,12 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
+    //Create the window for one-sided communication.
+    MPI_Win comm_win;
+    MPI_Win_create(out_ary->data, out_ary->nelements * out_ary->elsize,
+                   1, MPI_INFO_NULL, MPI_COMM_WORLD, &comm_win);
+
+
     //There is two kind of roles for MPI-processes. They can be
     //receivers or senders. The receivers are receiving the sub-results
     //computed by the senders.
@@ -1787,7 +1792,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         if(PyArray_SIZE(subres) > 0)
             while(notfinished)
             {
-                remote_blockput(subres, in_ary, out_ary, axis, lcoords);
+                remote_blockput(subres, in_ary, out_ary, comm_win,
+                                axis, lcoords);
 
                 //Iterate coords one element.
                 for(j=in_ary->ndims-1; j >= 0; j--)
@@ -1821,6 +1827,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     MPI_Barrier(MPI_COMM_WORLD);
     Py_DECREF(subres);
     Py_DECREF(PyOp);
+    MPI_Win_free(&comm_win);
 
 } /* do_UFUNC_REDUCE */
 
@@ -1942,6 +1949,12 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
 
     dag_svb_flush();
 
+    //Create the window for one-sided communication.
+    MPI_Win comm_win;
+    MPI_Win_create(in->base->data, in->base->nelements *
+                   in->base->elsize, 1, MPI_INFO_NULL, MPI_COMM_WORLD,
+                   &comm_win);
+
     //Find process coord in output vector.
     rank2cart(1, myrank, &mypcoord);
 
@@ -1990,11 +2003,11 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         MPI_Type_commit(&arraytype);
 
         //Transfer element.
-        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, in->base->comm_win);
+        MPI_Win_lock(MPI_LOCK_SHARED, rank, MPI_MODE_NOCHECK, comm_win);
         MPI_Get(out_data, bsize, in->base->mpi_dtype, rank,
                 offset * in->base->elsize, 1, arraytype,
-                in->base->comm_win);
-        MPI_Win_unlock(rank, in->base->comm_win);
+                comm_win);
+        MPI_Win_unlock(rank, comm_win);
 
         //Clean up
         MPI_Type_free(&arraytype);
@@ -2002,8 +2015,9 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
         //Iterate output data one block.
         out_data += bsize * in->base->elsize;
     }
-    //Sync.
-    MPI_Barrier(MPI_COMM_WORLD);
+    //Free win.
+    MPI_Win_free(&comm_win);
+
 }
 
 /*===================================================================
