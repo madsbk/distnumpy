@@ -116,23 +116,71 @@ static char *types_numpy2str(int dtype)
 } /* types_numpy2str */
 #endif
 
+/*===================================================================
+ *
+ * Returns a string describing the operation type.
+ * Private
+ */
+#ifdef DNPY_STATISTICS
+static char *optype2str(int optype)
+{
+    switch(optype)
+    {
+        case DNPY_CREATE_ARRAY:
+            return "DNPY_CREATE_ARRAY";
+        case DNPY_DESTROY_ARRAY:
+            return "del";
+        case DNPY_CREATE_VIEW:
+            return "DNPY_CREATE_VIEW";
+        case DNPY_PUT_ITEM:
+            return "DNPY_PUT_ITEM";
+        case DNPY_GET_ITEM:
+            return "DNPY_GET_ITEM";
+        case DNPY_UFUNC:
+            return "ufunc";
+        case DNPY_RECV:
+            return "recv";
+        case DNPY_SEND:
+            return "send";
+        case DNPY_BUF_RECV:
+            return "Brecv";
+        case DNPY_BUF_SEND:
+            return "Bsend";
+        case DNPY_APPLY:
+            return "apply";
+        case DNPY_UFUNC_REDUCE:
+            return "DNPY_UFUNC_REDUCE";
+        case DNPY_ZEROFILL:
+            return "DNPY_ZEROFILL";
+        case DNPY_DATAFILL:
+            return "DNPY_DATAFILL";
+        case DNPY_DIAGONAL:
+            return "DNPY_DIAGONAL";
+        case DNPY_MATMUL:
+            return "DNPY_MATMUL";
+        default:
+            return "\"Unknown data type\"";
+    }
+} /* stat_op2str */
 
 /*===================================================================
  *
  * Dumping the sub-view-block DAG to a file using the DOT language.
  * Private
  */
-#ifdef DNPY_STATISTICS
 static void dag_svb_dump(void)
 {
     FILE *pFile;
     dndnode *tnode;
     int i;
+    char filename[20];
 
     if(ready_queue_size < 1)
         return;
 
-    pFile = fopen("stat", "a");
+    sprintf(filename, "dndstat_p%d", myrank);
+
+    pFile = fopen(filename, "a");
     assert(pFile != NULL);
 
     //Write the DOT header.
@@ -141,8 +189,10 @@ static void dag_svb_dump(void)
     tnode = ready_queue[0];
     while(tnode != NULL)
     {
-        if(tnode->ndepend == 0)
-            fprintf(pFile, "n%d;\n", tnode->uid);
+        fprintf(pFile, "n%d [label=\"%s-%d: ", tnode->uid, optype2str(tnode->op), tnode->uid);
+        for(i=0; i<tnode->narys; i++)
+            fprintf(pFile, "a%ld ", (long) tnode->views[i]->uid);
+        fprintf(pFile, "\"]\n");
 
         for(i=0; i<tnode->ndepend; i++)
             fprintf(pFile, "n%d -> n%d;\n",
@@ -1564,13 +1614,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //and we may therefore have to flush it before calculating
         //new view-blocks.
         if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
-        {
-            #ifdef DNPY_STATISTICS
-            if(myrank == 0)
-                dag_svb_dump();
-            #endif
             dag_svb_flush();
-        }
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
@@ -2197,6 +2241,11 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
 static void dag_svb_flush(void)
 {
     npy_intp i;
+
+    #ifdef DNPY_STATISTICS
+    dag_svb_dump();
+    #endif
+
     while(ready_queue_size > 0)
     {
         //Get a ready node - using First In Last Out.
