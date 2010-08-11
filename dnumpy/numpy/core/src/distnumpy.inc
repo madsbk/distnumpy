@@ -2351,14 +2351,29 @@ static void dag_svb_flush(void)
  */
 static char dndnode_conflict(dndnode *A, dndnode *B)
 {
-    npy_intp i,j;
+    npy_intp i,j,d;
     //At the moment we only check conflicts at the array level.
     for(i=0; i<A->narys; i++)
         for(j=0; j<B->narys; j++)
             if(A->views[i]->base->uid == B->views[j]->base->uid)
                 if(A->accesstype[i] == DNPY_WRITE ||
                    B->accesstype[j] == DNPY_WRITE)
-                    return 1;
+                {
+                    if(A->svbs[0] == NULL || B->svbs[0] == NULL)
+                        return 1;//Depend on the whole array.
+
+                    for(d=0; d<A->views[i]->base->ndims; d++)
+                    {
+                        if(B->svbs[j]->start[d] <
+                           A->svbs[i]->start[d] + A->svbs[i]->nsteps[d]
+                           ||
+                           A->svbs[i]->start[d] >
+                           B->svbs[j]->start[d] + B->svbs[j]->nsteps[d])
+                            break;//No conflict at the svb level.
+                        else
+                            return 1;
+                    }
+                }
     return 0;
 }/* dndnode_conflict */
 
