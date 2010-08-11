@@ -47,7 +47,7 @@ typedef struct {
 #define DNPY_BLOCKSIZE 2
 
 //Maximum number of dependency per sub-view-block.
-#define DNPY_MAX_DEPENDENCY 10
+#define DNPY_MAX_DEPENDENCY 1000
 
 //Maximum number of nodes in the ready queue.
 #define DNPY_RDY_QUEUE_MAXSIZE 100
@@ -66,6 +66,8 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
 //Type describing a distributed array.
 typedef struct
 {
+    //Unique identification.
+    npy_intp uid;
     //Reference count.
     int refcount;
     //Number of dimensions.
@@ -184,7 +186,7 @@ typedef struct
 //                   NULL when whole arrays are involved.
 //next             - used for traversing all nodes.
 //uid              - unique identification - only used for statistics.
-#define DNDNODE_HEAD_BASE                        \
+#define DNDNODE_HEAD_BASE                   \
     char op;                                \
     int ndepend;                            \
     dndnode *depend[DNPY_MAX_DEPENDENCY];   \

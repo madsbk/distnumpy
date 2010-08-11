@@ -37,6 +37,8 @@ static npy_intp nvb_in_svb_dag=0;
 //The ready queue for the sub-view-block DAG and its current size.
 static dndnode *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
+//Unique MPI tag.
+npy_intp mpi_tag=0;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -960,6 +962,9 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     npy_intp i;
     int cartcoord[NPY_MAXDIMS];
 
+    //Save array uid.
+    ary->uid = view->uid;
+
     //Allocate and copy the array to the views's base.
     view->base = malloc(sizeof(dndarray));
     memcpy(view->base, ary, sizeof(dndarray));
@@ -1232,7 +1237,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                       int scalar_dtype, int scalar_size,
                       char* scalar, char* op)
 {
-    npy_intp i, j, s, n, v, mpi_tag;
+    npy_intp i, j, s, n, v;
     npy_intp coord[NPY_MAXDIMS], bcoord[NPY_MAXDIMS];
     npy_intp vdims[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp offset, scoord[NPY_MAXDIMS], sdims[NPY_MAXDIMS];
@@ -1267,6 +1272,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             dummy.uid = -(++uid_count);
             dummy.nslice = 0;
             dummy.base = malloc(sizeof(dndarray));
+            dummy.base->uid = dummy.uid;
             dummy.base->ndims = 0;
             dummy.ndims = 0;
             dummy.base->dtype = scalar_dtype;
@@ -1303,7 +1309,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
-    for(mpi_tag=0; notfinished; mpi_tag++)
+    for(; notfinished; mpi_tag++)
     {
         //Get one vblock from all arrays.
         for(v=0; v<narys; v++)
@@ -2325,7 +2331,24 @@ static void dag_svb_flush(void)
     nvb_in_svb_dag = 0;
     workbuf_nextfree = workbuf;
     svbbuf_nextfree = svbbuf;
+    assert(ready_queue_size == 0);
 }/* dag_svb_flush */
+
+/*===================================================================
+ *
+ * Returns True if there is data conflict/overlap.
+ * Private.
+ */
+static char dndnode_conflict(dndnode *A, dndnode *B)
+{
+    npy_intp i,j;
+    //At the moment we only check conflicts at the array level.
+    for(i=0; i<A->narys; i++)
+        for(j=0; j<B->narys; j++)
+            if(A->views[i]->base->uid == B->views[j]->base->uid)
+                return 1;
+    return 0;
+}/* dndnode_conflict */
 
 /*===================================================================
  *
@@ -2347,24 +2370,49 @@ static void dag_svb_add(void *node_input)
         node->uid = ++node_uid_count;
     #endif
 
-    //Place the node in the end of the svb DAG, which at the moment
-    //is a simple linked list.
+    //Check dependencies for all nodes in the svb DAG.
     if(ready_queue_size == 0)
         ready_queue[ready_queue_size++] = node;
     else
     {
         dndnode *tnode = ready_queue[0];
-        while(tnode->ndepend > 0)
+        while(1)
         {
-            assert(tnode->ndepend == 1);
-            tnode = tnode->depend[0];
+            //To make sure that all communication done by the
+            //MPI processes are performed in the same order
+            //all communication is marked as conflicting.
+            char conflict;
+            if((node->op == DNPY_RECV ||
+                node->op == DNPY_SEND ||
+                node->op == DNPY_BUF_RECV ||
+                node->op == DNPY_BUF_SEND)
+               &&
+               (tnode->op == DNPY_RECV ||
+                tnode->op == DNPY_SEND ||
+                tnode->op == DNPY_BUF_RECV ||
+                tnode->op == DNPY_BUF_SEND))
+                conflict = 1;
+            else
+                conflict = dndnode_conflict(node, tnode);
+
+            if(conflict)
+            {
+                //Add the new found dependency.
+                assert(tnode->ndepend < DNPY_MAX_DEPENDENCY);
+                assert(node->mydepend < DNPY_MAX_DEPENDENCY);
+                tnode->depend[tnode->ndepend++] = node;
+                node->mydepend++;
+            }
+            //Go to next node.
+            if(tnode->next == NULL)//We are finished.
+            {
+                tnode->next = node;
+                break;
+            }
+            tnode = tnode->next;
         }
-        tnode->depend[0] = node;
-        tnode->next = node;
-        tnode->ndepend++;
-        node->mydepend++;
-        assert(tnode->ndepend  <= DNPY_MAX_DEPENDENCY);
-        assert(tnode->mydepend <= DNPY_MAX_DEPENDENCY);
+        if(node->mydepend == 0)
+            ready_queue[ready_queue_size++] = node;
     }
 } /* dag_svb_add */
 
