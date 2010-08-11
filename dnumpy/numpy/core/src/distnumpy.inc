@@ -1044,6 +1044,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     node->narys = 1;
     node->views[0] = get_dndview(uid);
     node->svbs[0] = NULL;
+    node->accesstype[0] = DNPY_WRITE;
     dag_svb_add(node);
 
 } /* do_DESTROY_ARRAY */
@@ -1422,6 +1423,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->narys = 1;
                     node->views[0] = views[v];
                     node->svbs[0] = svbs[v];
+                    node->accesstype[0] = DNPY_WRITE;
                     node->mpi_tag = mpi_tag;
                     node->remote_rank = svbs[v]->rank;
                     dag_svb_add(node);
@@ -1433,6 +1435,10 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 node->narys = narys;
                 node->nout = nout_arys;
                 memcpy(node->views, views, narys * sizeof(dndview*));
+                for(v=0; v<nin; v++)
+                    node->accesstype[v] = DNPY_READ;
+                for(v=nin; v<narys; v++)
+                    node->accesstype[v] = DNPY_WRITE;
                 node->func = func;
                 node->funcdata = funcdata;
                 Py_INCREF(PyOp);
@@ -1525,6 +1531,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->narys = 1;
                     node->views[0] = views[v];
                     node->svbs[0] = svbs[v];
+                    node->accesstype[0] = DNPY_READ;
                     node->mpi_tag = mpi_tag;
                     node->remote_rank = coord_owner;
                     dag_svb_add(node);
@@ -1597,6 +1604,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->narys = 1;
                     node->views[0] = views[v];
                     node->svbs[0] = svb;
+                    node->accesstype[0] = DNPY_READ;
                     node->mpi_tag = mpi_tag;
                     node->op = DNPY_BUF_SEND;
                     node->remote_rank = svb->rank;
@@ -1609,6 +1617,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->narys = 1;
                     node->views[0] = views[v];
                     node->svbs[0] = svb;
+                    node->accesstype[0] = DNPY_WRITE;
                     node->mpi_tag = mpi_tag;
                     node->op = DNPY_RECV;
                     node->remote_rank = coord_owner;
@@ -2337,6 +2346,7 @@ static void dag_svb_flush(void)
 /*===================================================================
  *
  * Returns True if there is data conflict/overlap.
+ * A is the node that is being inserted.
  * Private.
  */
 static char dndnode_conflict(dndnode *A, dndnode *B)
@@ -2346,7 +2356,9 @@ static char dndnode_conflict(dndnode *A, dndnode *B)
     for(i=0; i<A->narys; i++)
         for(j=0; j<B->narys; j++)
             if(A->views[i]->base->uid == B->views[j]->base->uid)
-                return 1;
+                if(A->accesstype[i] == DNPY_WRITE ||
+                   B->accesstype[j] == DNPY_WRITE)
+                    return 1;
     return 0;
 }/* dndnode_conflict */
 
