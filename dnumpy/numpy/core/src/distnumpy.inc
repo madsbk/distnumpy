@@ -1450,7 +1450,10 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 {
                     //Scalars is already updated.
                     if(views[v]->base->ndims == 0)
+                    {
+                        node->svbs[v] = NULL;
                         continue;
+                    }
 
                     //Convert sdims to match current view ndims.
                     for(i=0; i<views[v]->ndims; i++)
@@ -2364,7 +2367,7 @@ static char dndnode_conflict(dndnode *A, dndnode *B)
 
                     for(d=0; d<A->views[i]->base->ndims; d++)
                     {
-                        if(B->svbs[j]->start[d] <
+                        if(B->svbs[j]->start[d] >
                            A->svbs[i]->start[d] + A->svbs[i]->nsteps[d]
                            ||
                            A->svbs[i]->start[d] >
