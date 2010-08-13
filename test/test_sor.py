@@ -7,6 +7,7 @@ def SOR(H,W,Dist):
 
     full = np.zeros((H+2,W+2), dtype=np.double, dist=Dist)
     diff = np.zeros((H/2,W/2), dtype=np.double, dist=Dist)
+    tmpdelta = np.zeros((H/2), dtype=np.double, dist=Dist)
 
     cells  = full[1:-1, 1:-1]
     black1 = full[1:-1:2, 1:-1:2]
@@ -49,7 +50,8 @@ def SOR(H,W,Dist):
       black1 *= 0.2
       diff -= black1
       np.absolute(diff, diff)
-      delta = np.sum(diff)
+      np.add.reduce(diff,out=tmpdelta)
+      delta = np.add.reduce(tmpdelta)
 
       diff[:] = black2
       black2 += black2_up
@@ -59,7 +61,8 @@ def SOR(H,W,Dist):
       black2 *= 0.2
       diff -= black2
       np.absolute(diff, diff)
-      delta += np.sum(diff)
+      np.add.reduce(diff,out=tmpdelta)
+      delta += np.add.reduce(tmpdelta)
 
       diff[:] = red1
       red1 += red1_up
@@ -68,8 +71,8 @@ def SOR(H,W,Dist):
       red1 += red1_down
       red1 *= 0.2
       diff -= red1
-      np.absolute(diff, diff)
-      delta += np.sum(diff)
+      np.add.reduce(diff,out=tmpdelta)
+      delta += np.add.reduce(tmpdelta)
 
       diff[:] = red2
       red2 += red2_up
@@ -78,8 +81,8 @@ def SOR(H,W,Dist):
       red2 += red2_down
       red2 *= 0.2
       diff -= red2
-      np.absolute(diff, diff)
-      delta += np.sum(diff)
+      np.add.reduce(diff,out=tmpdelta)
+      delta += np.add.reduce(tmpdelta)
     return cells
 
 def run():

@@ -5,6 +5,7 @@ def jacobi_sencil(H,W,Dist):
     full = np.zeros((H+2,W+2), dtype=np.double, dist=Dist)
     work = np.zeros((H,W), dtype=np.double, dist=Dist)
     diff = np.zeros((H,W), dtype=np.double, dist=Dist)
+    tmpdelta = np.zeros((H), dtype=np.double, dist=Dist)
 
     cells = full[1:-1, 1:-1]
     up    = full[1:-1, 0:-2]
@@ -29,8 +30,9 @@ def jacobi_sencil(H,W,Dist):
       work += down
       work *= 0.2
       np.subtract(cells,work,diff)
-      diff=np.absolute(diff)
-      delta=np.sum(diff)
+      diff = np.absolute(diff)
+      np.add.reduce(diff, out=tmpdelta)
+      delta = np.add.reduce(tmpdelta)
       cells[:] = work
     return cells
 

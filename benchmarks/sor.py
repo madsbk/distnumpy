@@ -14,6 +14,7 @@ if W%2 > 0 or H%2 > 0:
 
 full = np.zeros((H+2,W+2), dtype=np.double, dist=DIST)
 diff = np.zeros((H/2,W/2), dtype=np.double, dist=DIST)
+tmpdelta = np.zeros((H/2), dtype=np.double, dist=DIST)
 
 cells  = full[1:-1, 1:-1]
 black1 = full[1:-1:2, 1:-1:2]
@@ -57,7 +58,8 @@ while epsilon<delta:
   black1 *= 0.2
   diff -= black1
   np.absolute(diff, diff)
-  delta = np.sum(diff)
+  np.add.reduce(diff,out=tmpdelta)
+  delta = np.add.reduce(tmpdelta)
 
   diff[:] = black2
   black2 += black2_up
@@ -67,7 +69,8 @@ while epsilon<delta:
   black2 *= 0.2
   diff -= black2
   np.absolute(diff, diff)
-  delta += np.sum(diff)
+  np.add.reduce(diff,out=tmpdelta)
+  delta += np.add.reduce(tmpdelta)
 
   diff[:] = red1
   red1 += red1_up
@@ -77,7 +80,8 @@ while epsilon<delta:
   red1 *= 0.2
   diff -= red1
   np.absolute(diff, diff)
-  delta += np.sum(diff)
+  np.add.reduce(diff,out=tmpdelta)
+  delta += np.add.reduce(tmpdelta)
 
   diff[:] = red2
   red2 += red2_up
@@ -87,7 +91,8 @@ while epsilon<delta:
   red2 *= 0.2
   diff -= red2
   np.absolute(diff, diff)
-  delta += np.sum(diff)
+  np.add.reduce(diff,out=tmpdelta)
+  delta += np.add.reduce(tmpdelta)
 
   if DISPLAY and i%10==0:
     np.save("%s.%08d"%(sys.argv[3],i), cells)

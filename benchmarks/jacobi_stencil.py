@@ -12,6 +12,7 @@ DISPLAY = False
 full = np.zeros((W+2,H+2), dtype=np.double, dist=DIST)
 work = np.zeros((W,H), dtype=np.double, dist=DIST)
 diff = np.zeros((W,H), dtype=np.double, dist=DIST)
+tmpdelta = np.zeros((W), dtype=np.double, dist=DIST)
 
 cells = full[1:-1, 1:-1]
 up    = full[1:-1, 0:-2]
@@ -38,8 +39,9 @@ while epsilon<delta:
   work += down
   work *= 0.2
   np.subtract(cells,work,diff)
-  diff=np.absolute(diff)
-  delta=np.sum(diff)
+  np.absolute(diff, diff)
+  np.add.reduce(diff,out=tmpdelta)
+  delta = np.add.reduce(tmpdelta)
   cells[:] = work
   if DISPLAY and i%100==0:
     np.save("%s.%08d"%(sys.argv[3],i), full)
