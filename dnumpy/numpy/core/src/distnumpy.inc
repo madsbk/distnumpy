@@ -52,7 +52,23 @@ static void dag_svb_add(void *node);
 #ifdef DNPY_STATISTICS
     static int node_uid_count = 0;
 #endif
-
+//Variables for timing.
+#ifdef DNDY_TIME
+    #include <sys/time.h>
+    struct timeval tv;
+    struct timezone tz;
+    static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
+        t_dag_svb_add=0, t_calc_vblock=0, t_ufunc_svb=0,            \
+        t_apply_ufunc=0;
+    #define DNDTIME(output)                                         \
+        gettimeofday(&tv, &tz);                                     \
+        output = (unsigned long long) tv.tv_usec +                  \
+                 (unsigned long long) tv.tv_sec * 1000000;
+    #define DNDTIME_SUM(in,sum)                                     \
+        gettimeofday(&tv, &tz);                                     \
+        sum += ((unsigned long long) tv.tv_usec +                   \
+                (unsigned long long) tv.tv_sec * 1000000) - in;
+#endif
 
 /*===================================================================
  *
@@ -636,6 +652,11 @@ apply_ufunc(dndnode_ufunc *apply)
     npy_intp *lastdims, lastndim;
     int narys = apply->narys;
 
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     for(i=0; i<narys; i++)
     {
         PyObject *ary = apply->views[i]->PyAry;
@@ -720,6 +741,10 @@ apply_ufunc(dndnode_ufunc *apply)
     //Cleanup
     for(j=0; j<narys; j++)
         Py_DECREF(iters[j]);
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_apply_ufunc)
+    #endif
 }/* apply_ufunc */
 
 
@@ -1312,6 +1337,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
     for(; notfinished; mpi_tag++)
     {
+        #ifdef DNDY_TIME
+            unsigned long long tdelta;
+            DNDTIME(tdelta);
+        #endif
+
         //Get one vblock from all arrays.
         for(v=0; v<narys; v++)
         {
@@ -1335,9 +1365,15 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     bcoord[j] = coord[n];
                 vdims[v][j] = MIN(blocksize, s - bcoord[j]*blocksize);
             }
-
+            #ifdef DNDY_TIME
+                unsigned long long tdelta2;
+                DNDTIME(tdelta2);
+            #endif
             //Get view block info.
             calc_vblock(views[v], bcoord, &vblocks[v]);
+            #ifdef DNDY_TIME
+                DNDTIME_SUM(tdelta2, t_calc_vblock)
+            #endif
         }
 
         //Compute the owner of the current coord.
@@ -1627,6 +1663,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     dag_svb_add(node);
                 }
             }
+        #ifdef DNDY_TIME
+            DNDTIME_SUM(tdelta, t_ufunc_svb)
+        #endif
 
         //We have added a whole view-block operation to the svb-DAG
         //and we may therefore have to flush it before calculating
@@ -2260,8 +2299,12 @@ static void dag_svb_flush(void)
 {
     npy_intp i;
 
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
     #ifdef DNPY_STATISTICS
-    dag_svb_dump();
+        dag_svb_dump();
     #endif
 
     while(ready_queue_size > 0)
@@ -2344,6 +2387,10 @@ static void dag_svb_flush(void)
     workbuf_nextfree = workbuf;
     svbbuf_nextfree = svbbuf;
     assert(ready_queue_size == 0);
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_dag_svb_flush)
+    #endif
 }/* dag_svb_flush */
 
 /*===================================================================
@@ -2391,6 +2438,11 @@ static void dag_svb_add(void *node_input)
 
     if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
         dag_svb_flush();
+
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
 
     //Init DAG pointers.
     node->ndepend = 0;
@@ -2444,6 +2496,11 @@ static void dag_svb_add(void *node_input)
         if(node->mydepend == 0)
             ready_queue[ready_queue_size++] = node;
     }
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_dag_svb_add)
+    #endif
+
 } /* dag_svb_add */
 
 
@@ -3160,6 +3217,18 @@ dnumpy_exit()
     }
     //Make sure that the sub-view-block DAG is flushed.
     dag_svb_flush();
+
+    #ifdef DNDY_TIME
+        unsigned long long total=0;
+        DNDTIME_SUM(t_app_total, total);
+        printf("app_total:         %6.llu ms\n", total/1000);
+        printf("  dag_svb_flush:   %6.llu ms\n", t_dag_svb_flush/1000);
+        printf("    apply_ufunc:   %6.llu ms\n", t_apply_ufunc/1000);
+        printf("  ufunc_svb:       %6.llu ms\n", t_ufunc_svb/1000);
+        printf("    dag_svb_add:   %6.llu ms\n", t_dag_svb_add/1000);
+        printf("    calc_vblock:   %6.llu ms\n", t_calc_vblock/1000);
+    #endif
+
     //Free buffers.
     free(workbuf);
     free(svbbuf);
@@ -3191,6 +3260,10 @@ dnumpy_exit()
 static PyObject *
 dnumpy_master_slave_split(void)
 {
+    #ifdef DNDY_TIME
+        DNDTIME(t_app_total)
+    #endif
+
     if(myrank == 0)
     {
         //Check for user-defined block size.

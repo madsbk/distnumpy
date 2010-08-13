@@ -28,8 +28,8 @@ typedef struct {
 } PyUFuncObject;
 
 //#define DISTNUMPY_DEBUG
-
 //#define DNPY_STATISTICS
+//#define DNDY_TIME
 
 //Easy retrieval of dnduid
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
