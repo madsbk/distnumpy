@@ -150,8 +150,7 @@ typedef struct
     npy_intp nsteps[NPY_MAXDIMS];
     //Number of elements to next dimension (one per base-dimension).
     npy_intp stride[NPY_MAXDIMS];
-    //The MPI datatype and offset (in bytes).
-    MPI_Datatype comm_dtype;
+    //The MPI communication offset (in bytes).
     npy_intp comm_offset;
     //Number of elements in this sub-block.
     npy_intp nelem;

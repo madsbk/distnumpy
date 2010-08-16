@@ -18,9 +18,6 @@ static npy_intp msg[DNPY_MAX_MSG_SIZE];
 //The work buffer and its next free slot.
 static void *workbuf;
 static void *workbuf_nextfree;
-//The svb buffer and its next free slot.
-static dndsvb *svbbuf;
-static dndsvb *svbbuf_nextfree;
 //Unique identification counter
 static npy_intp uid_count=0;
 //Array-views belonging to local MPI process
@@ -382,6 +379,56 @@ static void msg2slaves(npy_intp *msg, int msgsize)
 
 } /* msg2slaves */
 
+/*===================================================================
+ *
+
+ */
+static MPI_Datatype
+calc_svb_MPIdatatype(const dndview *view, dndsvb *svb)
+{
+    npy_intp i,j,stride;
+    MPI_Datatype comm_viewOLD, comm_viewNEW;
+    npy_intp start[NPY_MAXDIMS];
+    npy_intp step[NPY_MAXDIMS];
+    npy_intp nsteps[NPY_MAXDIMS];
+
+    //Convert vcoord to coord, which have length view->base->ndims.
+    j=0;
+    for(i=0; i < view->nslice; i++)
+    {
+        if(view->slice[i].nsteps == PseudoIndex)
+        {
+            continue;
+        }
+        if(view->slice[i].nsteps == SingleIndex)
+        {
+            nsteps[j] = 1;
+            step[j] = 1;
+        }
+        else
+        {
+            nsteps[j] = view->slice[i].nsteps;
+            step[j] = view->slice[i].step;
+        }
+        start[j++] = view->slice[i].start;
+    }
+
+    //Compute the MPI datatype for communication.
+    MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);
+    for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
+    {
+        //Compute the MPI datatype for the view.
+        stride = svb->stride[i] * step[i] * view->base->elsize;
+        MPI_Type_create_hvector(svb->nsteps[i], 1, stride,
+                                comm_viewOLD, &comm_viewNEW);
+
+        //Cleanup and iterate comm types.
+        MPI_Type_free(&comm_viewOLD);
+        comm_viewOLD = comm_viewNEW;
+    }
+    MPI_Type_commit(&comm_viewNEW);
+    return comm_viewNEW;
+}/* calc_svb_MPIdatatype */
 
 /*===================================================================
  *
@@ -406,7 +453,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     npy_intp step[NPY_MAXDIMS];
     npy_intp nsteps[NPY_MAXDIMS];
     dndsvb *svb;
-    MPI_Datatype comm_viewOLD, comm_viewNEW;
 
     //Convert vcoord to coord, which have length view->base->ndims.
     j=0;s=0;
@@ -435,7 +481,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     }
     assert(j == view->base->ndims);
 
-    vblock->sub = svbbuf_nextfree;
+    vblock->sub = workbuf_nextfree;
     svb = vblock->sub;
 
     //Init number of sub-view-block in each dimension.
@@ -497,23 +543,12 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         }
 
         //Compute the MPI datatype for communication.
-        MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);
         comm_offset = 0;
         nelem = 1;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
-            //Compute the MPI datatype for the view.
-            stride = svb[s].stride[i] * step[i] * view->base->elsize;
-            MPI_Type_create_hvector(svb[s].nsteps[i], 1, stride,
-                                    comm_viewOLD, &comm_viewNEW);
-
             //Compute offsets.
             comm_offset += svb[s].start[i] * svb[s].stride[i];
-
-            //Cleanup and iterate comm types.
-            MPI_Type_free(&comm_viewOLD);
-            comm_viewOLD = comm_viewNEW;
-
             //Computing total number of elements.
             nelem *= svb[s].nsteps[i];
         }
@@ -529,10 +564,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             vblock->sub[s].data = view->base->data +
                                   svb[s].comm_offset;
         }
-
-        //Commit dtype.
-        MPI_Type_commit(&comm_viewNEW);
-        svb[s].comm_dtype = comm_viewNEW;
 
         //Iterate Sub-vblocks coordinate (Row-major).
         for(j=view->base->ndims-1; j >= 0; j--)
@@ -565,7 +596,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     vblock->nsub = s;
     assert(vblock->nsub > 0);
     //And the next free work buffer slot.
-    svbbuf_nextfree += s;
+    workbuf_nextfree += s * sizeof(dndsvb);
 } /* calc_vblock */
 
 /*===================================================================
@@ -2294,15 +2325,18 @@ static void dag_svb_flush(void)
         dndnode *node = ready_queue[--ready_queue_size];
         dndnode_comm *C = (dndnode_comm*) node;
         dndnode_ufunc *F = (dndnode_ufunc*) node;
+        MPI_Datatype comm_dtype;
         switch(node->op)
         {
             case DNPY_RECV:
                 assert(C->narys == 1);
+                comm_dtype = calc_svb_MPIdatatype(C->views[0], C->svbs[0]);
                 MPI_Recv(C->views[0]->base->data +
                          C->svbs[0]->comm_offset,
-                         1, C->svbs[0]->comm_dtype,
+                         1, comm_dtype,
                          C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                MPI_Type_free(&comm_dtype);
                 break;
             case DNPY_BUF_RECV:
                 assert(C->narys == 1);
@@ -2316,11 +2350,13 @@ static void dag_svb_flush(void)
                 break;
             case DNPY_SEND:
                 assert(C->narys == 1);
+                comm_dtype = calc_svb_MPIdatatype(C->views[0], C->svbs[0]);
                 MPI_Send(C->views[0]->base->data +
                           C->svbs[0]->comm_offset,
-                         1, C->svbs[0]->comm_dtype,
+                         1, comm_dtype,
                          C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD);
+                MPI_Type_free(&comm_dtype);
                 break;
             case DNPY_BUF_SEND:
                 assert(C->narys == 1);
@@ -2355,17 +2391,9 @@ static void dag_svb_flush(void)
         }
     }
 
-    //Cleanup the sub-view-block buffer.
-    while(svbbuf_nextfree > svbbuf)
-    {
-        svbbuf_nextfree--;
-        MPI_Type_free(&svbbuf_nextfree->comm_dtype);
-    }
-
     //Resetting.
     nvb_in_svb_dag = 0;
     workbuf_nextfree = workbuf;
-    svbbuf_nextfree = svbbuf;
     assert(ready_queue_size == 0);
 
     #ifdef DNDY_TIME
@@ -3105,9 +3133,6 @@ dnumpy_init(void)
     workbuf = malloc(DNPY_WORK_BUFFER_MAXSIZE);
     workbuf_nextfree = workbuf;
     assert(workbuf != NULL);
-    svbbuf = malloc(DNPY_WORK_BUFFER_MAXSIZE);
-    svbbuf_nextfree = svbbuf;
-    assert(svbbuf != NULL);
 
     //Initilization of cart_dim_strides.
     for(i=0; i<NPY_MAXDIMS; i++)
@@ -3211,7 +3236,6 @@ dnumpy_exit()
 
     //Free buffers.
     free(workbuf);
-    free(svbbuf);
     //Free Cartesian Information.
     for(i=0; i < NPY_MAXDIMS; i++)
     {
