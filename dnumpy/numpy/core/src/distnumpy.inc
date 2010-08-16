@@ -1078,6 +1078,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     dndnode *node = workbuf_nextfree;
     workbuf_nextfree += sizeof(dndnode);
     node->op = DNPY_DESTROY_ARRAY;
+    node->optype = DNPY_NONCOMM;
     node->narys = 1;
     node->views[0] = get_dndview(uid);
     node->svbs[0] = NULL;
@@ -1468,6 +1469,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     dndnode_comm *node = workbuf_nextfree;
                     workbuf_nextfree += sizeof(dndnode_comm);
                     node->op = DNPY_BUF_RECV;
+                    node->optype = DNPY_COMM;
                     node->narys = 1;
                     node->views[0] = views[v];
                     node->svbs[0] = svbs[v];
@@ -1480,6 +1482,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 dndnode_ufunc *node = workbuf_nextfree;
                 workbuf_nextfree += sizeof(dndnode_ufunc);
                 node->op = DNPY_UFUNC;
+                node->optype = DNPY_NONCOMM;
                 node->narys = narys;
                 node->nout = nout_arys;
                 memcpy(node->views, views, narys * sizeof(dndview*));
@@ -1579,6 +1582,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     dndnode_comm *node = workbuf_nextfree;
                     workbuf_nextfree += sizeof(dndnode_comm);
                     node->op = DNPY_SEND;
+                    node->optype = DNPY_COMM;
                     node->narys = 1;
                     node->views[0] = views[v];
                     node->svbs[0] = svbs[v];
@@ -1658,6 +1662,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->accesstype[0] = DNPY_READ;
                     node->mpi_tag = mpi_tag;
                     node->op = DNPY_BUF_SEND;
+                    node->optype = DNPY_COMM;
                     node->remote_rank = svb->rank;
                     dag_svb_add(node);
                 }
@@ -1671,6 +1676,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->accesstype[0] = DNPY_WRITE;
                     node->mpi_tag = mpi_tag;
                     node->op = DNPY_RECV;
+                    node->optype = DNPY_COMM;
                     node->remote_rank = coord_owner;
                     dag_svb_add(node);
                 }
@@ -2471,21 +2477,8 @@ static void dag_svb_add(void *node_input)
             //To make sure that all communication done by the
             //MPI processes are performed in the same order
             //all communication is marked as conflicting.
-            char conflict;
-            if((node->op == DNPY_RECV ||
-                node->op == DNPY_SEND ||
-                node->op == DNPY_BUF_RECV ||
-                node->op == DNPY_BUF_SEND)
-               &&
-               (tnode->op == DNPY_RECV ||
-                tnode->op == DNPY_SEND ||
-                tnode->op == DNPY_BUF_RECV ||
-                tnode->op == DNPY_BUF_SEND))
-                conflict = 1;
-            else
-                conflict = dndnode_conflict(node, tnode);
-
-            if(conflict)
+            if(dndnode_conflict(node, tnode) ||
+              (node->optype == DNPY_COMM && tnode->optype == DNPY_COMM))
             {
                 //Add the new found dependency.
                 assert(tnode->ndepend < DNPY_MAX_DEPENDENCY);

@@ -61,7 +61,7 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL, DNPY_DATAFILL,
           DNPY_DATADUMP, DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL,
           DNPY_RECV, DNPY_SEND, DNPY_BUF_RECV, DNPY_BUF_SEND, DNPY_APPLY,
-          DNPY_EVALFLUSH, DNPY_READ, DNPY_WRITE};
+          DNPY_EVALFLUSH, DNPY_READ, DNPY_WRITE, DNPY_COMM, DNPY_NONCOMM};
 
 //Type describing a distributed array.
 typedef struct
@@ -174,7 +174,8 @@ typedef struct
 } dndvb;
 
 //The Super-type of a DAG node.
-//op               - the operation, such as DNPY_RECV and DNPY_APPLY.
+//op               - the operation, e.g. DNPY_RECV and DNPY_UFUNC.
+//optype           - the operation type, e.g. DNPY_COMM/_NONCOMM.
 //ndepend & depend - list of nodes that depend on this node.
 //mydepend         - number of nodes this node depend on.
 //narys & views    - list of array views involved.
@@ -185,6 +186,7 @@ typedef struct
 //uid              - unique identification - only used for statistics.
 #define DNDNODE_HEAD_BASE                   \
     char op;                                \
+    char optype;                            \
     int ndepend;                            \
     dndnode *depend[DNPY_MAX_DEPENDENCY];   \
     npy_intp mydepend;                      \
