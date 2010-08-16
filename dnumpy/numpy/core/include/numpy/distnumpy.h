@@ -150,12 +150,9 @@ typedef struct
     npy_intp nsteps[NPY_MAXDIMS];
     //Number of elements to next dimension (one per base-dimension).
     npy_intp stride[NPY_MAXDIMS];
-    //The MPI datatype for the view.
-    MPI_Datatype comm_dtype_view;
-    npy_intp offset_view;
-    //The MPI datatype and offset for the buffer (in bytes).
-    MPI_Datatype comm_dtype_buf;
-    npy_intp offset_buf;
+    //The MPI datatype and offset (in bytes).
+    MPI_Datatype comm_dtype;
+    npy_intp comm_offset;
     //Number of elements in this sub-block.
     npy_intp nelem;
     //Pointer to data. NULL if data needs to be fetched.

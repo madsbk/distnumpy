@@ -394,9 +394,9 @@ static void
 calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             dndvb *vblock)
 {
-    npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset, bufs;
+    npy_intp i, j, B, item_idx, s, offset, goffset, voffset, boffset;
     npy_intp notfinished, stride, vitems, vvitems, vblocksize;
-    npy_intp offset_view, offset_buf, nelem;
+    npy_intp comm_offset, nelem;
     npy_intp coord[NPY_MAXDIMS];
     npy_intp scoord[NPY_MAXDIMS];
     npy_intp ncoord[NPY_MAXDIMS];
@@ -405,9 +405,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     npy_intp start[NPY_MAXDIMS];
     npy_intp step[NPY_MAXDIMS];
     npy_intp nsteps[NPY_MAXDIMS];
-    npy_intp bufstride[NPY_MAXDIMS];
     dndsvb *svb;
-    MPI_Datatype comm_bufOLD, comm_bufNEW;
     MPI_Datatype comm_viewOLD, comm_viewNEW;
 
     //Convert vcoord to coord, which have length view->base->ndims.
@@ -449,7 +447,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     notfinished=1; s=0;
     while(notfinished)
     {
-        bufs=view->base->elsize;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
             //Non-block coordinates.
@@ -478,11 +475,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             vvitems = vblocksize - (voffset % blocksize);
             //Compute nsteps.
             svb[s].nsteps[i] = MIN(blocksize, MIN(vvitems, vitems));
-            //Compute the stride for the comm_dtype_buf.
-            bufstride[i] = bufs;
-            bufs *= vblocksize;
             //Debug check.
-            assert(bufstride[i] > 0);
             assert(svb[s].nsteps[i] >= 0);
         }
         //Find rank.
@@ -505,9 +498,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 
         //Compute the MPI datatype for communication.
         MPI_Type_dup(view->base->mpi_dtype, &comm_viewOLD);
-        MPI_Type_dup(view->base->mpi_dtype, &comm_bufOLD);
-        offset_view = 0;
-        offset_buf = 0;
+        comm_offset = 0;
         nelem = 1;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
@@ -516,26 +507,18 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             MPI_Type_create_hvector(svb[s].nsteps[i], 1, stride,
                                     comm_viewOLD, &comm_viewNEW);
 
-            //Compute the MPI datatype for the buffer.
-            MPI_Type_create_hvector(svb[s].nsteps[i], 1, bufstride[i],
-                                    comm_bufOLD, &comm_bufNEW);
-
             //Compute offsets.
-            offset_view += svb[s].start[i] * svb[s].stride[i];
-            offset_buf += scoord[i] * bufstride[i];
+            comm_offset += svb[s].start[i] * svb[s].stride[i];
 
             //Cleanup and iterate comm types.
             MPI_Type_free(&comm_viewOLD);
-            MPI_Type_free(&comm_bufOLD);
             comm_viewOLD = comm_viewNEW;
-            comm_bufOLD = comm_bufNEW;
 
             //Computing total number of elements.
             nelem *= svb[s].nsteps[i];
         }
         //Save offsets.
-        svb[s].offset_view = offset_view * view->base->elsize;
-        svb[s].offset_buf = offset_buf;
+        svb[s].comm_offset = comm_offset * view->base->elsize;
 
         //Save total number of elements.
         svb[s].nelem = nelem;
@@ -544,14 +527,12 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         if(svb[s].rank == myrank)
         {
             vblock->sub[s].data = view->base->data +
-                                  svb[s].offset_view;
+                                  svb[s].comm_offset;
         }
 
         //Commit dtype.
         MPI_Type_commit(&comm_viewNEW);
-        MPI_Type_commit(&comm_bufNEW);
-        svb[s].comm_dtype_view = comm_viewNEW;
-        svb[s].comm_dtype_buf = comm_bufNEW;
+        svb[s].comm_dtype = comm_viewNEW;
 
         //Iterate Sub-vblocks coordinate (Row-major).
         for(j=view->base->ndims-1; j >= 0; j--)
@@ -2318,8 +2299,8 @@ static void dag_svb_flush(void)
             case DNPY_RECV:
                 assert(C->narys == 1);
                 MPI_Recv(C->views[0]->base->data +
-                         C->svbs[0]->offset_view,
-                         1, C->svbs[0]->comm_dtype_view,
+                         C->svbs[0]->comm_offset,
+                         1, C->svbs[0]->comm_dtype,
                          C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 break;
@@ -2336,8 +2317,8 @@ static void dag_svb_flush(void)
             case DNPY_SEND:
                 assert(C->narys == 1);
                 MPI_Send(C->views[0]->base->data +
-                          C->svbs[0]->offset_view,
-                         1, C->svbs[0]->comm_dtype_view,
+                          C->svbs[0]->comm_offset,
+                         1, C->svbs[0]->comm_dtype,
                          C->remote_rank, C->mpi_tag,
                          MPI_COMM_WORLD);
                 break;
@@ -2378,8 +2359,7 @@ static void dag_svb_flush(void)
     while(svbbuf_nextfree > svbbuf)
     {
         svbbuf_nextfree--;
-        MPI_Type_free(&svbbuf_nextfree->comm_dtype_view);
-        MPI_Type_free(&svbbuf_nextfree->comm_dtype_buf);
+        MPI_Type_free(&svbbuf_nextfree->comm_dtype);
     }
 
     //Resetting.
