@@ -532,3 +532,19 @@
    fun:PyObject_Call
    fun:instancemethod_call
 }
+{
+   From DistNumPy (python 2.6) - non-freed in slave processes.
+   Memcheck:Leak
+   fun:realloc
+   fun:_PyString_Resize
+   fun:PyString_DecodeEscape
+   fun:parsestr
+   fun:parsestrplus
+   fun:ast_for_atom
+   fun:ast_for_power
+   fun:ast_for_expr
+   fun:ast_for_binop
+   fun:ast_for_expr
+   fun:ast_for_testlist
+   fun:ast_for_expr_stmt
+}
