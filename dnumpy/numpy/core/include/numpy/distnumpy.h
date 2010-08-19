@@ -50,7 +50,7 @@ typedef struct {
 #define DNPY_MAX_DEPENDENCY 1000
 
 //Maximum number of nodes in the ready queue.
-#define DNPY_RDY_QUEUE_MAXSIZE 100
+#define DNPY_RDY_QUEUE_MAXSIZE 512
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB

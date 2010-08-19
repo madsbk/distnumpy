@@ -2315,7 +2315,15 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
  */
 static void dag_svb_flush(void)
 {
-    npy_intp i;
+    npy_intp i, j, f, commsize, ncommsize;
+    int fcomm[DNPY_RDY_QUEUE_MAXSIZE];
+    int fcommsize;
+    MPI_Request reqs[DNPY_RDY_QUEUE_MAXSIZE];
+    MPI_Status reqstatus[DNPY_RDY_QUEUE_MAXSIZE];
+    dndnode *comm[DNPY_RDY_QUEUE_MAXSIZE];
+    dndnode *ncomm[DNPY_RDY_QUEUE_MAXSIZE];
+    MPI_Datatype dtype[DNPY_RDY_QUEUE_MAXSIZE];
+    npy_intp dtypesize=0;
 
     #ifdef DNDY_TIME
         unsigned long long tdelta;
@@ -2325,77 +2333,151 @@ static void dag_svb_flush(void)
         dag_svb_dump();
     #endif
 
-    while(ready_queue_size > 0)
+    commsize=0; ncommsize=0;
+    while(ready_queue_size + commsize + ncommsize > 0)
     {
-        //Get a ready node - using First In Last Out.
-        dndnode *node = ready_queue[--ready_queue_size];
-        dndnode_comm *C = (dndnode_comm*) node;
-        dndnode_ufunc *F = (dndnode_ufunc*) node;
-        MPI_Datatype comm_dtype;
-        switch(node->op)
+        assert(ready_queue_size <= DNPY_RDY_QUEUE_MAXSIZE);
+
+        //Sort the queue into two queues - one for communication and
+        //one for non-communication nodes.
+        //Furthermore, initiate the communication nodes.
+        for(i=0; i<ready_queue_size; i++)
         {
-            case DNPY_RECV:
-                assert(C->narys == 1);
-                comm_dtype = calc_svb_MPIdatatype(C->views[0], C->svbs[0]);
-                MPI_Recv(C->views[0]->base->data +
-                         C->svbs[0]->comm_offset,
-                         1, comm_dtype,
-                         C->remote_rank, C->mpi_tag,
-                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                MPI_Type_free(&comm_dtype);
-                break;
-            case DNPY_BUF_RECV:
-                assert(C->narys == 1);
-                assert(C->svbs[0]->data == NULL);
-                C->svbs[0]->data = workbuf_nextfree;
-                workbuf_nextfree += C->svbs[0]->nelem *
-                                    C->views[0]->base->elsize;
-                MPI_Recv(C->svbs[0]->data, C->svbs[0]->nelem,
-                         C->views[0]->base->mpi_dtype, C->remote_rank,
-                         C->mpi_tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                break;
-            case DNPY_SEND:
-                assert(C->narys == 1);
-                comm_dtype = calc_svb_MPIdatatype(C->views[0], C->svbs[0]);
-                MPI_Send(C->views[0]->base->data +
-                          C->svbs[0]->comm_offset,
-                         1, comm_dtype,
-                         C->remote_rank, C->mpi_tag,
-                         MPI_COMM_WORLD);
-                MPI_Type_free(&comm_dtype);
-                break;
-            case DNPY_BUF_SEND:
-                assert(C->narys == 1);
-                assert(C->svbs[0]->data != NULL);
-                MPI_Send(C->svbs[0]->data, C->svbs[0]->nelem,
-                         C->views[0]->base->mpi_dtype,
-                         C->remote_rank, C->mpi_tag,
-                         MPI_COMM_WORLD);
-                break;
-            case DNPY_UFUNC:
-                apply_ufunc(F);
-                Py_DECREF(F->PyOp);
-                break;
-            case DNPY_DESTROY_ARRAY:
-                assert(node->narys == 1);
-                assert(node->views[0] != NULL);
-                rm_dndview(node->views[0]->uid);
-                break;
-            default:
-                fprintf(stderr, "Unknown DAG operation: %d.\n",
-                        (int)node->op);
-                MPI_Abort(MPI_COMM_WORLD, -1);
+            //Init. all communication nodes in the ready queue.
+            if(ready_queue[i]->optype == DNPY_COMM)
+            {
+                dndnode_comm *C = (dndnode_comm*) ready_queue[i];
+                MPI_Datatype comm_dtype;
+                switch(C->op)
+                {
+                    case DNPY_RECV:
+                        assert(C->narys == 1);
+                        comm_dtype = calc_svb_MPIdatatype(C->views[0],
+                                                          C->svbs[0]);
+                        MPI_Irecv(C->views[0]->base->data +
+                                  C->svbs[0]->comm_offset,
+                                  1, comm_dtype,
+                                  C->remote_rank, C->mpi_tag,
+                                  MPI_COMM_WORLD, &reqs[commsize]);
+                        MPI_Type_free(&comm_dtype);
+                        break;
+                    case DNPY_BUF_RECV:
+                        assert(C->narys == 1);
+                        assert(C->svbs[0]->data == NULL);
+                        C->svbs[0]->data = workbuf_nextfree;
+                        workbuf_nextfree += C->svbs[0]->nelem *
+                                            C->views[0]->base->elsize;
+                        MPI_Irecv(C->svbs[0]->data, C->svbs[0]->nelem,
+                                  C->views[0]->base->mpi_dtype,
+                                  C->remote_rank, C->mpi_tag,
+                                  MPI_COMM_WORLD, &reqs[commsize]);
+                        break;
+                    case DNPY_SEND:
+                        assert(C->narys == 1);
+                        comm_dtype = calc_svb_MPIdatatype(C->views[0],
+                                                          C->svbs[0]);
+                        MPI_Isend(C->views[0]->base->data +
+                                  C->svbs[0]->comm_offset,
+                                  1, comm_dtype,
+                                  C->remote_rank, C->mpi_tag,
+                                  MPI_COMM_WORLD, &reqs[commsize]);
+                        dtype[dtypesize++] = comm_dtype;
+                        //At the moment we have to delay this freeing to
+                        //the end of the flush. I’m not sure if this is
+                        //a bug in DistNumPy or the MPICH-2 implementa-
+                        //tion.
+                        //MPI_Type_free(&comm_dtype);
+                        break;
+                    case DNPY_BUF_SEND:
+                        assert(C->narys == 1);
+                        assert(C->svbs[0]->data != NULL);
+                        MPI_Isend(C->svbs[0]->data, C->svbs[0]->nelem,
+                                  C->views[0]->base->mpi_dtype,
+                                  C->remote_rank, C->mpi_tag,
+                                  MPI_COMM_WORLD, &reqs[commsize]);
+                        break;
+                    default:
+                        fprintf(stderr, "Unknown DAG operation: %d.\n",
+                                (int)C->op);
+                        MPI_Abort(MPI_COMM_WORLD, -1);
+                }
+                comm[commsize++] = ready_queue[i];
+            }
+            else
+            {
+                assert(ready_queue[i]->optype == DNPY_NONCOMM);
+                ncomm[ncommsize++] = ready_queue[i];
+            }
+        }
+        //The ready queue is now empty.
+        ready_queue_size = 0;
+
+        //Apply all non-communication nodes and move new non-depend
+        //nodes to the ready queue.
+        for(i=0; i<ncommsize; i++)
+        {
+            dndnode *node = ncomm[i];
+            switch(node->op)
+            {
+                case DNPY_UFUNC:
+                    apply_ufunc((dndnode_ufunc*)node);
+                    Py_DECREF(((dndnode_ufunc*)node)->PyOp);
+                    break;
+                case DNPY_DESTROY_ARRAY:
+                    assert(node->narys == 1);
+                    assert(node->views[0] != NULL);
+                    rm_dndview(node->views[0]->uid);
+                    break;
+                default:
+                    fprintf(stderr, "Unknown DAG operation: %d.\n",
+                            (int)node->op);
+                    MPI_Abort(MPI_COMM_WORLD, -1);
+            }
+            for(j=0; j<node->ndepend; j++)
+            {
+                assert(node->depend[j]->mydepend > 0);
+                node->depend[j]->mydepend--;
+                if(node->depend[j]->mydepend == 0)//The node is ready.
+                    ready_queue[ready_queue_size++] = node->depend[j];
+            }
         }
 
-        //Remove the node from the svb DAG.
-        for(i=0; i<node->ndepend; i++)
+        //Wait for communication when only communication nodes are
+        //unhandled and move new non-depend nodes to the ready queue.
+        if(ncommsize == 0 && ready_queue_size == 0 && commsize > 0)
         {
-            assert(node->depend[i]->mydepend > 0);
-            node->depend[i]->mydepend--;
-            if(node->depend[i]->mydepend == 0)//The node is ready.
-                ready_queue[ready_queue_size++] = node->depend[i];
+            MPI_Waitsome(commsize, reqs, &fcommsize, fcomm, reqstatus);
+            assert(fcommsize != MPI_UNDEFINED);
+            for(f=0; f<fcommsize; f++)
+            {
+                dndnode *node = comm[fcomm[f]];
+                for(i=0; i<node->ndepend; i++)
+                {
+                    assert(node->depend[i]->mydepend > 0);
+                    node->depend[i]->mydepend--;
+                    if(node->depend[i]->mydepend == 0)//The node is ready.
+                        ready_queue[ready_queue_size++] = node->depend[i];
+                }
+            }
+            for(f=0; f<fcommsize; f++)
+            {
+                j=0;
+                for(i=0; i<commsize; i++)
+                    if(fcomm[f]-f != i)
+                    {
+                        comm[j] = comm[i];
+                        reqs[j++] = reqs[i];
+                    }
+            }
+            commsize -= fcommsize;
         }
+        //Non-communication node queue is now empty.
+        ncommsize = 0;
     }
+
+    //Do the delayed MPI type freeing.
+    for(i=0; i<dtypesize; i++)
+        MPI_Type_free(&dtype[i]);
 
     //Resetting.
     nvb_in_svb_dag = 0;
@@ -2474,11 +2556,7 @@ static void dag_svb_add(void *node_input)
         dndnode *tnode = ready_queue[0];
         while(1)
         {
-            //To make sure that all communication done by the
-            //MPI processes are performed in the same order
-            //all communication is marked as conflicting.
-            if(dndnode_conflict(node, tnode) ||
-              (node->optype == DNPY_COMM && tnode->optype == DNPY_COMM))
+            if(dndnode_conflict(node, tnode))
             {
                 //Add the new found dependency.
                 assert(tnode->ndepend < DNPY_MAX_DEPENDENCY);
