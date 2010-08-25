@@ -1283,6 +1283,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     npy_intp sstride[NPY_MAXDIMS], csdims[NPY_MAXDIMS];
     npy_intp svboffset[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp csvb[NPY_MAXARGS][NPY_MAXDIMS];
+    int dim_iter_order[NPY_MAXDIMS];
     int pcoord[NPY_MAXDIMS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
@@ -1345,6 +1346,51 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         funcdata = ufunc_obj->data[appropriate_function];
     }
 
+    //Find the order of which the dimensions should be iterated.
+    int sc = 0; //start counter.
+    int ec = lastary->ndims-1; //end counter.
+    for(i=ec; i>=0; i--)
+    {
+        int broadcast = 0;
+        if(lastary->base->dims[i] != 1)
+        {
+            for(j=0; j<nin; j++)
+            {
+                int lastcount = i - (lastary->ndims -
+                                     views[j]->ndims);
+                int si=views[j]->ndims-1, gotdim=0;
+                if(lastcount >= 0)
+                {
+                    for(s=views[j]->nslice-1; s>=0; s--)
+                    {
+                        if(views[j]->slice[s].nsteps !=
+                           SingleIndex)
+                            if(si-- == lastcount)
+                            {
+                                gotdim = 1;
+                                break;
+                            }
+                    }
+                }
+                if(gotdim == 0 || //no more dims.
+                   views[j]->slice[s].nsteps == 1)//dim size is 1.
+                {
+                    broadcast = 1;
+                    break;
+                }
+            }
+        }
+        //Dims we need to broadcast should be ordered first.
+        if(broadcast)
+            dim_iter_order[sc++] = i;
+        else
+            dim_iter_order[ec--] = i;
+    }
+
+    //Reset vblocks.
+    for(i=0; i<narys; i++)
+        vblocks[i].uid = -1;
+
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
@@ -1382,8 +1428,21 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 unsigned long long tdelta2;
                 DNDTIME(tdelta2);
             #endif
-            //Get view block info.
-            calc_vblock(views[v], bcoord, &vblocks[v]);
+
+            //Calculate the current coord's uid.
+            npy_intp uid = 0;s=1;
+            for(i=views[v]->ndims-1; i>=0; i--)
+            {
+                uid += bcoord[i] * s;
+                s *= views[v]->blockdims[i];
+            }
+            //Check of we need to calulate a new view-block.
+            if(vblocks[v].uid != uid)
+            {
+                vblocks[v].uid = uid;
+                calc_vblock(views[v], bcoord, &vblocks[v]);
+            }
+
             #ifdef DNDY_TIME
                 DNDTIME_SUM(tdelta2, t_calc_vblock)
             #endif
@@ -1689,13 +1748,19 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //and we may therefore have to flush it before calculating
         //new view-blocks.
         if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
+        {
             dag_svb_flush();
+            //Reset vblocks.
+            for(i=0; i<narys; i++)
+                vblocks[i].uid = -1;
+        }
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
         {
-            coord[j]++;
-            if(coord[j] >= lastary->blockdims[j])
+            int o = dim_iter_order[j];//Using the computed order.
+            coord[o]++;
+            if(coord[o] >= lastary->blockdims[o])
             {
                 //We are finished, if wrapping around.
                 if(j == 0)
@@ -1703,7 +1768,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     notfinished = 0;
                     break;
                 }
-                coord[j] = 0;//Start coord.
+                coord[o] = 0;//Start coord.
             }
             else
                 break;

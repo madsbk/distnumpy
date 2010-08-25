@@ -164,7 +164,7 @@ typedef struct
 typedef struct
 {
     //The id of the view block.
-    npy_intp id;
+    npy_intp uid;
     //All sub-view-blocks in this view block (Row-major).
     dndsvb *sub;
     //Number of sub-view-blocks.
