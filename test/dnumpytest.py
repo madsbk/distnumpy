@@ -58,9 +58,7 @@ if __name__ == "__main__":
         print str(err)
         sys.exit(2)
     for o, a in opts:
-        if o == "-s":
-            verbose = True
-        elif o in ("-s", "--seed"):
+        if o in ("-s", "--seed"):
             seed = int(a)
         elif o in ("-f", "--file"):
             script_list.append(a)
