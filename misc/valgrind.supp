@@ -548,3 +548,22 @@
    fun:ast_for_testlist
    fun:ast_for_expr_stmt
 }
+{
+   From OpenMPI 1.4.2
+   Memcheck:Param
+   writev(vector[...])
+   fun:writev
+   fun:mca_oob_tcp_msg_send_handler
+   fun:mca_oob_tcp_peer_send
+   fun:mca_oob_tcp_send_nb
+   fun:orte_rml_oob_send_buffer
+   fun:allgather
+   fun:modex
+   fun:ompi_mpi_init
+   fun:PMPI_Init
+   fun:dnumpy_init
+   fun:initmultiarray
+   fun:_PyImport_LoadDynamicModule
+}
+
+
