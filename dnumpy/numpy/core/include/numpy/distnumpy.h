@@ -29,7 +29,9 @@ typedef struct {
 
 //#define DISTNUMPY_DEBUG
 //#define DNPY_STATISTICS
-//#define DNDY_TIME
+#define DNDY_TIME
+#define DNDY_TIME_NODE 0
+
 
 //Easy retrieval of dnduid
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)

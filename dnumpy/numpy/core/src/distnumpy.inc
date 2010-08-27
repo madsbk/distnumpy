@@ -56,7 +56,7 @@ static void dag_svb_add(void *node);
     struct timezone tz;
     static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
         t_dag_svb_add=0, t_calc_vblock=0, t_ufunc_svb=0,            \
-        t_apply_ufunc=0;
+        t_apply_ufunc=0, t_ufunc_comm=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -1705,9 +1705,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
         //Write vblocks to output arrays.
         for(v=nin; v<narys; v++)
-            for(j=0; j<vblocks[v].nsub; j++)
+            for(j=0; j<vblocks[v].nsub; j++, mpi_tag++)
             {
-                mpi_tag++;
                 dndsvb *svb = &vblocks[v].sub[j];
 
                 //Add a new sub-view block DAG node.
@@ -2511,8 +2510,18 @@ static void dag_svb_flush(void)
         //unhandled and move new non-depend nodes to the ready queue.
         if(ncommsize == 0 && ready_queue_size == 0 && commsize > 0)
         {
+            #ifdef DNDY_TIME
+                unsigned long long tdelta2;
+                DNDTIME(tdelta2);
+            #endif
+
             MPI_Waitsome(commsize, reqs, &fcommsize, fcomm, reqstatus);
             assert(fcommsize != MPI_UNDEFINED);
+
+            #ifdef DNDY_TIME
+                DNDTIME_SUM(tdelta2, t_ufunc_comm)
+            #endif
+
             for(f=0; f<fcommsize; f++)
             {
                 dndnode *node = comm[fcomm[f]];
@@ -3360,14 +3369,20 @@ dnumpy_exit()
     dag_svb_flush();
 
     #ifdef DNDY_TIME
+        #ifdef DNDY_TIME_NODE
+        if(DNDY_TIME_NODE == myrank)
+        #endif
+        {
         unsigned long long total=0;
         DNDTIME_SUM(t_app_total, total);
         printf("app_total:         %6.llu ms\n", total/1000);
         printf("  dag_svb_flush:   %6.llu ms\n", t_dag_svb_flush/1000);
         printf("    apply_ufunc:   %6.llu ms\n", t_apply_ufunc/1000);
+        printf("    ufunc_comm:    %6.llu ms\n", t_ufunc_comm/1000);
         printf("  ufunc_svb:       %6.llu ms\n", t_ufunc_svb/1000);
         printf("    dag_svb_add:   %6.llu ms\n", t_dag_svb_add/1000);
         printf("    calc_vblock:   %6.llu ms\n", t_calc_vblock/1000);
+        }
     #endif
 
     //Free buffers.
