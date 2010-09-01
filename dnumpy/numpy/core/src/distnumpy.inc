@@ -194,6 +194,7 @@ static void dag_svb_dump(void)
         return;
 
     sprintf(filename, "dndstat_p%d", myrank);
+    remove(filename);
 
     pFile = fopen(filename, "a");
     assert(pFile != NULL);
@@ -204,7 +205,13 @@ static void dag_svb_dump(void)
     tnode = ready_queue[0];
     while(tnode != NULL)
     {
-        fprintf(pFile, "n%d [label=\"%s-%d: ", tnode->uid, optype2str(tnode->op), tnode->uid);
+        fprintf(pFile, "n%d [label=\"%s", tnode->uid,
+                optype2str(tnode->op));
+        if(tnode->optype == DNPY_COMM)
+            fprintf(pFile, "-%ld: ", ((dndnode_comm*)tnode)->mpi_tag);
+        else
+            fprintf(pFile, ": ");
+
         for(i=0; i<tnode->narys; i++)
             fprintf(pFile, "a%ld ", (long) tnode->views[i]->uid);
         fprintf(pFile, "\"]\n");
