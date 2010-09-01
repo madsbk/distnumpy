@@ -1347,24 +1347,22 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     }
 
     //Find the order of which the dimensions should be iterated.
-    int sc = 0; //start counter.
-    int ec = lastary->ndims-1; //end counter.
-    for(i=ec; i>=0; i--)
     {
-        int broadcast = 0;
-        if(lastary->base->dims[i] != 1)
+        int sc = 0; //start counter.
+        int ec = lastary->ndims-1; //end counter.
+        for(i=ec; i>=0; i--)
         {
+            int broadcast = 0;
             for(j=0; j<nin; j++)
             {
-                int lastcount = i - (lastary->ndims -
-                                     views[j]->ndims);
-                int si=views[j]->ndims-1, gotdim=0;
+                int lastcount = i - (lastary->ndims - views[j]->ndims);
+                int gotdim=0;
                 if(lastcount >= 0)
                 {
+                    int si=views[j]->ndims-1;
                     for(s=views[j]->nslice-1; s>=0; s--)
                     {
-                        if(views[j]->slice[s].nsteps !=
-                           SingleIndex)
+                        if(views[j]->slice[s].nsteps != SingleIndex)
                             if(si-- == lastcount)
                             {
                                 gotdim = 1;
@@ -1379,14 +1377,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     break;
                 }
             }
+            //Dims we need to broadcast should be ordered first.
+            if(broadcast)
+                dim_iter_order[sc++] = i;
+            else
+                dim_iter_order[ec--] = i;
         }
-        //Dims we need to broadcast should be ordered first.
-        if(broadcast)
-            dim_iter_order[sc++] = i;
-        else
-            dim_iter_order[ec--] = i;
     }
-
     //Reset vblocks.
     for(i=0; i<narys; i++)
         vblocks[i].uid = -1;
