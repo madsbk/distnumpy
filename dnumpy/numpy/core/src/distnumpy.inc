@@ -530,7 +530,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         //Data has not been fetched.
         svb[s].data = NULL;
         //Communication has not been handled.
-        svb[s].comm_handled = 0;
+        svb[s].comm_received_by = -1;
 
         //Compute the strides (we need the rank to do this).
         stride = 1;
@@ -1513,7 +1513,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     if(views[v]->base->ndims == 0)
                         continue;
                     //We did the comm already.
-                    if(svbs[v]->comm_handled != 0)
+                    if(svbs[v]->comm_received_by == myrank)
                         continue;
                     //The data is located locally.
                     if(svbs[v]->rank == myrank)
@@ -1522,7 +1522,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     assert(svbs[v]->data == NULL);
 
                     //Communication has now been handled.
-                    svbs[v]->comm_handled = 1;
+                    svbs[v]->comm_received_by = myrank;
 
                     //Add a new sub-view block DAG node.
                     dndnode_comm *node = workbuf_nextfree;
@@ -1631,11 +1631,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     //The data is not located on this proc.
                     if(svbs[v]->rank != myrank)
                         continue;
-                    if(svbs[v]->comm_handled != 0)
+                    if(svbs[v]->comm_received_by == coord_owner)
                         continue;
 
                     //Communication has now been handled.
-                    svbs[v]->comm_handled = 1;
+                    svbs[v]->comm_received_by = coord_owner;
 
                     //Add a new sub-view block DAG node.
                     dndnode_comm *node = workbuf_nextfree;

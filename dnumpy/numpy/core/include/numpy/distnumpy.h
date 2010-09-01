@@ -29,8 +29,8 @@ typedef struct {
 
 //#define DISTNUMPY_DEBUG
 //#define DNPY_STATISTICS
-#define DNDY_TIME
-#define DNDY_TIME_NODE 0
+//#define DNDY_TIME
+//#define DNDY_TIME_NODE 0
 
 
 //Easy retrieval of dnduid
@@ -154,12 +154,13 @@ typedef struct
     npy_intp stride[NPY_MAXDIMS];
     //The MPI communication offset (in bytes).
     npy_intp comm_offset;
-    //Number of elements in this sub-block.
+    //Number of elements in this sub-view-block.
     npy_intp nelem;
     //Pointer to data. NULL if data needs to be fetched.
     char *data;
-    //Indicate whenever the communication is handled (Boolean).
-    char comm_handled;
+    //The rank of the MPI process that have received this svb.
+    //A negative value means that nothing has been received.
+    int comm_received_by;
 } dndsvb;
 
 //Type describing a view block.
