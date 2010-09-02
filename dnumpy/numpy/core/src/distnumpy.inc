@@ -1164,6 +1164,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
     npy_intp rcoord[NPY_MAXDIMS];
     npy_intp nsteps[NPY_MAXDIMS];
     npy_intp step[NPY_MAXDIMS];
+    char *data;
     dndvb vblock;
 
     //Print debug info.
@@ -1182,93 +1183,99 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 
     dag_svb_flush();
 
-    //Create the window for one-sided communication.
-    MPI_Win comm_win;
-    MPI_Win_create(view->base->data, view->base->nelements *
-                   view->base->elsize, 1, MPI_INFO_NULL, MPI_COMM_WORLD,
-                   &comm_win);
+    //Convert to block coordinates.
+    for(i=0; i<view->ndims; i++)
+        tcoord[i] = coord[i] / blocksize;
 
-    if(myrank == 0)
+    //Get view block info.
+    calc_vblock(view, tcoord, &vblock);
+
+    //Convert PseudoIndex and SingleIndex.
+    j=0;n=0;
+    for(i=0; i < view->nslice; i++)
     {
-        //Convert to block coordinates.
-        for(i=0; i<view->ndims; i++)
-            tcoord[i] = coord[i] / blocksize;
-
-        //Get view block info.
-        calc_vblock(view, tcoord, &vblock);
-
-        //Convert PseudoIndex and SingleIndex.
-        j=0;n=0;
-        for(i=0; i < view->nslice; i++)
+        if(view->slice[i].nsteps == PseudoIndex)
         {
-            if(view->slice[i].nsteps == PseudoIndex)
-            {
-                assert(view->slice[i].start == 0);
-                n++;
-            }
-            else if(view->slice[i].nsteps == SingleIndex)
-            {
-                rcoord[j] = 0;//The offset is already incl. in the svb.
-                nsteps[j] = 1;
-                step[j] = 1;
-                j++;
-            }
-            else
-            {
-                rcoord[j] = coord[n];
-                nsteps[j] = view->slice[i].nsteps;
-                step[j] = view->slice[i].step;
-                j++; n++;
-            }
+            assert(view->slice[i].start == 0);
+            n++;
         }
-
-        //Convert global coordinate to index coordinates
-        //relative to the view.
-        for(i=0; i<view->base->ndims; i++)
-            tcoord[i] = rcoord[i] % blocksize;
-
-        //Find sub view block and convert icoord to coordinate
-        //relative to the sub view block.
-        s=1;b=0;
-        for(i=view->base->ndims-1; i>=0; i--)//Row-major.
+        else if(view->slice[i].nsteps == SingleIndex)
         {
-            j = vblock.sub[b].nsteps[i];
-            while(tcoord[i] >= vblock.sub[b].nsteps[i])
-            {
-                tcoord[i] -= vblock.sub[b].nsteps[i];
-                j += vblock.sub[b].nsteps[i];
-                b += s;
-            }
-            while(j < MIN(blocksize, nsteps[i] - rcoord[i]))
-            {
-                j += vblock.sub[b].nsteps[i];
-            }
-            s *= vblock.svbdims[i];
+            rcoord[j] = 0;//The offset is already incl. in the svb.
+            nsteps[j] = 1;
+            step[j] = 1;
+            j++;
         }
-
-        //Compute offset.
-        offset = 0;
-        for(i=view->base->ndims-1; i>=0; i--)//Row-major.
-            offset += (vblock.sub[b].start[i] + tcoord[i] * step[i]) *
-                      vblock.sub[b].stride[i];
-
-        //Do the communication.
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, vblock.sub[b].rank,
-                     MPI_MODE_NOCHECK, comm_win);
-        if(Direction)
-            MPI_Put(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
-                    offset*view->base->elsize, 1, view->base->mpi_dtype,
-                    comm_win);
         else
-            MPI_Get(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
-                    offset*view->base->elsize, 1, view->base->mpi_dtype,
-                    comm_win);
-        MPI_Win_unlock(vblock.sub[b].rank, comm_win);
+        {
+            rcoord[j] = coord[n];
+            nsteps[j] = view->slice[i].nsteps;
+            step[j] = view->slice[i].step;
+            j++; n++;
+        }
+    }
+
+    //Convert global coordinate to index coordinates
+    //relative to the view.
+    for(i=0; i<view->base->ndims; i++)
+        tcoord[i] = rcoord[i] % blocksize;
+
+    //Find sub view block and convert icoord to coordinate
+    //relative to the sub view block.
+    s=1;b=0;
+    for(i=view->base->ndims-1; i>=0; i--)//Row-major.
+    {
+        j = vblock.sub[b].nsteps[i];
+        while(tcoord[i] >= vblock.sub[b].nsteps[i])
+        {
+            tcoord[i] -= vblock.sub[b].nsteps[i];
+            j += vblock.sub[b].nsteps[i];
+            b += s;
+        }
+        while(j < MIN(blocksize, nsteps[i] - rcoord[i]))
+        {
+            j += vblock.sub[b].nsteps[i];
+        }
+        s *= vblock.svbdims[i];
+    }
+
+    //Compute offset.
+    offset = 0;
+    for(i=view->base->ndims-1; i>=0; i--)//Row-major.
+        offset += (vblock.sub[b].start[i] + tcoord[i] * step[i]) *
+                   vblock.sub[b].stride[i];
+    data = view->base->data + offset*view->base->elsize;
+
+    if(vblock.sub[b].rank == 0)//Local copying.
+    {
+        if(myrank == 0)
+        {
+            if(Direction)
+                memcpy(data, item, view->base->elsize);
+            else
+                memcpy(item, data, view->base->elsize);
+        }
+    }
+    else if(myrank == 0)
+    {
+        if(Direction)
+            MPI_Ssend(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
+                     0, MPI_COMM_WORLD);
+        else
+            MPI_Recv(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
+                     0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+    else if(myrank == vblock.sub[b].rank)
+    {
+        if(Direction)
+            MPI_Recv(data, 1, view->base->mpi_dtype, 0, 0,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        else
+            MPI_Ssend(data, 1, view->base->mpi_dtype, 0, 0,
+                     MPI_COMM_WORLD);
     }
 
     dag_svb_flush();//Will cleanup the used sub-view-blocks.
-
-    MPI_Win_free(&comm_win);
 
 } /* do_PUTGET_ITEM */
 
