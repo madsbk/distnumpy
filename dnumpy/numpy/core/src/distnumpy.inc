@@ -343,7 +343,9 @@ static void rm_dndview(npy_intp uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
             {
-                //Deref the Python Array Object.
+                //Deref the Python Array Object and make sure that the
+                //Python object does not own the array data.
+                ((PyArrayObject *)(dndviews[i].PyAry))->flags &= ~OWNDATA;
                 Py_DECREF(dndviews[i].PyAry);
                 //Cleanup base.
                 dndviews_uid[i] = 0;
