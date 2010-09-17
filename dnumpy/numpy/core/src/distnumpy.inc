@@ -173,6 +173,10 @@ static char *optype2str(int optype)
             return "DNPY_DIAGONAL";
         case DNPY_MATMUL:
             return "DNPY_MATMUL";
+        case DNPY_REDUCE_SEND:
+            return "reduce_send";
+        case DNPY_REDUCE_RECV:
+            return "DNPY_REDUCE_RECV";
         default:
             return "\"Unknown data type\"";
     }
@@ -389,8 +393,7 @@ static void msg2slaves(npy_intp *msg, int msgsize)
 } /* msg2slaves */
 
 /*===================================================================
- *
-
+ *  Returns a MPI data type that match the specified sub-view-block.
  */
 static MPI_Datatype
 calc_svb_MPIdatatype(const dndview *view, dndsvb *svb)
@@ -767,112 +770,6 @@ apply_ufunc(dndnode_ufunc *apply)
         DNDTIME_SUM(tdelta, t_apply_ufunc)
     #endif
 }/* apply_ufunc */
-
-
-/*===================================================================
- *
- * Putting the block 'src' into the distributed array 'dest_ary' at
- * block-coordinate 'lcoords' (local to the 'src_ary' array).
- * No broadcasting, but if 'reduce_axis' >= 0, the 'reduce_axis'
- * dimension will be removed.
- * The coordinates are in Row-major.
- * Private.
- */
-static int remote_blockput(PyObject *src, dndarray *src_ary,
-                           dndarray *dest_ary, MPI_Win comm_win,
-                           int reduce_axis,
-                           npy_intp lcoords[NPY_MAXDIMS])
-{
-    int i, j, src_ndims = PyArray_NDIM(src);
-
-    //Find local block in src.
-    int bdims[NPY_MAXDIMS];
-    int ldims[NPY_MAXDIMS];
-    int subary_coords[NPY_MAXDIMS];
-    j=0;
-    for(i=0; j<src_ndims; i++)
-        if(reduce_axis != i)
-            subary_coords[j++] = lcoords[i] * blocksize;
-
-    //Convert npy_intp to int.
-    for(i=0; i<src_ndims; i++)
-    {
-        ldims[i] = PyArray_DIM(src,i);
-        bdims[i] = ldims[i] - subary_coords[i];
-        if(bdims[i] > blocksize)
-            bdims[i] = blocksize;
-    }
-
-    //Setup a matching MPI datatype for a block.
-    MPI_Datatype src_ary_type, elem_type, dest_ary_type;
-    MPI_Type_contiguous(PyArray_ITEMSIZE(src), MPI_BYTE, &elem_type);
-    MPI_Type_create_subarray(src_ndims,
-                             ldims,
-                             bdims,
-                             subary_coords,
-                             MPI_ORDER_C, elem_type, &src_ary_type);
-    MPI_Type_commit(&src_ary_type);
-
-    //Convert local coordinates to global coordinates.
-    npy_intp gcoords[NPY_MAXDIMS];
-    int *cdimsizes = cart_dim_sizes[src_ary->ndims-1];
-    j=0;
-    for(i=0; i<src_ary->ndims; i++)
-    {
-        int tcoords[NPY_MAXDIMS];
-        rank2cart(src_ary->ndims, myrank, tcoords);
-        if(reduce_axis != i)
-            gcoords[j++] = tcoords[i] +   //process offset
-                           lcoords[i] *   //block index
-                           cdimsizes[i];  //jump per block
-    }
-    if(j != dest_ary->ndims)
-    {
-        fprintf(stderr, "remote_put, the src_ary->ndims should be the "
-                        "same as dest_ary->ndims or one higher if "
-                        "reduce_axis >= 0\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-
-    //Find process cartesian coords and dest block.
-    int pcoords[NPY_MAXDIMS];
-    cdimsizes = cart_dim_sizes[dest_ary->ndims-1];
-    for(i=0; i<dest_ary->ndims; i++)
-    {
-        subary_coords[i] = (gcoords[i] / cdimsizes[i]) * blocksize;
-        pcoords[i] = gcoords[i] % cdimsizes[i];
-        ldims[i] = dnumroc(dest_ary->dims[i], blocksize,
-                           pcoords[i], cdimsizes[i]);
-        bdims[i] = ldims[i] - subary_coords[i];
-        if(bdims[i] > blocksize)
-            bdims[i] = blocksize;
-    }
-    //Convert to a MPI rank number.
-    int rank = cart2rank(dest_ary->ndims, pcoords);
-
-    //Setup a matching MPI datatype for a block.
-    MPI_Type_create_subarray(dest_ary->ndims,
-                             ldims,
-                             bdims,
-                             subary_coords,
-                             MPI_ORDER_C, elem_type, &dest_ary_type);
-    MPI_Type_commit(&dest_ary_type);
-
-    //Transfer element.
-    //A exclusive lock is required since two put updates must not
-    //concurrently access nonoverlapping locations in a window
-    //(MPI-2.1 s. 351).
-    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, rank, 0, comm_win);
-    MPI_Put(PyArray_BYTES(src), 1, src_ary_type, rank, 0, 1,
-            dest_ary_type, comm_win);
-    MPI_Win_unlock(rank, comm_win);
-
-    //Clean up
-    MPI_Type_free(&src_ary_type);
-    MPI_Type_free(&dest_ary_type);
-    MPI_Type_free(&elem_type);
-    return 0;
-} /* remote_blockput */
 
 /*===================================================================
  *
@@ -1919,12 +1816,6 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    //Create the window for one-sided communication.
-    MPI_Win comm_win;
-    MPI_Win_create(out_ary->data, out_ary->nelements * out_ary->elsize,
-                   1, MPI_INFO_NULL, MPI_COMM_WORLD, &comm_win);
-
-
     //There is two kind of roles for MPI-processes. They can be
     //receivers or senders. The receivers are receiving the sub-results
     //computed by the senders.
@@ -1947,7 +1838,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     int cart_coords[NPY_MAXDIMS];
     rank2cart(in_ary->ndims, myrank, cart_coords);
 
-    if(cart_coords[axis] == 0)//MPI-process is a receiver.
+    char receiver = cart_coords[axis] == 0?1:0;
+    if(receiver)//MPI-process is a receiver.
     {
         npy_intp recv_dims[NPY_MAXDIMS];
         memset(recv_dims, 0, out_ary->ndims*sizeof(intp));
@@ -1981,33 +1873,6 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             Py_DECREF(t);
             Py_DECREF(tmpres);
         }
-
-        npy_intp lcoords[NPY_MAXDIMS];
-        memset(lcoords, 0, in_ary->ndims * sizeof(npy_intp));
-        int notfinished = 1;
-        if(PyArray_SIZE(subres) > 0)
-            while(notfinished)
-            {
-                remote_blockput(subres, in_ary, out_ary, comm_win,
-                                axis, lcoords);
-
-                //Iterate coords one element.
-                for(j=in_ary->ndims-1; j >= 0; j--)
-                {
-                    //We ignore the 'axis' dimension - it stays on zero.
-                    if(j != axis)
-                    {
-                        if(++lcoords[j] >= in_ary->localblockdims[j])
-                            lcoords[j] = 0;
-                        else
-                            break;
-                    }
-                }
-                notfinished = 0;
-                for(i=0; i<in_ary->ndims; i++)
-                    if(lcoords[i] > 0)
-                        notfinished = 1;
-            }
     }
     else//MPI-process is a sender.
     {
@@ -2019,11 +1884,228 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                  MPI_COMM_WORLD);
     }
 
+    //Make sure that we are clear of previously used mpi tags.
+    mpi_tag++;
+
+    //Iterate over input blocks local to the MPI process.
+    //Only receivers have input blocks.
+    if(receiver && in_view->base->nelements > 0)
+    {
+        npy_intp coord[NPY_MAXDIMS], gcoord[NPY_MAXDIMS];
+        char notfinished = 1;
+        memset(coord, 0, in_view->ndims * sizeof(npy_intp));
+        while(notfinished)
+        {
+            dndsvb *svb = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndsvb);
+            svb->rank = myrank;
+            svb->data = PyArray_DATA(subres);
+            svb->nelem = 1;
+            svb->comm_offset = 0;
+            //Compute the start, nsteps & stride.
+            j=out_view->ndims-1;
+            npy_intp stride = 1;//Not in bytes.
+            for(i=in_view->ndims-1; i >= 0; i--)//Row-major.
+            {
+                svb->start[i] = coord[i] * blocksize;
+                if(i == axis)
+                {
+                    svb->nsteps[i] = 1;
+                    svb->stride[i] = 1;
+                }
+                else
+                {
+                    svb->nsteps[i] = MIN(blocksize,
+                                         PyArray_DIM(subres, j) -
+                                         svb->start[i]);
+                    svb->stride[i] = stride;
+                    stride *= in_view->base->localdims[i];
+                    svb->comm_offset += svb->start[i] * svb->stride[i];
+                    svb->nelem *= svb->nsteps[i];
+                    j--;
+                }
+            }
+            //Convert to bytes.
+            svb->comm_offset *= in_view->base->elsize;
+
+            //Add a new sub-view block DAG node.
+            dndnode_comm *node = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndnode_comm);
+            node->op = DNPY_REDUCE_SEND;
+            node->optype = DNPY_COMM;
+            node->narys = 1;
+            node->views[0] = in_view;
+            node->svbs[0] = svb;
+            node->accesstype[0] = DNPY_READ;
+
+            //Convert local input block coordinate to global output
+            //block coordinate.
+            int *cdimsizes = cart_dim_sizes[in_view->ndims-1];
+            j=0;
+            for(i=0; i<in_view->ndims; i++)
+            {
+                if(axis != i)
+                    gcoord[j++] = cart_coords[i] + //process offset.
+                                  coord[i] *       //block index.
+                                  cdimsizes[i];    //jump per block.
+            }
+
+            //Find process cartesian coordinate and its MPI rank.
+            int pcoords[NPY_MAXDIMS];
+            cdimsizes = cart_dim_sizes[out_view->ndims-1];
+            for(i=0; i<out_view->ndims; i++)
+                pcoords[i] = gcoord[i] % cdimsizes[i];
+            int rank = cart2rank(out_view->ndims, pcoords);
+            node->remote_rank = rank;
+
+            //Use a mpi_tag based on the global output array block
+            //coordinate. Row-Major.
+            npy_intp tag = 0; j=1;
+            for(i=out_view->ndims-1; i>=0; i--)
+            {
+                tag += gcoord[i] * j;
+                j *= out_view->blockdims[i];
+            }
+            node->mpi_tag = tag + mpi_tag;
+
+            dag_svb_add(node);
+
+            //Iterate coord one local block.
+            for(j=in_view->ndims-1; j >= 0; j--)
+            {
+                //We ignore the 'axis' dimension - it stays on zero.
+                if(j != axis)
+                {
+                    if(++coord[j] >= in_view->base->localblockdims[j])
+                    {
+                        //We are finished, if wrapping around.
+                        if(j == 0)
+                        {
+                            notfinished = 0;
+                            break;
+                        }
+                        coord[j] = 0;//Start coord.
+                    }
+                    else
+                        break;
+                }
+                else if(axis == 0)//We are finished, if wrapping around.
+                {
+                    notfinished = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    if(out_view->base->nelements > 0)
+    {
+        rank2cart(out_view->ndims, myrank, cart_coords);
+
+        //Iterate over output blocks local to the MPI process.
+        npy_intp coord[NPY_MAXDIMS], gcoord[NPY_MAXDIMS];
+        char notfinished = 1;
+        memset(coord, 0, out_view->ndims * sizeof(npy_intp));
+        while(notfinished)
+        {
+            dndsvb *svb = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndsvb);
+            svb->rank = myrank;
+            svb->data = NULL;
+            svb->nelem = 1;
+            svb->comm_offset = 0;
+            j = 1;//For stride, not in bytes.
+            //Compute the start, nsteps & stride.
+            for(i=out_view->ndims-1; i >= 0; i--)//Row-major.
+            {
+                svb->start[i] = coord[i] * blocksize;
+                svb->nsteps[i] = MIN(blocksize, out_view->base->localdims[i] - svb->start[i]);
+                svb->stride[i] = j;
+                j *= out_view->base->localdims[i];
+                svb->comm_offset += svb->start[i] * svb->stride[i];
+                svb->nelem *= svb->nsteps[i];
+                assert(svb->nsteps[i] > 0);
+            }
+            //Convert to bytes.
+            svb->comm_offset *= out_view->base->elsize;
+
+            //Add a new sub-view block DAG node.
+            dndnode_comm *node = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndnode_comm);
+            node->op = DNPY_RECV;
+            node->optype = DNPY_COMM;
+            node->narys = 1;
+            node->views[0] = out_view;
+            node->svbs[0] = svb;
+            node->accesstype[0] = DNPY_WRITE;
+
+            //Convert local output block coordinate to global input
+            //block coordinate.
+            int *cdimsizes = cart_dim_sizes[out_view->ndims-1];
+            j=0;
+            for(i=0; i<in_view->ndims; i++)
+            {
+                if(axis == i)
+                    gcoord[i] = 0;
+                else
+                {
+                    gcoord[i] = cart_coords[j] + //process offset.
+                                coord[j] *       //block index.
+                                cdimsizes[j];    //jump per block.
+                    j++;
+                }
+            }
+
+            //Find process cartesian coordinate and its MPI rank.
+            int pcoords[NPY_MAXDIMS];
+            cdimsizes = cart_dim_sizes[in_view->ndims-1];
+            for(i=0; i<in_view->ndims; i++)
+                pcoords[i] = gcoord[i] % cdimsizes[i];
+            int rank = cart2rank(in_view->ndims, pcoords);
+            node->remote_rank = rank;
+
+            //Use a mpi_tag based on the global output array block
+            //coordinate. Row-Major.
+            npy_intp tag = 0; j=1;
+            for(i=in_view->ndims-1; i>=0; i--)
+            {
+                if(i != axis)
+                {
+                    tag += gcoord[i] * j;
+                    j *= in_view->blockdims[i];
+                }
+            }
+            node->mpi_tag = tag + mpi_tag;
+
+            dag_svb_add(node);
+
+            //Iterate coord one local block.
+            for(j=out_view->ndims-1; j >= 0; j--)
+            {
+                if(++coord[j] >= out_view->base->localblockdims[j])
+                {
+                    //We are finished, if wrapping around.
+                    if(j == 0)
+                    {
+                        notfinished = 0;
+                        break;
+                    }
+                    coord[j] = 0;//Start coord.
+                }
+                else
+                    break;
+            }
+        }
+    }
+
+    //Sync mpi_tag.
+    mpi_tag += out_view->nblocks;
+
+    dag_svb_flush();
+
     //Cleanup
-    MPI_Barrier(MPI_COMM_WORLD);
     Py_DECREF(subres);
     Py_DECREF(PyOp);
-    MPI_Win_free(&comm_win);
 
 } /* do_UFUNC_REDUCE */
 
@@ -2472,6 +2554,17 @@ static void dag_svb_flush(void)
                                   C->views[0]->base->mpi_dtype,
                                   C->remote_rank, C->mpi_tag,
                                   MPI_COMM_WORLD, &reqs[commsize]);
+                        break;
+                    case DNPY_REDUCE_SEND:
+                        assert(C->narys == 1);
+                        comm_dtype = calc_svb_MPIdatatype(C->views[0],
+                                                          C->svbs[0]);
+                        MPI_Isend(C->svbs[0]->data +
+                                  C->svbs[0]->comm_offset,
+                                  1, comm_dtype,
+                                  C->remote_rank, C->mpi_tag,
+                                  MPI_COMM_WORLD, &reqs[commsize]);
+                        MPI_Type_free(&comm_dtype);
                         break;
                     default:
                         fprintf(stderr, "Unknown DAG operation: %d.\n",
