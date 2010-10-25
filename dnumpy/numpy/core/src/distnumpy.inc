@@ -489,6 +489,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             step[j] = view->slice[i].step;
             s++;
         }
+        assert(nsteps[j] > 0);
         start[j++] = view->slice[i].start;
     }
     assert(j == view->base->ndims);
@@ -534,7 +535,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             //Compute nsteps.
             svb[s].nsteps[i] = MIN(blocksize, MIN(vvitems, vitems));
             //Debug check.
-            assert(svb[s].nsteps[i] >= 0);
+            assert(svb[s].nsteps[i] > 0);
         }
         //Find rank.
         svb[s].rank = cart2rank(view->base->ndims, pcoord);
@@ -1237,6 +1238,17 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         }
 
     dndview *lastary = views[narys-1];
+
+    //Need to make sure that the output view is not empty.
+    for(i=0; i<lastary->nslice; i++)
+        if(lastary->slice[i].nsteps == 0)
+        {
+            //Clean up Scalar dummy.
+            for(i=0; i<narys; i++)
+                if(views[i]->base->ndims == 0)//Scalar dummy.
+                    do_DESTROY_ARRAY(views[i]->uid);
+            return;
+        }
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -2513,6 +2525,7 @@ static void dag_svb_flush(void)
                         assert(C->narys == 1);
                         comm_dtype = calc_svb_MPIdatatype(C->views[0],
                                                           C->svbs[0]);
+                        assert(C->views[0]->base->data != NULL);
                         MPI_Irecv(C->views[0]->base->data +
                                   C->svbs[0]->comm_offset,
                                   1, comm_dtype,
@@ -2526,6 +2539,7 @@ static void dag_svb_flush(void)
                         C->svbs[0]->data = workbuf_nextfree;
                         workbuf_nextfree += C->svbs[0]->nelem *
                                             C->views[0]->base->elsize;
+                        assert(C->svbs[0]->data != NULL);
                         MPI_Irecv(C->svbs[0]->data, C->svbs[0]->nelem,
                                   C->views[0]->base->mpi_dtype,
                                   C->remote_rank, C->mpi_tag,
@@ -2535,6 +2549,7 @@ static void dag_svb_flush(void)
                         assert(C->narys == 1);
                         comm_dtype = calc_svb_MPIdatatype(C->views[0],
                                                           C->svbs[0]);
+                        assert(C->views[0]->base->data != NULL);
                         MPI_Isend(C->views[0]->base->data +
                                   C->svbs[0]->comm_offset,
                                   1, comm_dtype,
@@ -2559,6 +2574,7 @@ static void dag_svb_flush(void)
                         assert(C->narys == 1);
                         comm_dtype = calc_svb_MPIdatatype(C->views[0],
                                                           C->svbs[0]);
+                        assert(C->svbs[0]->data != NULL);
                         MPI_Isend(C->svbs[0]->data +
                                   C->svbs[0]->comm_offset,
                                   1, comm_dtype,
