@@ -35,8 +35,8 @@ extern "C" CONFUSE_EMACS
  * be changed to dynamic (including inside of several structures)
  */
 
-#define NPY_MAXDIMS 32
-#define NPY_MAXARGS 32
+#define NPY_MAXDIMS 16
+#define NPY_MAXARGS 16
 
 /* Used for Converter Functions "O&" code in ParseTuple */
 #define NPY_FAIL 0
@@ -1285,10 +1285,10 @@ typedef struct {
 
 #include "old_defines.h"
 
-/* 
-   Check to see if this key in the dictionary is the "title" 
+/*
+   Check to see if this key in the dictionary is the "title"
    entry of the tuple (i.e. a duplicate dictionary entry in the fields
-   dict. 
+   dict.
 */
 
 #define NPY_TITLE_KEY(key, value) ((PyTuple_GET_SIZE((value))==3) && \
