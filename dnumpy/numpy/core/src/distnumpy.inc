@@ -26,7 +26,6 @@ static npy_intp dndviews_uid[DNPY_MAX_NARRAYS];
 //Cartesian dimension information - one for every dimension-order.
 static int *cart_dim_strides[NPY_MAXDIMS];
 static int *cart_dim_sizes[NPY_MAXDIMS];
-static int cart_used_ndims[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
 //Number of view block operations in the sub-view-block DAG.
@@ -282,7 +281,7 @@ static int cart2rank(int ndims, const int coords[NPY_MAXDIMS])
     int *strides = cart_dim_strides[ndims-1];
     int rank = 0;
     int i;
-    for(i=0; i<cart_used_ndims[ndims-1]; i++)
+    for(i=0; i<ndims; i++)
         rank += coords[i] * strides[i];
     assert(rank < worldsize);
     return rank;
@@ -292,7 +291,7 @@ static void rank2cart(int ndims, int rank, int coords[NPY_MAXDIMS])
     int i;
     int *strides = cart_dim_strides[ndims-1];
     memset(coords, 0, ndims*sizeof(int));
-    for(i=0; i<cart_used_ndims[ndims-1]; i++)
+    for(i=0; i<ndims; i++)
     {
         coords[i] = rank / strides[i];
         rank = rank % strides[i];
@@ -3391,6 +3390,8 @@ dnumpy_init(void)
 {
     int i,j,s;
     //Initilization of MPI.
+    int tmpsizes[NPY_MAXDIMS];
+
     MPI_Init(NULL, NULL);
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
@@ -3404,21 +3405,19 @@ dnumpy_init(void)
     //Initilization of cart_dim_strides.
     for(i=0; i<NPY_MAXDIMS; i++)
     {
+        int ndims = i+1;
         //Find a balanced distributioin of processes per direction
-        //and save it in the a global struct.
-        cart_dim_sizes[i] = malloc(NPY_MAXDIMS*sizeof(int));
-        memset(cart_dim_sizes[i], 0, sizeof(int)*NPY_MAXDIMS);
-        MPI_Dims_create(worldsize, i+1, cart_dim_sizes[i]);
-
-        //Find number of used cartesian dims.
-        cart_used_ndims[i] = 1;
-        for(j=1; j<=i;j++)
-            if(cart_dim_sizes[i][j] > 1)
-                cart_used_ndims[i]++;
+        //and save it in the a global struct (in reverse order).
+        cart_dim_sizes[i] = malloc(ndims*sizeof(int));
+        memset(tmpsizes, 0, ndims*sizeof(int));
+        MPI_Dims_create(worldsize, ndims, tmpsizes);
+        s = ndims;
+        for(j=0; j<ndims; j++)
+            cart_dim_sizes[i][j] = tmpsizes[--s];
 
         //Allocate cartesian information.
-        cart_dim_strides[i] = malloc(cart_used_ndims[i]*sizeof(int));
-        memset(cart_dim_strides[i], 0, cart_used_ndims[i]*sizeof(int));
+        cart_dim_strides[i] = malloc(ndims*sizeof(int));
+        memset(cart_dim_strides[i], 0, ndims*sizeof(int));
 
         //Compute strides for all dims. Using row-major like MPI.
         //A 2x2 process grid looks like:
@@ -3426,10 +3425,10 @@ dnumpy_init(void)
         //    coord (0,1): rank 1.
         //    coord (1,0): rank 2.
         //    coord (1,1): rank 3.
-        for(j=0; j<cart_used_ndims[i]; j++)
+        for(j=0; j<ndims; j++)
         {
             int stride = 1;
-            for(s=j+1; s<cart_used_ndims[i]; s++)
+            for(s=j+1; s<ndims; s++)
                 stride *= cart_dim_sizes[i][s];
             cart_dim_strides[i][j] = stride;
         }
