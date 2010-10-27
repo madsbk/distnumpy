@@ -3391,8 +3391,20 @@ dnumpy_init(void)
     int i,j,s;
     //Initilization of MPI.
     int tmpsizes[NPY_MAXDIMS];
+    int provided;
 
-    MPI_Init(NULL, NULL);
+    //We make use of MPI_Init_thread even though we only ask for
+    //a MPI_THREAD_SINGLE level thread-safety because MPICH2 only
+    //supports MPICH_ASYNC_PROGRESS when MPI_Init_thread is used.
+    //Note that when MPICH_ASYNC_PROGRESS is defined the thread-safety
+    //level will automatically be set to MPI_THREAD_MULTIPLE.
+    MPI_Init_thread(NULL, NULL, MPI_THREAD_SINGLE, &provided);
+    if(provided > MPI_THREAD_SINGLE)
+    {
+        fprintf(stderr, "MPI_THREAD_SINGLE is not support by the"
+                        "current MPI library!\n");
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &worldsize);
