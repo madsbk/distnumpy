@@ -7,7 +7,7 @@ DIST=int(sys.argv[1])
 W = int(sys.argv[2])
 H = int(sys.argv[2])
 
-DISPLAY = False
+forcedIter = int(sys.argv[3])
 
 full = np.zeros((W+2,H+2), dtype=np.double, dist=DIST)
 work = np.zeros((W,H), dtype=np.double, dist=DIST)
@@ -30,7 +30,8 @@ t1 = time.time()
 epsilon=W*H*0.010
 delta=epsilon+1
 i=0
-while epsilon<delta:
+while (forcedIter and forcedIter > i) or \
+      (forcedIter == 0 and epsilon<delta):
   i+=1
   work[:] = cells
   work += up
@@ -43,11 +44,11 @@ while epsilon<delta:
   np.add.reduce(diff,out=tmpdelta)
   delta = np.add.reduce(tmpdelta)
   cells[:] = work
-  if DISPLAY and i%100==0:
-    np.save("%s.%08d"%(sys.argv[3],i), full)
-    print epsilon,'<',delta
 
 t2 = time.time()
-print "Itterations", i
-print "Time spent:", t2-t1
+print 'Iter: ', i, ' size: ', H,' time: ', t2-t1,
+if DIST:
+    print "(Dist) notes: %s"%sys.argv[4]
+else:
+    print "(Non-Dist) notes: %s"%sys.argv[4]
 
