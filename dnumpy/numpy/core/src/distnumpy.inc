@@ -3399,12 +3399,6 @@ dnumpy_init(void)
     //Note that when MPICH_ASYNC_PROGRESS is defined the thread-safety
     //level will automatically be set to MPI_THREAD_MULTIPLE.
     MPI_Init_thread(NULL, NULL, MPI_THREAD_SINGLE, &provided);
-    if(provided > MPI_THREAD_SINGLE)
-    {
-        fprintf(stderr, "MPI_THREAD_SINGLE is not support by the"
-                        "current MPI library!\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &worldsize);
