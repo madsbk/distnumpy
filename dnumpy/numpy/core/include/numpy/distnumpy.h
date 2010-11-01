@@ -49,10 +49,10 @@ typedef struct {
 #define DNPY_BLOCKSIZE 2
 
 //Maximum number of dependency per sub-view-block.
-#define DNPY_MAX_DEPENDENCY 1000
+#define DNPY_MAX_DEPENDENCY 1024
 
 //Maximum number of nodes in the ready queue.
-#define DNPY_RDY_QUEUE_MAXSIZE 512
+#define DNPY_RDY_QUEUE_MAXSIZE 1024
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB

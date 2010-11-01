@@ -2693,7 +2693,6 @@ static void dag_svb_flush(void)
 static char dndnode_conflict(dndnode *A, dndnode *B)
 {
     npy_intp i,j,d;
-    //At the moment we only check conflicts at the array level.
     for(i=0; i<A->narys; i++)
         for(j=0; j<B->narys; j++)
             if(A->views[i]->base->uid == B->views[j]->base->uid)
@@ -2702,7 +2701,7 @@ static char dndnode_conflict(dndnode *A, dndnode *B)
                 {
                     if(A->svbs[0] == NULL || B->svbs[0] == NULL)
                         return 1;//Depend on the whole array.
-
+                    char conflict = 1;
                     for(d=0; d<A->views[i]->base->ndims; d++)
                     {
                         if(B->svbs[j]->start[d] >=
@@ -2710,10 +2709,13 @@ static char dndnode_conflict(dndnode *A, dndnode *B)
                            ||
                            A->svbs[i]->start[d] >=
                            B->svbs[j]->start[d] + B->svbs[j]->nsteps[d])
+                        {
+                            conflict = 0;
                             break;//No conflict at the svb level.
-                        else
-                            return 1;
+                        }
                     }
+                    if(conflict)
+                        return 1;
                 }
     return 0;
 }/* dndnode_conflict */
