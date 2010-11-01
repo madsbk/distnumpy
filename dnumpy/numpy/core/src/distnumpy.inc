@@ -2705,10 +2705,10 @@ static char dndnode_conflict(dndnode *A, dndnode *B)
 
                     for(d=0; d<A->views[i]->base->ndims; d++)
                     {
-                        if(B->svbs[j]->start[d] >
+                        if(B->svbs[j]->start[d] >=
                            A->svbs[i]->start[d] + A->svbs[i]->nsteps[d]
                            ||
-                           A->svbs[i]->start[d] >
+                           A->svbs[i]->start[d] >=
                            B->svbs[j]->start[d] + B->svbs[j]->nsteps[d])
                             break;//No conflict at the svb level.
                         else
