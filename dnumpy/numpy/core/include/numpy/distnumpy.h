@@ -48,11 +48,8 @@ typedef struct {
 //Default blocksize
 #define DNPY_BLOCKSIZE 2
 
-//Maximum number of dependency per sub-view-block.
-#define DNPY_MAX_DEPENDENCY 1024
-
 //Maximum number of nodes in the ready queue.
-#define DNPY_RDY_QUEUE_MAXSIZE 1024
+#define DNPY_RDY_QUEUE_MAXSIZE 1024*10
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB
@@ -66,8 +63,12 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_EVALFLUSH, DNPY_READ, DNPY_WRITE, DNPY_COMM, DNPY_NONCOMM,
           DNPY_REDUCE_SEND, DNPY_REDUCE_RECV};
 
+//dndnode prototype.
+typedef struct dndnode_struct dndnode;
+typedef struct dndarray_struct dndarray;
+
 //Type describing a distributed array.
-typedef struct
+struct dndarray_struct
 {
     //Unique identification.
     npy_intp uid;
@@ -77,6 +78,10 @@ typedef struct
     int ndims;
     //Size of dimensions.
     npy_intp dims[NPY_MAXDIMS];
+    //Size of block-dimensions.
+    npy_intp blockdims[NPY_MAXDIMS];
+    //Number of blocks (global).
+    npy_intp nblocks;
     //Data type of elements in array.
     int dtype;
     //Size of an element in bytes.
@@ -91,7 +96,14 @@ typedef struct
     npy_intp localblockdims[NPY_MAXDIMS];
     //MPI-datatype that correspond to an array element.
     MPI_Datatype mpi_dtype;
-} dndarray;
+    //Root nodes (one per block).
+    dndnode **rootnodes;
+    //Next and prev are used for traversing all arrays.
+    #ifdef DNPY_STATISTICS
+        dndarray *next;
+        dndarray *prev;
+    #endif
+};
 
 //dndslice constants.
 #define PseudoIndex -1//Adds a extra 1-dim - 'A[1,newaxis]'
@@ -157,6 +169,8 @@ typedef struct
     npy_intp comm_offset;
     //Number of elements in this sub-view-block.
     npy_intp nelem;
+    //This sub-view-block's root node.
+    dndnode **rootnode;
     //Pointer to data. NULL if data needs to be fetched.
     char *data;
     //The rank of the MPI process that have received this svb.
@@ -177,45 +191,40 @@ typedef struct
     npy_intp svbdims[NPY_MAXDIMS];
 } dndvb;
 
-//The Super-type of a DAG node.
+//The Super-type of a operation.
+//refcount         - number of dependency nodes in the svb DAG.
 //op               - the operation, e.g. DNPY_RECV and DNPY_UFUNC.
 //optype           - the operation type, e.g. DNPY_COMM/_NONCOMM.
-//ndepend & depend - list of nodes that depend on this node.
-//mydepend         - number of nodes this node depend on.
 //narys & views    - list of array views involved.
 //svbs             - list of sub-view-blocks involved (one per array),
 //                   NULL when whole arrays are involved.
 //accesstype       - access type e.g. DNPY_READ (one per array)
-//next             - used for traversing all nodes.
 //uid              - unique identification - only used for statistics.
-#define DNDNODE_HEAD_BASE                   \
+#define DNDOP_HEAD_BASE                     \
+    npy_intp refcount;                      \
     char op;                                \
     char optype;                            \
-    int ndepend;                            \
-    dndnode *depend[DNPY_MAX_DEPENDENCY];   \
-    npy_intp mydepend;                      \
     char narys;                             \
     dndview *views[NPY_MAXARGS];            \
     dndsvb *svbs[NPY_MAXARGS];              \
-    char accesstype[NPY_MAXARGS];           \
-    dndnode *next;
+    char accesstypes[NPY_MAXARGS];
 #ifdef DNPY_STATISTICS
-    #define DNDNODE_HEAD    DNDNODE_HEAD_BASE int uid;
+    #define DNDOP_HEAD DNDOP_HEAD_BASE npy_intp uid;
 #else
-    #define DNDNODE_HEAD    DNDNODE_HEAD_BASE
+    #define DNDOP_HEAD DNDOP_HEAD_BASE
 #endif
-typedef struct dndnode_struct dndnode;
-struct dndnode_struct {DNDNODE_HEAD};
+typedef struct dndop_struct dndop;
+struct dndop_struct {DNDOP_HEAD};
 
 //Type describing a communication DAG node.
 typedef struct
 {
-    DNDNODE_HEAD
+    DNDOP_HEAD
     //The MPI tag used for the communication.
     npy_intp mpi_tag;
     //The MPI rank of the process that is the remote communication peer.
     int remote_rank;
-} dndnode_comm;
+} dndop_comm;
 
 //Type describing an array view update.
 //This type is used for updating an existing PyArray Object to
@@ -230,7 +239,7 @@ typedef struct
 //Type describing a universal function DAG node.
 typedef struct
 {
-    DNDNODE_HEAD
+    DNDOP_HEAD
     //List of array view updates involved.
     dndview_update viewup[NPY_MAXARGS];
     //Number of output array views.
@@ -239,7 +248,21 @@ typedef struct
     PyUFuncGenericFunction func;
     void *funcdata;
     PyObject *PyOp;
-} dndnode_ufunc;
+} dndop_ufunc;
 
+//Type describing a DAG node.
+struct dndnode_struct
+{
+    //The operation associated with this dependency.
+    dndop *op;
+    //The index to use when accessing op->views[] and op->svbs[].
+    int op_ary_idx;
+    //Next node in the dependency list.
+    dndnode *next;
+    //Unique identification used for statistics.
+    #ifdef DNPY_STATISTICS
+        npy_intp uid;
+    #endif
+};
 
 #endif

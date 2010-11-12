@@ -30,8 +30,8 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static PyObject *ufunc_module;
 //Number of view block operations in the sub-view-block DAG.
 static npy_intp nvb_in_svb_dag=0;
-//The ready queue for the sub-view-block DAG and its current size.
-static dndnode *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
+//The ready queue for operations and its current size.
+static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
 //Unique MPI tag.
 npy_intp mpi_tag=0;
@@ -43,10 +43,12 @@ static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 //Prototype for the DAGs.
 static void dag_svb_flush(void);
-static void dag_svb_add(void *node);
+static void dag_svb_add(dndnode *nodes, int nnodes);
 //Variables for statistics.
 #ifdef DNPY_STATISTICS
     static int node_uid_count = 0;
+    static int op_uid_count = 0;
+    static dndarray *rootarray = NULL;
 #endif
 //Variables for timing.
 #ifdef DNDY_TIME
@@ -54,8 +56,8 @@ static void dag_svb_add(void *node);
     struct timeval tv;
     struct timezone tz;
     static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
-        t_dag_svb_add=0, t_calc_vblock=0, t_ufunc_svb=0,            \
-        t_apply_ufunc=0, t_ufunc_comm=0;
+        t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,          \
+        t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -135,7 +137,6 @@ static char *types_numpy2str(int dtype)
  * Returns a string describing the operation type.
  * Private
  */
-#ifdef DNPY_STATISTICS
 static char *optype2str(int optype)
 {
     switch(optype)
@@ -179,8 +180,9 @@ static char *optype2str(int optype)
         default:
             return "\"Unknown data type\"";
     }
-} /* stat_op2str */
+} /* optype2str */
 
+#ifdef DNPY_STATISTICS
 /*===================================================================
  *
  * Dumping the sub-view-block DAG to a file using the DOT language.
@@ -190,7 +192,8 @@ static void dag_svb_dump(void)
 {
     FILE *pFile;
     dndnode *tnode;
-    int i;
+    dndarray *tary;
+    npy_intp i, j;
     char filename[20];
 
     if(ready_queue_size < 1)
@@ -205,26 +208,61 @@ static void dag_svb_dump(void)
     //Write the DOT header.
     fputs("digraph {\n", pFile);
 
-    tnode = ready_queue[0];
-    while(tnode != NULL)
+    //Write the ready queue.
+    fprintf(pFile, "ready_queue [label=\"Ready");
+    for(i=0; i<ready_queue_size; i++)
+        fprintf(pFile, "|<f%ld>%ld", (long)i, (long)i);
+    fprintf(pFile, "\" shape=\"record\"];\n");
+    for(i=0; i<ready_queue_size; i++)
+        fprintf(pFile, "ready_queue:<f%ld> -> op%ld [color=\"0.650 0.700 0.700\"];\n", (long)i, (long)ready_queue[i]->uid);
+
+    //Iterate through all arrays.
+    tary = rootarray;
+    while(tary != NULL)
     {
-        fprintf(pFile, "n%d [label=\"%s", tnode->uid,
-                optype2str(tnode->op));
-        if(tnode->optype == DNPY_COMM)
-            fprintf(pFile, "-%ld: ", ((dndnode_comm*)tnode)->mpi_tag);
+        //Write the root nodes.
+        if(tary->uid < 0)//DOT don't support negative IDs.
+            fprintf(pFile, "arrayn%ld", (long)tary->uid * -1);
         else
-            fprintf(pFile, ": ");
+            fprintf(pFile, "array%ld", (long)tary->uid);
+        fprintf(pFile, " [label=\"array %ld(r%d)", (long)tary->uid, tary->refcount);
+        for(i=0; i < tary->nblocks; i++)
+            if(tary->rootnodes[i] != NULL)
+                fprintf(pFile, "|<f%ld>%ld", (long)i, (long)i);
+        fprintf(pFile, "\" shape=\"record\"];\n");
 
-        for(i=0; i<tnode->narys; i++)
-            fprintf(pFile, "a%ld ", (long) tnode->views[i]->uid);
-        fprintf(pFile, "\"]\n");
+        //Write the nodes.
+        for(i=0; i < tary->nblocks; i++)
+            if(tary->rootnodes[i] != NULL)
+            {
+                tnode = tary->rootnodes[i];
+                if(tary->uid < 0)//DOT don't support negative IDs.
+                    fprintf(pFile, "arrayn%ld", (long)tary->uid * -1);
+                else
+                    fprintf(pFile, "array%ld", (long)tary->uid);
+                fprintf(pFile, ":<f%ld> -> node%ld;\n", (long)i, (long)tnode->uid);
+                while(tnode != NULL)
+                {
+                    //Write the linked list of nodes.
+                    fprintf(pFile, "node%ld", (long)tnode->uid);
+                    if(tnode->next != NULL)
+                    {
+                        assert(tnode->next->uid > 0);
+                        fprintf(pFile, " -> node%ld", (long)tnode->next->uid);
+                    }
+                    fprintf(pFile, ";\n");
 
-        for(i=0; i<tnode->ndepend; i++)
-            fprintf(pFile, "n%d -> n%d;\n",
-                    tnode->uid, tnode->depend[i]->uid);
-
-        //Go to next node.
-        tnode = tnode->next;
+                    //Write the node-to-operation relation.
+                    fprintf(pFile, "node%ld -> op%ld [color=\"0.650 0.700 0.700\"];\n", (long)tnode->uid, (long)tnode->op->uid);
+                    fprintf(pFile, "op%ld [label=\"%s-r%ld:", (long)tnode->op->uid, optype2str(tnode->op->op), (long)tnode->op->refcount);
+                    for(j=0; j<tnode->op->narys; j++)
+                        fprintf(pFile, " a%ld(%ld)", (long)tnode->op->views[j]->uid, (long)tnode->op->views[j]->base->uid);
+                    fprintf(pFile, "\" shape=\"note\"];\n");
+                    tnode = tnode->next;
+                }
+            }
+        //Go to the next ary.
+        tary = tary->next;
     }
 
     //Write the DOT tail.
@@ -233,7 +271,6 @@ static void dag_svb_dump(void)
     fclose(pFile);
 }/* dag_svb_dump */
 #endif
-
 
 /*===================================================================
  *
@@ -346,22 +383,45 @@ static void rm_dndview(npy_intp uid)
         for(i=0; i < DNPY_MAX_NARRAYS; i++)
             if(dndviews_uid[i] == uid)
             {
+                dndview *view = &dndviews[i];
                 //Deref the Python Array Object and make sure that the
                 //Python object does not own the array data.
-                ((PyArrayObject *)(dndviews[i].PyAry))->flags &= ~OWNDATA;
-                Py_DECREF(dndviews[i].PyAry);
+                ((PyArrayObject *)(view->PyAry))->flags &= ~OWNDATA;
+                Py_DECREF(view->PyAry);
                 //Cleanup base.
                 dndviews_uid[i] = 0;
-                if(dndviews[i].base->ndims == 0)//Dummy Scalar.
+                if(view->base->ndims == 0)//Dummy Scalar.
                 {
-                    free(dndviews[i].base->data);
-                    free(dndviews[i].base);
+                    //Remove the array from to the lisked list used
+                    //when statistic is defined.
+                    #ifdef DNPY_STATISTICS
+                        if(view->base->next != NULL)
+                            view->base->next->prev = view->base->prev;
+                        if(view->base->prev != NULL)
+                            view->base->prev->next = view->base->next;
+                        else
+                            rootarray = view->base->next;
+                    #endif
+                    free(view->base->rootnodes);
+                    free(view->base->data);
+                    free(view->base);
                 }
-                else if(--dndviews[i].base->refcount == 0)
+                else if(--view->base->refcount == 0)
                 {
-                    MPI_Type_free(&dndviews[i].base->mpi_dtype);
-                    MPI_Free_mem(dndviews[i].base->data);
-                    free(dndviews[i].base);
+                    //Remove the array from to the lisked list used
+                    //when statistic is defined.
+                    #ifdef DNPY_STATISTICS
+                        if(view->base->next != NULL)
+                            view->base->next->prev = view->base->prev;
+                        if(view->base->prev != NULL)
+                            view->base->prev->next = view->base->next;
+                        else
+                            rootarray = view->base->next;
+                    #endif
+                    MPI_Type_free(&view->base->mpi_dtype);
+                    MPI_Free_mem(view->base->data);
+                    free(view->base->rootnodes);
+                    free(view->base);
                 }
                 return;
             }
@@ -496,6 +556,15 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     vblock->sub = workbuf_nextfree;
     svb = vblock->sub;
 
+    //Compute this sub-view-block's root node.
+    dndnode **rootnode = view->base->rootnodes;
+    s = 1;
+    for(i=view->base->ndims-1; i >= 0; i--)
+    {
+        rootnode += coord[i] * s;
+        s *= view->base->blockdims[i];
+    }
+
     //Init number of sub-view-block in each dimension.
     memset(vblock->svbdims, 0, view->base->ndims * sizeof(npy_intp));
 
@@ -543,6 +612,8 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         svb[s].data = NULL;
         //Communication has not been handled.
         svb[s].comm_received_by = -1;
+        //Save rootnode.
+        svb[s].rootnode = rootnode;
 
         //Compute the strides (we need the rank to do this).
         stride = 1;
@@ -669,7 +740,7 @@ idx_v2s(const dndview *view, npy_intp vindex)
  * Private.
  */
 static void
-apply_ufunc(dndnode_ufunc *apply)
+apply_ufunc(dndop_ufunc *apply)
 {
     int j, i;
     PyObject *iters[NPY_MAXARGS];
@@ -861,11 +932,12 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
         } else {
             MPI_Type_create_resized(tmp_type, 0, extent, dtype);
         }
+        MPI_Type_free(&tmp_type);
     }
 
     /* Free allocated data */
-    MPI_Type_free(&tmp_type);
-    for(n = 1; n < ndims; n++) {
+    for(n = 0; n < ndims; n++)
+    {
         MPI_Type_free(&derived_type[n]);
         free(displacements[n]);
     }
@@ -913,11 +985,24 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     memcpy(view->base, ary, sizeof(dndarray));
     ary = view->base;//Use the new pointer.
 
+    //Append the array to the lisked list when statistic is defined.
+    #ifdef DNPY_STATISTICS
+        ary->prev = NULL;
+        ary->next = rootarray;
+        rootarray = ary;
+        if(ary->next != NULL)
+        {
+            assert(ary->next->prev == NULL);
+            ary->next->prev = rootarray;
+        }
+    #endif
+
     //Get cartesian coords.
     rank2cart(ndims, myrank, cartcoord);
 
-    //Acummulate total number of local sizes and save it.
+    //Accumulate the total number of local sizes and save it.
     npy_intp nelements = 1;
+    ary->nblocks = 1;
     for(i=0; i < ary->ndims; i++)
     {
         ary->localdims[i] = dnumroc(ary->dims[i],
@@ -925,8 +1010,15 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
         nelements *= ary->localdims[i];
         ary->localblockdims[i] = ceil(ary->localdims[i] /
                                       (double) blocksize);
+        ary->blockdims[i] = ceil(ary->dims[i] / (double) blocksize);
+        ary->nblocks *= ary->blockdims[i];
     }
     ary->nelements = nelements;
+
+    //Allocate the root nodes array.
+    ary->rootnodes = malloc(ary->nblocks * sizeof(dndnode*));
+    for(i=0; i<ary->nblocks; i++)
+        ary->rootnodes[i] = NULL;
 
     //Allocate local data.
     if(MPI_Alloc_mem(nelements * ary->elsize, MPI_INFO_NULL,
@@ -980,16 +1072,23 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     #ifdef DISTNUMPY_DEBUG
         printf("DESTROY_ARRAY - uid: %ld\n", (long) uid);
     #endif
+    dndview *view = get_dndview(uid);
+
+    dndop *op = workbuf_nextfree;
+    workbuf_nextfree += sizeof(dndop);
+    op->op = DNPY_DESTROY_ARRAY;
+    op->optype = DNPY_NONCOMM;
+    op->narys = 1;
+    op->refcount = 0;
+    op->views[0] = view;
+    op->svbs[0] = NULL;//Whole array.
+    op->accesstypes[0] = DNPY_WRITE;
 
     dndnode *node = workbuf_nextfree;
     workbuf_nextfree += sizeof(dndnode);
-    node->op = DNPY_DESTROY_ARRAY;
-    node->optype = DNPY_NONCOMM;
-    node->narys = 1;
-    node->views[0] = get_dndview(uid);
-    node->svbs[0] = NULL;
-    node->accesstype[0] = DNPY_WRITE;
-    dag_svb_add(node);
+    node->op = op;
+    node->op_ary_idx = 0;
+    dag_svb_add(node, 1);
 
 } /* do_DESTROY_ARRAY */
 
@@ -1003,6 +1102,7 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
 {
     npy_intp n, i, j;
     dndview *orgview = get_dndview(org_view_uid);
+    dag_svb_flush();
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -1021,9 +1121,8 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
         printf("\n");
     #endif
 
-    dag_svb_flush();
-
     //Add the base to the new view.
+    assert(orgview->base->refcount > 0);
     newview->base = orgview->base;
     newview->base->refcount++;
 
@@ -1218,7 +1317,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             views[i] = get_dndview(arylist[i]);
         }
         else
-        {   //Create a dummy view for the scalar.
+        {
+            //Create a dummy view for the scalar.
             dndview dummy;
             //Use negated uid since positive uids are generated
             //by the master process only.
@@ -1229,11 +1329,26 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             dummy.base->ndims = 0;
             dummy.ndims = 0;
             dummy.base->dtype = scalar_dtype;
+            dummy.base->refcount = 1;
             dummy.base->nelements = 1;
+            dummy.base->nblocks = 1;
+            dummy.base->rootnodes = malloc(sizeof(dndnode *));
+            dummy.base->rootnodes[0] = NULL;
             dummy.base->data = malloc(scalar_size);
             memcpy(dummy.base->data, scalar, scalar_size);
             dummy.base->elsize = scalar_size;
             views[i] = put_dndview(&dummy);
+            //Append the array to the lisked list when statistic is defined.
+            #ifdef DNPY_STATISTICS
+                dummy.base->prev = NULL;
+                dummy.base->next = rootarray;
+                rootarray = dummy.base;
+                if(dummy.base->next != NULL)
+                {
+                    assert(dummy.base->next->prev == NULL);
+                    dummy.base->next->prev = rootarray;
+                }
+            #endif
         }
 
     dndview *lastary = views[narys-1];
@@ -1446,34 +1561,40 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     svbs[v]->comm_received_by = myrank;
 
                     //Add a new sub-view block DAG node.
-                    dndnode_comm *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode_comm);
-                    node->op = DNPY_BUF_RECV;
-                    node->optype = DNPY_COMM;
-                    node->narys = 1;
-                    node->views[0] = views[v];
-                    node->svbs[0] = svbs[v];
-                    node->accesstype[0] = DNPY_WRITE;
-                    node->mpi_tag = mpi_tag;
-                    node->remote_rank = svbs[v]->rank;
-                    dag_svb_add(node);
+                    dndop_comm *op = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndop_comm);
+                    op->op = DNPY_BUF_RECV;
+                    op->optype = DNPY_COMM;
+                    op->narys = 1;
+                    op->refcount = 0;
+                    op->views[0] = views[v];
+                    op->svbs[0] = svbs[v];
+                    op->accesstypes[0] = DNPY_WRITE;
+                    op->mpi_tag = mpi_tag;
+                    op->remote_rank = svbs[v]->rank;
+                    dndnode *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode);
+                    node->op = (dndop *) op;
+                    node->op_ary_idx = 0;
+                    dag_svb_add(node, 1);
                 }
                 //Add the apply request to the svb-DAG.
-                dndnode_ufunc *node = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndnode_ufunc);
-                node->op = DNPY_UFUNC;
-                node->optype = DNPY_NONCOMM;
-                node->narys = narys;
-                node->nout = nout_arys;
-                memcpy(node->views, views, narys * sizeof(dndview*));
+                dndop_ufunc *op = workbuf_nextfree;
+                workbuf_nextfree += sizeof(dndop_ufunc);
+                op->op = DNPY_UFUNC;
+                op->optype = DNPY_NONCOMM;
+                op->narys = narys;
+                op->refcount = 0;
+                op->nout = nout_arys;
+                memcpy(op->views, views, narys * sizeof(dndview*));
                 for(v=0; v<nin; v++)
-                    node->accesstype[v] = DNPY_READ;
+                    op->accesstypes[v] = DNPY_READ;
                 for(v=nin; v<narys; v++)
-                    node->accesstype[v] = DNPY_WRITE;
-                node->func = func;
-                node->funcdata = funcdata;
+                    op->accesstypes[v] = DNPY_WRITE;
+                op->func = func;
+                op->funcdata = funcdata;
                 Py_INCREF(PyOp);
-                node->PyOp = PyOp;
+                op->PyOp = PyOp;
 
                 //Update the PyArray Objects to match the current
                 //sub-view-block.
@@ -1482,7 +1603,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     //Scalars is already updated.
                     if(views[v]->base->ndims == 0)
                     {
-                        node->svbs[v] = NULL;
+                        op->svbs[v] = NULL;
                         continue;
                     }
 
@@ -1535,13 +1656,21 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     //                views[v]->base->elsize,
                     //                NPY_BEHAVED, NULL);
                     s = views[v]->ndims * sizeof(npy_intp);
-                    memcpy(node->viewup[v].dims, csdims, s);
-                    memcpy(node->viewup[v].stride, sstride, s);
-                    node->viewup[v].offset = offset;
-                    node->svbs[v] = svbs[v];
+                    memcpy(op->viewup[v].dims, csdims, s);
+                    memcpy(op->viewup[v].stride, sstride, s);
+                    op->viewup[v].offset = offset;
+                    op->svbs[v] = svbs[v];
                 }
+
                 //Add a new sub-view block DAG node.
-                dag_svb_add(node);
+                dndnode *nodes = workbuf_nextfree;
+                workbuf_nextfree += narys * sizeof(dndnode);
+                for(v=0; v<narys; v++)
+                {
+                    nodes[v].op_ary_idx = v;
+                    nodes[v].op = (dndop *)op;
+                }
+                dag_svb_add(nodes, v);
             }
             else
             {   //Add send request to the svb-DAG.
@@ -1559,17 +1688,22 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     svbs[v]->comm_received_by = coord_owner;
 
                     //Add a new sub-view block DAG node.
-                    dndnode_comm *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode_comm);
-                    node->op = DNPY_SEND;
-                    node->optype = DNPY_COMM;
-                    node->narys = 1;
-                    node->views[0] = views[v];
-                    node->svbs[0] = svbs[v];
-                    node->accesstype[0] = DNPY_READ;
-                    node->mpi_tag = mpi_tag;
-                    node->remote_rank = coord_owner;
-                    dag_svb_add(node);
+                    dndop_comm *op = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndop_comm);
+                    op->op = DNPY_SEND;
+                    op->optype = DNPY_COMM;
+                    op->narys = 1;
+                    op->refcount = 0;
+                    op->views[0] = views[v];
+                    op->svbs[0] = svbs[v];
+                    op->accesstypes[0] = DNPY_READ;
+                    op->mpi_tag = mpi_tag;
+                    op->remote_rank = coord_owner;
+                    dndnode *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode);
+                    node->op_ary_idx = 0;
+                    node->op = (dndop *)op;
+                    dag_svb_add(node, 1);
                 }
             }
 
@@ -1633,31 +1767,41 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 //Add a new sub-view block DAG node.
                 if(coord_owner == myrank && svb->rank != myrank)
                 {
-                    dndnode_comm *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode_comm);
-                    node->narys = 1;
-                    node->views[0] = views[v];
-                    node->svbs[0] = svb;
-                    node->accesstype[0] = DNPY_READ;
-                    node->mpi_tag = mpi_tag;
-                    node->op = DNPY_BUF_SEND;
-                    node->optype = DNPY_COMM;
-                    node->remote_rank = svb->rank;
-                    dag_svb_add(node);
+                    dndop_comm *op = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndop_comm);
+                    op->narys = 1;
+                    op->refcount = 0;
+                    op->views[0] = views[v];
+                    op->svbs[0] = svb;
+                    op->accesstypes[0] = DNPY_READ;
+                    op->mpi_tag = mpi_tag;
+                    op->op = DNPY_BUF_SEND;
+                    op->optype = DNPY_COMM;
+                    op->remote_rank = svb->rank;
+                    dndnode *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode);
+                    node->op_ary_idx = 0;
+                    node->op = (dndop *)op;
+                    dag_svb_add(node, 1);
                 }
                 else if(coord_owner != myrank && svb->rank == myrank)
                 {
-                    dndnode_comm *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode_comm);
-                    node->narys = 1;
-                    node->views[0] = views[v];
-                    node->svbs[0] = svb;
-                    node->accesstype[0] = DNPY_WRITE;
-                    node->mpi_tag = mpi_tag;
-                    node->op = DNPY_RECV;
-                    node->optype = DNPY_COMM;
-                    node->remote_rank = coord_owner;
-                    dag_svb_add(node);
+                    dndop_comm *op = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndop_comm);
+                    op->narys = 1;
+                    op->refcount = 0;
+                    op->views[0] = views[v];
+                    op->svbs[0] = svb;
+                    op->accesstypes[0] = DNPY_WRITE;
+                    op->mpi_tag = mpi_tag;
+                    op->op = DNPY_RECV;
+                    op->optype = DNPY_COMM;
+                    op->remote_rank = coord_owner;
+                    dndnode *node = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndnode);
+                    node->op_ary_idx = 0;
+                    node->op = (dndop *)op;
+                    dag_svb_add(node, 1);
                 }
             }
         #ifdef DNDY_TIME
@@ -1714,7 +1858,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                             char* out_scalar_address,
                             int axis, char* op)
 {
-    int i,j;
+    int i;
+    npy_intp j;
     dndview *in_view = get_dndview(in_ary_uid);
     dndarray *in_ary = in_view->base;
     PyObject *local_scalar, *tmpobj, *tmp_scalar;
@@ -1905,6 +2050,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         npy_intp coord[NPY_MAXDIMS], gcoord[NPY_MAXDIMS];
         char notfinished = 1;
         memset(coord, 0, in_view->ndims * sizeof(npy_intp));
+        rank2cart(in_ary->ndims, myrank, cart_coords);
         while(notfinished)
         {
             dndsvb *svb = workbuf_nextfree;
@@ -1940,26 +2086,39 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             svb->comm_offset *= in_view->base->elsize;
 
             //Add a new sub-view block DAG node.
-            dndnode_comm *node = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndnode_comm);
-            node->op = DNPY_REDUCE_SEND;
-            node->optype = DNPY_COMM;
-            node->narys = 1;
-            node->views[0] = in_view;
-            node->svbs[0] = svb;
-            node->accesstype[0] = DNPY_READ;
+            dndop_comm *op = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndop_comm);
+            op->narys = 1;
+            op->refcount = 0;
+            op->views[0] = in_view;
+            op->svbs[0] = svb;
+            op->accesstypes[0] = DNPY_READ;
+            op->op = DNPY_REDUCE_SEND;
+            op->optype = DNPY_COMM;
 
-            //Convert local input block coordinate to global output
+            //Convert local input block coordinate to global input
             //block coordinate.
             int *cdimsizes = cart_dim_sizes[in_view->ndims-1];
+            for(i=0; i<in_view->ndims; i++)
+                gcoord[i] = cart_coords[i] + //process offset.
+                            coord[i] *       //block index.
+                            cdimsizes[i];    //jump per block.
+
+            //Compute the sub-view-block's root node.
+            op->svbs[0]->rootnode = in_view->base->rootnodes;
+            j = 1;
+            for(i=in_view->base->ndims-1; i >= 0; i--)
+            {
+                op->svbs[0]->rootnode += gcoord[i] * j;
+                j *= in_view->base->blockdims[i];
+            }
+
+            //Convert global output block coordinate to global output
+            //block coordinate.
             j=0;
             for(i=0; i<in_view->ndims; i++)
-            {
                 if(axis != i)
-                    gcoord[j++] = cart_coords[i] + //process offset.
-                                  coord[i] *       //block index.
-                                  cdimsizes[i];    //jump per block.
-            }
+                    gcoord[j++] = gcoord[i];
 
             //Find process cartesian coordinate and its MPI rank.
             int pcoords[NPY_MAXDIMS];
@@ -1967,7 +2126,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             for(i=0; i<out_view->ndims; i++)
                 pcoords[i] = gcoord[i] % cdimsizes[i];
             int rank = cart2rank(out_view->ndims, pcoords);
-            node->remote_rank = rank;
+            op->remote_rank = rank;
 
             //Use a mpi_tag based on the global output array block
             //coordinate. Row-Major.
@@ -1977,9 +2136,13 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                 tag += gcoord[i] * j;
                 j *= out_view->blockdims[i];
             }
-            node->mpi_tag = tag + mpi_tag;
+            op->mpi_tag = tag + mpi_tag;
 
-            dag_svb_add(node);
+            dndnode *node = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndnode);
+            node->op_ary_idx = 0;
+            node->op = (dndop *)op;
+            dag_svb_add(node, 1);
 
             //Iterate coord one local block.
             for(j=in_view->ndims-1; j >= 0; j--)
@@ -2041,31 +2204,47 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             svb->comm_offset *= out_view->base->elsize;
 
             //Add a new sub-view block DAG node.
-            dndnode_comm *node = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndnode_comm);
-            node->op = DNPY_RECV;
-            node->optype = DNPY_COMM;
-            node->narys = 1;
-            node->views[0] = out_view;
-            node->svbs[0] = svb;
-            node->accesstype[0] = DNPY_WRITE;
+            dndop_comm *op = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndop_comm);
+            op->narys = 1;
+            op->refcount = 0;
+            op->views[0] = out_view;
+            op->svbs[0] = svb;
+            op->accesstypes[0] = DNPY_WRITE;
+            op->op = DNPY_RECV;
+            op->optype = DNPY_COMM;
 
-            //Convert local output block coordinate to global input
+            //Convert local output block coordinate to global output
             //block coordinate.
             int *cdimsizes = cart_dim_sizes[out_view->ndims-1];
-            j=0;
-            for(i=0; i<in_view->ndims; i++)
+            for(i=0; i<out_view->ndims; i++)
+                gcoord[i] = cart_coords[i] + //process offset.
+                            coord[i] *       //block index.
+                            cdimsizes[i];    //jump per block.
+
+            //Compute the sub-view-block's root node.
+            op->svbs[0]->rootnode = out_view->base->rootnodes;
+            j = 1;
+            for(i=out_view->base->ndims-1; i >= 0; i--)
             {
+                op->svbs[0]->rootnode += gcoord[i] * j;
+                j *= out_view->base->blockdims[i];
+            }
+
+            //Convert global output block coordinate to global input
+            //block coordinate.
+            j=out_view->ndims-1;
+            for(i=in_view->ndims-1; i>=0; i--)
                 if(axis == i)
+                {
                     gcoord[i] = 0;
+                    break;
+                }
                 else
                 {
-                    gcoord[i] = cart_coords[j] + //process offset.
-                                coord[j] *       //block index.
-                                cdimsizes[j];    //jump per block.
-                    j++;
+                    gcoord[i] = gcoord[j];
+                    j--;
                 }
-            }
 
             //Find process cartesian coordinate and its MPI rank.
             int pcoords[NPY_MAXDIMS];
@@ -2073,7 +2252,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             for(i=0; i<in_view->ndims; i++)
                 pcoords[i] = gcoord[i] % cdimsizes[i];
             int rank = cart2rank(in_view->ndims, pcoords);
-            node->remote_rank = rank;
+            op->remote_rank = rank;
 
             //Use a mpi_tag based on the global output array block
             //coordinate. Row-Major.
@@ -2086,9 +2265,13 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                     j *= in_view->blockdims[i];
                 }
             }
-            node->mpi_tag = tag + mpi_tag;
+            op->mpi_tag = tag + mpi_tag;
 
-            dag_svb_add(node);
+            dndnode *node = workbuf_nextfree;
+            workbuf_nextfree += sizeof(dndnode);
+            node->op_ary_idx = 0;
+            node->op = (dndop *)op;
+            dag_svb_add(node, 1);
 
             //Iterate coord one local block.
             for(j=out_view->ndims-1; j >= 0; j--)
@@ -2480,6 +2663,145 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
 
 /*===================================================================
  *
+ * Returns True if there is data conflict/overlap.
+ * Private.
+ */
+static char dndnode_conflict(const dndop *A, const int Aidx,
+                             const dndop *B, const int Bidx)
+{
+    npy_intp d;
+    char Aaccesstype = A->accesstypes[Aidx];
+    dndarray *Abase = A->views[Aidx]->base;
+    char Baccesstype = B->accesstypes[Bidx];
+    dndarray *Bbase = B->views[Bidx]->base;
+    dndsvb *Asvb = A->svbs[Aidx];
+    dndsvb *Bsvb = B->svbs[Bidx];
+
+    if(Abase->uid == Bbase->uid)
+        if(Aaccesstype == DNPY_WRITE || Baccesstype == DNPY_WRITE)
+        {
+            if(Asvb == NULL || Bsvb == NULL)
+                return 1;//Depend on the whole array.
+
+            char conflict = 1;
+            for(d=0; d<Abase->ndims; d++)
+            {
+                if(Bsvb->start[d] >=
+                   Asvb->start[d] + Asvb->nsteps[d]
+                   ||
+                   Asvb->start[d] >=
+                   Bsvb->start[d] + Bsvb->nsteps[d])
+                {
+                    conflict = 0;
+                    break;//No conflict at the svb level.
+                }
+            }
+            if(conflict)
+                return 1;
+        }
+    return 0;
+}/* dndnode_conflict */
+
+/*===================================================================
+ *
+ * Removes a operation from the sub-view-block DAG.
+ * Private.
+ */
+static void dag_svg_remove(dndop *op)
+{
+    int j;
+    npy_intp b;
+
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
+    for(j=0; j<op->narys; j++)
+    {
+        if(op->svbs[j] == NULL)//Whole array.
+        {
+            dndarray *ary = op->views[j]->base;
+            assert(ary != NULL);
+            for(b=0; b<ary->nblocks; b++)
+            {
+                assert(ary->rootnodes[b] != NULL);
+                while(ary->rootnodes[b] != NULL &&
+                      ary->rootnodes[b]->op == op)
+                    ary->rootnodes[b] = ary->rootnodes[b]->next;
+
+                dndnode *n1 = ary->rootnodes[b];
+
+                //We are finished if the list has become empty.
+                if(n1 == NULL)
+                    continue;
+
+                //Handle the first node in the list.
+                if(--n1->op->refcount == 0)
+                    ready_queue[ready_queue_size++] = n1->op;
+
+                //Handle the rest of the nodes in the list.
+                dndnode *n2 = n1->next;
+                while(n2 != NULL)
+                {
+                    assert(n1->next == n2);
+                    if(n2->op == op)//Remove the node.
+                        n1->next = n2->next;
+                    else
+                    {
+                        if(--n2->op->refcount == 0)
+                            ready_queue[ready_queue_size++] = n2->op;
+                        n1 = n2;
+                    }
+                    n2 = n2->next;
+                }
+            }
+        }
+        else
+        {
+            dndsvb *svb = op->svbs[j];
+            while((*svb->rootnode) != NULL &&
+                  (*svb->rootnode)->op == op)
+                *svb->rootnode = (*svb->rootnode)->next;
+            dndnode *n1 = *svb->rootnode;
+
+            //We are finished if the list has become empty.
+            if(n1 == NULL)
+                continue;
+
+            //Handle the first node in the list.
+            if(dndnode_conflict(op, j, n1->op, n1->op_ary_idx))
+                if(--n1->op->refcount == 0)
+                    ready_queue[ready_queue_size++] = n1->op;
+
+            //Handle the rest of the nodes in the list.
+            dndnode *n2 = n1->next;
+            while(n2 != NULL)
+            {
+                assert(n1->next == n2);
+                if(n2->op == op)//Remove the node.
+                    n1->next = n2->next;
+                else
+                {
+                    if(dndnode_conflict(op, j, n2->op, n2->op_ary_idx))
+                         if(--n2->op->refcount == 0)
+                            ready_queue[ready_queue_size++] = n2->op;
+                    n1 = n2;
+                }
+                n2 = n2->next;//Go to next node.
+            }
+        }
+    }
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_dag_svb_remove)
+    #endif
+
+}/* dndnode_conflict */
+
+
+/*===================================================================
+ *
  * Flush the sub-view block DAG and the work buffer.
  * Private.
  */
@@ -2490,8 +2812,8 @@ static void dag_svb_flush(void)
     int fcommsize;
     MPI_Request reqs[DNPY_RDY_QUEUE_MAXSIZE];
     MPI_Status reqstatus[DNPY_RDY_QUEUE_MAXSIZE];
-    dndnode *comm[DNPY_RDY_QUEUE_MAXSIZE];
-    dndnode *ncomm[DNPY_RDY_QUEUE_MAXSIZE];
+    dndop *comm[DNPY_RDY_QUEUE_MAXSIZE];
+    dndop *ncomm[DNPY_RDY_QUEUE_MAXSIZE];
     MPI_Datatype dtype[DNPY_RDY_QUEUE_MAXSIZE];
     npy_intp dtypesize=0;
 
@@ -2513,11 +2835,13 @@ static void dag_svb_flush(void)
         //Furthermore, initiate the communication nodes.
         for(i=0; i<ready_queue_size; i++)
         {
+            assert(ready_queue[i]->refcount == 0);
             //Init. all communication nodes in the ready queue.
             if(ready_queue[i]->optype == DNPY_COMM)
             {
-                dndnode_comm *C = (dndnode_comm*) ready_queue[i];
+                dndop_comm *C = (dndop_comm*) ready_queue[i];
                 MPI_Datatype comm_dtype;
+                assert(C->refcount == 0);
                 switch(C->op)
                 {
                     case DNPY_RECV:
@@ -2579,11 +2903,16 @@ static void dag_svb_flush(void)
                                   1, comm_dtype,
                                   C->remote_rank, C->mpi_tag,
                                   MPI_COMM_WORLD, &reqs[commsize]);
-                        MPI_Type_free(&comm_dtype);
+                        dtype[dtypesize++] = comm_dtype;
+                        //At the moment we have to delay this freeing to
+                        //the end of the flush. I’m not sure if this is
+                        //a bug in DistNumPy or the MPICH-2 implementa-
+                        //tion.
+                        //MPI_Type_free(&comm_dtype);
                         break;
                     default:
-                        fprintf(stderr, "Unknown DAG operation: %d.\n",
-                                (int)C->op);
+                        fprintf(stderr, "Unknown DAG operation: %s.\n",
+                                optype2str(C->op));
                         MPI_Abort(MPI_COMM_WORLD, -1);
                 }
                 comm[commsize++] = ready_queue[i];
@@ -2601,29 +2930,23 @@ static void dag_svb_flush(void)
         //nodes to the ready queue.
         for(i=0; i<ncommsize; i++)
         {
-            dndnode *node = ncomm[i];
-            switch(node->op)
+            dndop *op = ncomm[i];
+            dag_svg_remove(op);//We need to do this before rm_dndview().
+            switch(op->op)
             {
                 case DNPY_UFUNC:
-                    apply_ufunc((dndnode_ufunc*)node);
-                    Py_DECREF(((dndnode_ufunc*)node)->PyOp);
+                    apply_ufunc((dndop_ufunc*)op);
+                    Py_DECREF(((dndop_ufunc*)op)->PyOp);
                     break;
                 case DNPY_DESTROY_ARRAY:
-                    assert(node->narys == 1);
-                    assert(node->views[0] != NULL);
-                    rm_dndview(node->views[0]->uid);
+                    assert(op->narys == 1);
+                    assert(op->views[0] != NULL);
+                    rm_dndview(op->views[0]->uid);
                     break;
                 default:
-                    fprintf(stderr, "Unknown DAG operation: %d.\n",
-                            (int)node->op);
+                    fprintf(stderr, "Unknown DAG operation: %s.\n",
+                            optype2str(op->op));
                     MPI_Abort(MPI_COMM_WORLD, -1);
-            }
-            for(j=0; j<node->ndepend; j++)
-            {
-                assert(node->depend[j]->mydepend > 0);
-                node->depend[j]->mydepend--;
-                if(node->depend[j]->mydepend == 0)//The node is ready.
-                    ready_queue[ready_queue_size++] = node->depend[j];
             }
         }
 
@@ -2645,14 +2968,8 @@ static void dag_svb_flush(void)
 
             for(f=0; f<fcommsize; f++)
             {
-                dndnode *node = comm[fcomm[f]];
-                for(i=0; i<node->ndepend; i++)
-                {
-                    assert(node->depend[i]->mydepend > 0);
-                    node->depend[i]->mydepend--;
-                    if(node->depend[i]->mydepend == 0)//The node is ready.
-                        ready_queue[ready_queue_size++] = node->depend[i];
-                }
+                dndop *op = comm[fcomm[f]];
+                dag_svg_remove(op);
             }
             for(f=0; f<fcommsize; f++)
             {
@@ -2675,60 +2992,25 @@ static void dag_svb_flush(void)
         MPI_Type_free(&dtype[i]);
 
     //Resetting.
+    assert(ready_queue_size == 0);
     nvb_in_svb_dag = 0;
     workbuf_nextfree = workbuf;
-    assert(ready_queue_size == 0);
-
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_dag_svb_flush)
     #endif
 }/* dag_svb_flush */
 
-/*===================================================================
- *
- * Returns True if there is data conflict/overlap.
- * A is the node that is being inserted.
- * Private.
- */
-static char dndnode_conflict(dndnode *A, dndnode *B)
-{
-    npy_intp i,j,d;
-    for(i=0; i<A->narys; i++)
-        for(j=0; j<B->narys; j++)
-            if(A->views[i]->base->uid == B->views[j]->base->uid)
-                if(A->accesstype[i] == DNPY_WRITE ||
-                   B->accesstype[j] == DNPY_WRITE)
-                {
-                    if(A->svbs[0] == NULL || B->svbs[0] == NULL)
-                        return 1;//Depend on the whole array.
-                    char conflict = 1;
-                    for(d=0; d<A->views[i]->base->ndims; d++)
-                    {
-                        if(B->svbs[j]->start[d] >=
-                           A->svbs[i]->start[d] + A->svbs[i]->nsteps[d]
-                           ||
-                           A->svbs[i]->start[d] >=
-                           B->svbs[j]->start[d] + B->svbs[j]->nsteps[d])
-                        {
-                            conflict = 0;
-                            break;//No conflict at the svb level.
-                        }
-                    }
-                    if(conflict)
-                        return 1;
-                }
-    return 0;
-}/* dndnode_conflict */
 
 /*===================================================================
  *
- * Add a node to the sub-view block DAG.
+ * Add the list of node to the sub-view block DAG.
+ * Node that all nodes in the list must relate to the same operation.
  * Private.
  */
-static void dag_svb_add(void *node_input)
+static void dag_svb_add(dndnode *nodes, int nnodes)
 {
-    dndnode *node = node_input;
-
+    npy_intp i;
+    int n, idx;
     if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
         dag_svb_flush();
 
@@ -2737,45 +3019,88 @@ static void dag_svb_add(void *node_input)
         DNDTIME(tdelta);
     #endif
 
-    //Init DAG pointers.
-    node->ndepend = 0;
-    node->mydepend = 0;
-    node->next = NULL;
+    //Init values for statustics.
     #ifdef DNPY_STATISTICS
-        node->uid = ++node_uid_count;
+        for(n=0; n<nnodes; n++)
+            nodes[n].uid = ++node_uid_count;
+        nodes[0].op->uid = ++op_uid_count;
     #endif
-
-    //Check dependencies for all nodes in the svb DAG.
-    if(ready_queue_size == 0)
-        ready_queue[ready_queue_size++] = node;
-    else
+    //Handle one node at a time.
+    for(n=0; n<nnodes; n++)
     {
-        dndnode *tnode = ready_queue[0];
-        while(1)
+        dndnode *node = &nodes[n];
+        assert(node->op != NULL);
+        assert(node->op_ary_idx >= 0);
+        assert(node->op_ary_idx < node->op->narys);
+        node->next = NULL;
+        idx = node->op_ary_idx;
+        //We append the new node to the linked list and for each
+        //conflict we increase the refcount of the new node.
+        if(node->op->svbs[idx] == NULL)//Whole array.
         {
-            if(dndnode_conflict(node, tnode))
+            dndarray *ary = node->op->views[idx]->base;
+            for(i=0; i<ary->nblocks; i++)
             {
-                //Add the new found dependency.
-                assert(tnode->ndepend < DNPY_MAX_DEPENDENCY);
-                assert(node->mydepend < DNPY_MAX_DEPENDENCY);
-                tnode->depend[tnode->ndepend++] = node;
-                node->mydepend++;
+                if(ary->rootnodes[i] == NULL)
+                    ary->rootnodes[i] = node;
+                else
+                {
+                    dndnode *tnode = ary->rootnodes[i];
+                    while(1)
+                    {
+                        if(tnode->op != node->op)
+                            node->op->refcount++;
+                        if(tnode->next == NULL)//We are finished.
+                            break;
+                        tnode = tnode->next;//Go to next node.
+                    }
+                    tnode->next = node;
+                    assert(tnode->next->next == NULL);
+                }
+                //Need to clone the new node to get it "spanning" over
+                //the whole array.
+                memcpy(workbuf_nextfree, node, sizeof(dndnode));
+                node = workbuf_nextfree;
+                workbuf_nextfree += sizeof(dndnode);
+
+                #ifdef DNPY_STATISTICS
+                    node->uid = ++node_uid_count;
+                #endif
             }
-            //Go to next node.
-            if(tnode->next == NULL)//We are finished.
-            {
-                tnode->next = node;
-                break;
-            }
-            tnode = tnode->next;
         }
-        if(node->mydepend == 0)
-            ready_queue[ready_queue_size++] = node;
+        else
+        {
+            assert(node->op->svbs[idx]->rootnode != NULL);
+            dndnode *tnode = *node->op->svbs[idx]->rootnode;
+            if(tnode == NULL)
+                *node->op->svbs[idx]->rootnode = node;
+            else
+            {
+                while(1)
+                {
+                    if(tnode->op != node->op &&
+                       dndnode_conflict(node->op, idx, tnode->op,
+                                        tnode->op_ary_idx))
+                        node->op->refcount++;
+
+                    if(tnode->next == NULL)//We are finished.
+                        break;
+                    tnode = tnode->next;//Go to next node.
+                }
+                tnode->next = node;
+            }
+        }
     }
+
+    //Place the operation in the ready queue when no dependency was
+    //found.
+    if(nodes[0].op->refcount == 0)
+        ready_queue[ready_queue_size++] = nodes[0].op;
 
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_dag_svb_add)
     #endif
+    assert(ready_queue_size > 0);
 
 } /* dag_svb_add */
 
@@ -3506,6 +3831,7 @@ dnumpy_exit()
         DNDTIME_SUM(t_app_total, total);
         printf("app_total:         %6.llu ms\n", total/1000);
         printf("  dag_svb_flush:   %6.llu ms\n", t_dag_svb_flush/1000);
+        printf("    t_dag_svb_rm:  %6.llu ms\n", t_dag_svb_remove/1000);
         printf("    apply_ufunc:   %6.llu ms\n", t_apply_ufunc/1000);
         printf("    ufunc_comm:    %6.llu ms\n", t_ufunc_comm/1000);
         printf("  ufunc_svb:       %6.llu ms\n", t_ufunc_svb/1000);

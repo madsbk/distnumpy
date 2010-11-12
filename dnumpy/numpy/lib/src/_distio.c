@@ -6,11 +6,11 @@
 static PyObject *
 distio_save(PyObject *NPY_UNUSED(ignored), PyObject *args)
 {
-    PyArrayObject *ary; 
+    PyArrayObject *ary;
     char *filename;
     long datapos;
-    
-    if(!PyArg_ParseTuple(args, "O&sl", PyArray_Converter, &ary, &filename, &datapos)) 
+
+    if(!PyArg_ParseTuple(args, "O&sl", PyArray_Converter, &ary, &filename, &datapos))
         return NULL;
 
     /* Call DistNumPy */
@@ -24,7 +24,7 @@ distio_save(PyObject *NPY_UNUSED(ignored), PyObject *args)
 static PyObject *
 distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 {
-    static char *kwlist[] = {"filename","datapos","shape","fortran_order","dtype",NULL}; 
+    static char *kwlist[] = {"filename","datapos","shape","fortran_order","dtype",NULL};
     char *filename;
     long datapos;
     PyArray_Descr *typecode = NULL;
@@ -34,7 +34,7 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
     int flags = DNPY_DISTRIBUTED;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "slO&iO&",
-                                     kwlist, &filename, &datapos, 
+                                     kwlist, &filename, &datapos,
                                      PyArray_IntpConverter,
                                      &shape,
                                      &fortran_order,
@@ -54,11 +54,11 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
     }
 
     /* Create the distributed array */
-    ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type,
-                                                typecode,
-                                                shape.len, shape.ptr,
-                                                NULL, NULL,
-                                                flags, NULL);
+    ret = (PyObject *)PyArray_NewFromDescr(&PyArray_Type,
+                                            typecode,
+                                            shape.len, shape.ptr,
+                                            NULL, NULL,
+                                            flags, NULL);
 
     if (ret == NULL) {
         return NULL;
@@ -79,9 +79,9 @@ distio_load(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 
 /* Export methods */
 static struct PyMethodDef methods[] = {
-    {"dist_load",  (PyCFunction)distio_load, METH_VARARGS | METH_KEYWORDS, 
+    {"dist_load",  (PyCFunction)distio_load, METH_VARARGS | METH_KEYWORDS,
      "Load binary file into distributed array."},
-    {"dist_save",  (PyCFunction)distio_save, METH_VARARGS, 
+    {"dist_save",  (PyCFunction)distio_save, METH_VARARGS,
      "Save distributed array into binary file."},
     {NULL, NULL}    /* sentinel */
 };
