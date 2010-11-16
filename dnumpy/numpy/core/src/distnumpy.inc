@@ -2926,11 +2926,11 @@ static void dag_svb_flush(void)
         //The ready queue is now empty.
         ready_queue_size = 0;
 
-        //Apply all non-communication nodes and move new non-depend
+        //Apply one non-communication node and move new non-depend
         //nodes to the ready queue.
-        for(i=0; i<ncommsize; i++)
+        if(ncommsize > 0)
         {
-            dndop *op = ncomm[i];
+            dndop *op = ncomm[--ncommsize];//Using a FILO order.
             dag_svg_remove(op);//We need to do this before rm_dndview().
             switch(op->op)
             {
@@ -2950,17 +2950,30 @@ static void dag_svb_flush(void)
             }
         }
 
-        //Wait for communication when only communication nodes are
-        //unhandled and move new non-depend nodes to the ready queue.
-        if(ncommsize == 0 && ready_queue_size == 0 && commsize > 0)
+        //Test for ready communication and possibly move new non-depend
+        //nodes to the ready queue. Furthermore, if there is nothing
+        //else to do (no operations that are ready) we wait.
+        if(commsize > 0)
         {
             #ifdef DNDY_TIME
                 unsigned long long tdelta2;
                 DNDTIME(tdelta2);
             #endif
 
-            MPI_Waitsome(commsize, reqs, &fcommsize, fcomm, reqstatus);
-            assert(fcommsize != MPI_UNDEFINED);
+            if(ncommsize > 0)
+            {
+                MPI_Testsome(commsize, reqs, &fcommsize, fcomm,
+                             reqstatus);
+                assert(fcommsize != MPI_UNDEFINED);
+            }
+            else if(ready_queue_size == 0)
+            {
+                MPI_Waitsome(commsize, reqs, &fcommsize, fcomm,
+                             reqstatus);
+                assert(fcommsize != MPI_UNDEFINED);
+            }
+            else
+                fcommsize = 0;
 
             #ifdef DNDY_TIME
                 DNDTIME_SUM(tdelta2, t_ufunc_comm)
@@ -2983,8 +2996,6 @@ static void dag_svb_flush(void)
             }
             commsize -= fcommsize;
         }
-        //Non-communication node queue is now empty.
-        ncommsize = 0;
     }
 
     //Do the delayed MPI type freeing.
