@@ -56,7 +56,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
     struct timeval tv;
     struct timezone tz;
     static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
-        t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,          \
+        t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
         t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
@@ -214,7 +214,9 @@ static void dag_svb_dump(void)
         fprintf(pFile, "|<f%ld>%ld", (long)i, (long)i);
     fprintf(pFile, "\" shape=\"record\"];\n");
     for(i=0; i<ready_queue_size; i++)
-        fprintf(pFile, "ready_queue:<f%ld> -> op%ld [color=\"0.650 0.700 0.700\"];\n", (long)i, (long)ready_queue[i]->uid);
+        fprintf(pFile, "ready_queue:<f%ld> -> op%ld"
+                       "[color=\"0.650 0.700 0.700\"];\n", (long)i,
+                       (long)ready_queue[i]->uid);
 
     //Iterate through all arrays.
     tary = rootarray;
@@ -225,7 +227,8 @@ static void dag_svb_dump(void)
             fprintf(pFile, "arrayn%ld", (long)tary->uid * -1);
         else
             fprintf(pFile, "array%ld", (long)tary->uid);
-        fprintf(pFile, " [label=\"array %ld(r%d)", (long)tary->uid, tary->refcount);
+        fprintf(pFile, " [label=\"array %ld(r%d)", (long)tary->uid,
+                tary->refcount);
         for(i=0; i < tary->nblocks; i++)
             if(tary->rootnodes[i] != NULL)
                 fprintf(pFile, "|<f%ld>%ld", (long)i, (long)i);
@@ -240,7 +243,8 @@ static void dag_svb_dump(void)
                     fprintf(pFile, "arrayn%ld", (long)tary->uid * -1);
                 else
                     fprintf(pFile, "array%ld", (long)tary->uid);
-                fprintf(pFile, ":<f%ld> -> node%ld;\n", (long)i, (long)tnode->uid);
+                fprintf(pFile, ":<f%ld> -> node%ld;\n", (long)i,
+                                (long)tnode->uid);
                 while(tnode != NULL)
                 {
                     //Write the linked list of nodes.
@@ -248,15 +252,24 @@ static void dag_svb_dump(void)
                     if(tnode->next != NULL)
                     {
                         assert(tnode->next->uid > 0);
-                        fprintf(pFile, " -> node%ld", (long)tnode->next->uid);
+                        fprintf(pFile, " -> node%ld",
+                                       (long)tnode->next->uid);
                     }
                     fprintf(pFile, ";\n");
 
                     //Write the node-to-operation relation.
-                    fprintf(pFile, "node%ld -> op%ld [color=\"0.650 0.700 0.700\"];\n", (long)tnode->uid, (long)tnode->op->uid);
-                    fprintf(pFile, "op%ld [label=\"%s-r%ld:", (long)tnode->op->uid, optype2str(tnode->op->op), (long)tnode->op->refcount);
+                    fprintf(pFile, "node%ld -> op%ld [color=\"0.650"
+                                   " 0.700 0.700\"];\n",
+                                  (long)tnode->uid,
+                                  (long)tnode->op->uid);
+                    fprintf(pFile, "op%ld [label=\"%s-r%ld:",
+                                  (long)tnode->op->uid,
+                                  optype2str(tnode->op->op),
+                                  (long)tnode->op->refcount);
                     for(j=0; j<tnode->op->narys; j++)
-                        fprintf(pFile, " a%ld(%ld)", (long)tnode->op->views[j]->uid, (long)tnode->op->views[j]->base->uid);
+                        fprintf(pFile, " a%ld(%ld)",
+                                  (long)tnode->op->views[j]->uid,
+                                  (long)tnode->op->views[j]->base->uid);
                     fprintf(pFile, "\" shape=\"note\"];\n");
                     tnode = tnode->next;
                 }
@@ -2829,7 +2842,6 @@ static void dag_svb_flush(void)
     while(ready_queue_size + commsize + ncommsize > 0)
     {
         assert(ready_queue_size <= DNPY_RDY_QUEUE_MAXSIZE);
-
         //Sort the queue into two queues - one for communication and
         //one for non-communication nodes.
         //Furthermore, initiate the communication nodes.
@@ -2949,7 +2961,6 @@ static void dag_svb_flush(void)
                     MPI_Abort(MPI_COMM_WORLD, -1);
             }
         }
-
         //Test for ready communication and possibly move new non-depend
         //nodes to the ready queue. Furthermore, if there is nothing
         //else to do (no operations that are ready) we wait.
@@ -2997,7 +3008,6 @@ static void dag_svb_flush(void)
             commsize -= fcommsize;
         }
     }
-
     //Do the delayed MPI type freeing.
     for(i=0; i<dtypesize; i++)
         MPI_Type_free(&dtype[i]);
