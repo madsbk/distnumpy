@@ -569,15 +569,6 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     vblock->sub = workbuf_nextfree;
     svb = vblock->sub;
 
-    //Compute this sub-view-block's root node.
-    dndnode **rootnode = view->base->rootnodes;
-    s = 1;
-    for(i=view->base->ndims-1; i >= 0; i--)
-    {
-        rootnode += coord[i] * s;
-        s *= view->base->blockdims[i];
-    }
-
     //Init number of sub-view-block in each dimension.
     memset(vblock->svbdims, 0, view->base->ndims * sizeof(npy_intp));
 
@@ -587,6 +578,8 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     notfinished=1; s=0;
     while(notfinished)
     {
+        dndnode **rootnode = view->base->rootnodes;
+        stride = 1;
         for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
         {
             //Non-block coordinates.
@@ -597,6 +590,9 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             goffset = voffset * step[i] + start[i];
             //Global block offset relative to array-base.
             B = goffset / blocksize;
+            //Compute this sub-view-block's root node.
+            rootnode += B * stride;
+            stride *= view->base->blockdims[i];
             //Process rank of the owner in the i'th dimension.
             pcoord[i] = B % cdims[i];
             //Local block offset relative to array-base.
@@ -1115,7 +1111,6 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
 {
     npy_intp n, i, j;
     dndview *orgview = get_dndview(org_view_uid);
-    dag_svb_flush();
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
