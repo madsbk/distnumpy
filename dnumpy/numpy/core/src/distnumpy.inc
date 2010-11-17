@@ -3353,6 +3353,22 @@ dnumpy_evalflush(void)
     Py_RETURN_NONE;
 } /* dnumpy_evalflush */
 
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returns True when the two array-view overlap.
+ */
+static char
+dnumpy_data_overlap(intp Auid, intp Buid)
+{
+    dndview *A = get_dndview(Auid);
+    dndview *B = get_dndview(Buid);
+    //At the moment we only check at the array-base level.
+    if(A->base->uid == B->base->uid)
+        return 1;
+    else
+        return 0;
+} /* dnumpy_data_overlap */
 
 /*NUMPY_API
  *===================================================================
