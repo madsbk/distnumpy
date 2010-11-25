@@ -3952,8 +3952,8 @@ dnumpy_master_slave_split(void)
         do_INIT_BLOCKSIZE(msg[1]);
 
         //Check for user-defined process grid.
-        //The syntax used is defined as: ndims:dim:size;...
-        //E.g. DNPY_PROC_SIZE="2:2:4,3:3:2" which means that array
+        //The syntax used is: ndims:dim:size;
+        //E.g. DNPY_PROC_SIZE="2:2:4;3:3:2" which means that array
         //with two dimensions should, at its second dimension, have
         //a size of four etc.
         memset(tmpsizes, 0, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
