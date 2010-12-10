@@ -150,8 +150,6 @@ typedef struct
     npy_intp nblocks;
     //Number of view-blocks in each viewable dimension.
     npy_intp blockdims[NPY_MAXDIMS];
-    //Python Object for this view.
-    PyObject *PyAry;
 } dndview;
 
 //Type describing a sub-section of a view block.
@@ -226,22 +224,21 @@ typedef struct
     int remote_rank;
 } dndop_comm;
 
-//Type describing an array view update.
-//This type is used for updating an existing PyArray Object to
-//repesent a new memory area.
+//Type describing an apply-sub-view-block, which is a subsection of a
+//sub-view-block that is used in apply.
 typedef struct
 {
     npy_intp dims[NPY_MAXDIMS];
     npy_intp stride[NPY_MAXDIMS];
     npy_intp offset;
-} dndview_update;
+} dndasvb;
 
 //Type describing a universal function DAG node.
 typedef struct
 {
     DNDOP_HEAD
-    //List of array view updates involved.
-    dndview_update viewup[NPY_MAXARGS];
+    //List of apply-sub-view-block.
+    dndasvb asvb[NPY_MAXARGS];
     //Number of output array views.
     char nout;
     //The operation described as a function, a data and a Python pointer.

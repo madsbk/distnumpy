@@ -372,9 +372,6 @@ static dndview *put_dndview(dndview *view)
     //Initiate the Python Array Object.
     for(i=0; i<view->ndims; i++)
         ones[i] = 1; //Just need ones for the dim.
-    view->PyAry = PyArray_SimpleNewFromData(view->ndims, ones,
-                                            view->base->dtype,
-                                            view->base->data);
 
     for(i=0; i < DNPY_MAX_NARRAYS; i++)
         if(dndviews_uid[i] == 0)
@@ -397,10 +394,6 @@ static void rm_dndview(npy_intp uid)
             if(dndviews_uid[i] == uid)
             {
                 dndview *view = &dndviews[i];
-                //Deref the Python Array Object and make sure that the
-                //Python object does not own the array data.
-                ((PyArrayObject *)(view->PyAry))->flags &= ~OWNDATA;
-                Py_DECREF(view->PyAry);
                 //Cleanup base.
                 dndviews_uid[i] = 0;
                 if(view->base->ndims == 0)//Dummy Scalar.
@@ -752,46 +745,35 @@ static void
 apply_ufunc(dndop_ufunc *apply)
 {
     int j, i;
-    PyObject *iters[NPY_MAXARGS];
-    npy_intp *lastdims, lastndim;
     int narys = apply->narys;
+    npy_intp *lastdims = apply->asvb[narys-1].dims;
+    npy_intp lastndims = apply->views[narys-1]->ndims;
 
     #ifdef DNDY_TIME
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
 
-    for(i=0; i<narys; i++)
-    {
-        PyObject *ary = apply->views[i]->PyAry;
-        assert(ary != NULL);
-        //Scalars are already finished.
-        if(PyArray_NDIM(ary) == 0)
-            continue;
-
-        int s = PyArray_NDIM(ary) * sizeof(npy_intp);
-        memcpy(PyArray_DIMS(ary), apply->viewup[i].dims, s);
-        memcpy(PyArray_STRIDES(ary), apply->viewup[i].stride, s);
-        PyArray_BYTES(ary) = apply->svbs[i]->data +
-                             apply->viewup[i].offset;
-    }
-
-    lastdims = PyArray_DIMS(apply->views[narys-1]->PyAry);
-    lastndim = PyArray_NDIM(apply->views[narys-1]->PyAry);
+    //Pack all data.
+    char *tdata[NPY_MAXARGS];
+    for(j=0; j<narys; j++)
+        if(apply->views[j]->ndims == 0)
+            tdata[j] = apply->views[j]->base->data;
+        else
+            tdata[j] = apply->svbs[j]->data + apply->asvb[j].offset;
 
     if(apply->func == NULL)//Compatible Mode.
     {
         PyObject *tuple = PyTuple_New(narys);
         for(i=0; i<narys; i++)
         {
-            PyObject *ary = apply->views[i]->PyAry;
             PyObject *tary = PyArray_New(&PyArray_Type,
-                                         PyArray_NDIM(ary),
-                                         PyArray_DIMS(ary),
-                                         PyArray_TYPE(ary),
-                                         PyArray_STRIDES(ary),
-                                         PyArray_DATA(ary),
-                                         PyArray_ITEMSIZE(ary),
+                                         apply->views[i]->ndims,
+                                         apply->asvb[i].dims,
+                                         apply->views[i]->base->dtype,
+                                         apply->asvb[i].stride,
+                                         tdata[i],
+                                         apply->views[i]->base->elsize,
                                          NPY_BEHAVED, NULL);
             assert(tary != NULL);
             PyTuple_SET_ITEM(tuple, i, tary);
@@ -804,47 +786,63 @@ apply_ufunc(dndop_ufunc *apply)
     }
 
     //Create broadcasted iterators.
-    for(j=0; j<narys; j++)
-        iters[j] = PyArray_BroadcastToShape(apply->views[j]->PyAry,
-                                            lastdims, lastndim);
-
-    //The iterators should not iterate over the axis-dimension. That
-    //will be done inside the function call.
-    int axis = lastndim-1;
+    int axis = lastndims-1;
+    npy_intp coord[NPY_MAXARGS][NPY_MAXDIMS];
+    npy_intp strides[NPY_MAXARGS][NPY_MAXDIMS];
+    npy_intp backstrides[NPY_MAXARGS][NPY_MAXDIMS];
     for(j=0; j<narys; j++)
     {
-        PyArrayIterObject *it = (PyArrayIterObject *) iters[j];
-        it->contiguous = 0;
-        it->dims_m1[axis] = 0;
-        it->backstrides[axis] = 0;
+        for (i = 0; i < lastndims; i++)
+        {
+            int k = i - (lastndims - apply->views[j]->ndims);
+            if((k < 0) || apply->asvb[j].dims[k] != lastdims[i])
+            {
+                strides[j][i] = 0;
+            }
+            else
+            {
+                strides[j][i] = apply->asvb[j].stride[k];
+            }
+            backstrides[j][i] = strides[j][i] * (lastdims[i] - 1);
+        }
+        memset(coord[j], 0, lastndims * sizeof(npy_intp));
     }
 
     //niters is the total array length without the axis-
     //dimension.
     npy_intp niters = 1;
-    for(j=0; j<lastndim; j++)
-        niters *= (((PyArrayIterObject*)iters[narys-1])->dims_m1[j] + 1);
+    for(j=0; j<lastndims-1; j++)
+        niters *= lastdims[j];
 
     //'steps' is the axis-dimension's stride.
     npy_intp steps[NPY_MAXARGS];
     for(j=0; j<narys; j++)
-        steps[j] = ((PyArrayIterObject *) iters[j])->strides[axis];
+        steps[j] = strides[j][axis];
 
-    char *tdata[NPY_MAXARGS];
     while(niters-- > 0)
     {
-        //Need data pointers in one char array.
-        for(j=0; j<narys; j++)
-            tdata[j] = PyArray_ITER_DATA(iters[j]);
         //Apply operation.
         apply->func(tdata, &lastdims[axis], steps, apply->funcdata);
-        //Go to next block.
+
+        //Go to next block. The last coordinate is skiped.
         for(j=0; j<narys; j++)
-            PyArray_ITER_NEXT(iters[j]);
+        {
+            for(i=lastndims-2; i >= 0; i--)
+            {
+                if(coord[j][i] < lastdims[i] - 1)
+                {
+                    coord[j][i]++;
+                    tdata[j] += strides[j][i];
+                    break;
+                }
+                else
+                {
+                    coord[j][i] = 0;
+                    tdata[j] -= backstrides[j][i];
+                }
+            }
+        }
     }
-    //Cleanup
-    for(j=0; j<narys; j++)
-        Py_DECREF(iters[j]);
 
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_apply_ufunc)
@@ -1703,18 +1701,11 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                             offset += svboffset[v][i] * s;
                             s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
                         }
-                    //Apply update to PyArray object.
-                    //Which corresponds to the following:
-                    //    PyArray_New(&PyArray_Type,
-                    //                views[v]->ndims, csdims,
-                    //                views[v]->base->dtype, sstride,
-                    //                svbs[v]->data + offset,
-                    //                views[v]->base->elsize,
-                    //                NPY_BEHAVED, NULL);
+                    //Apply update to apply-sub-view-block.
                     s = views[v]->ndims * sizeof(npy_intp);
-                    memcpy(op->viewup[v].dims, csdims, s);
-                    memcpy(op->viewup[v].stride, sstride, s);
-                    op->viewup[v].offset = offset;
+                    memcpy(op->asvb[v].dims, csdims, s);
+                    memcpy(op->asvb[v].stride, sstride, s);
+                    op->asvb[v].offset = offset;
                     op->svbs[v] = svbs[v];
                 }
 
