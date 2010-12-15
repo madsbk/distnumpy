@@ -2752,40 +2752,101 @@ static char dndnode_conflict(const dndop *A, const int Aidx,
 /*===================================================================
  *
  * Removes a operation from the sub-view-block DAG.
+ * op2apply is the operations that should be applyed.
+ * If op2apply is NULL then op2apply is ignored.
+ * Returns number of operations in op2apply.
  * Private.
  */
-static void dag_svg_remove(dndop *op)
+static npy_intp dag_svg_remove(dndop *op, dndop *op2apply[])
 {
     int j;
-    npy_intp b;
+    npy_intp b, i, nops=1, mnops=DNPY_MAX_OP_MERGES;
 
     #ifdef DNDY_TIME
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
 
-    for(j=0; j<op->narys; j++)
-    {
-        if(op->svbs[j] == NULL)//Whole array.
-        {
-            dndarray *ary = op->views[j]->base;
-            assert(ary != NULL);
-            for(b=0; b<ary->nblocks; b++)
-            {
-                assert(ary->rootnodes[b] != NULL);
-                while(ary->rootnodes[b] != NULL &&
-                      ary->rootnodes[b]->op == op)
-                    ary->rootnodes[b] = ary->rootnodes[b]->next;
+    if(op2apply != NULL)
+        op2apply[0] = op;
+    else
+        mnops = 1;
 
-                dndnode *n1 = ary->rootnodes[b];
+    for(i=0; i<nops; i++)
+    {
+        if(op2apply != NULL)
+            op = op2apply[i];
+
+        for(j=0; j<op->narys; j++)
+        {
+            if(op->svbs[j] == NULL)//Whole array.
+            {
+                dndarray *ary = op->views[j]->base;
+                assert(ary != NULL);
+                for(b=0; b<ary->nblocks; b++)
+                {
+                    assert(ary->rootnodes[b] != NULL);
+                    while(ary->rootnodes[b] != NULL &&
+                          ary->rootnodes[b]->op == op)
+                        ary->rootnodes[b] = ary->rootnodes[b]->next;
+
+                    dndnode *n1 = ary->rootnodes[b];
+
+                    //We are finished if the list has become empty.
+                    if(n1 == NULL)
+                        continue;
+
+                    //Handle the first node in the list.
+                    if(--n1->op->refcount == 0)
+                    {
+                        if(nops < mnops && n1->op->optype == DNPY_NONCOMM)
+                            op2apply[nops++] = n1->op;
+                        else
+                            ready_queue[ready_queue_size++] = n1->op;
+                    }
+                    //Handle the rest of the nodes in the list.
+                    dndnode *n2 = n1->next;
+                    while(n2 != NULL)
+                    {
+                        assert(n1->next == n2);
+                        if(n2->op == op)//Remove the node.
+                            n1->next = n2->next;
+                        else
+                        {
+                            if(--n2->op->refcount == 0)
+                            {
+                                if(nops < mnops && n2->op->optype == DNPY_NONCOMM)
+                                    op2apply[nops++] = n2->op;
+                                else
+                                    ready_queue[ready_queue_size++] = n2->op;
+                            }
+                            n1 = n2;
+                        }
+                        n2 = n2->next;
+                    }
+                }
+            }
+            else
+            {
+                dndsvb *svb = op->svbs[j];
+                while((*svb->rootnode) != NULL &&
+                      (*svb->rootnode)->op == op)
+                    *svb->rootnode = (*svb->rootnode)->next;
+                dndnode *n1 = *svb->rootnode;
 
                 //We are finished if the list has become empty.
                 if(n1 == NULL)
                     continue;
 
                 //Handle the first node in the list.
-                if(--n1->op->refcount == 0)
-                    ready_queue[ready_queue_size++] = n1->op;
+                if(dndnode_conflict(op, j, n1->op, n1->op_ary_idx))
+                    if(--n1->op->refcount == 0)
+                    {
+                        if(nops < mnops && n1->op->optype == DNPY_NONCOMM)
+                            op2apply[nops++] = n1->op;
+                        else
+                            ready_queue[ready_queue_size++] = n1->op;
+                    }
 
                 //Handle the rest of the nodes in the list.
                 dndnode *n2 = n1->next;
@@ -2796,46 +2857,18 @@ static void dag_svg_remove(dndop *op)
                         n1->next = n2->next;
                     else
                     {
-                        if(--n2->op->refcount == 0)
-                            ready_queue[ready_queue_size++] = n2->op;
+                        if(dndnode_conflict(op, j, n2->op, n2->op_ary_idx))
+                            if(--n2->op->refcount == 0)
+                            {
+                                if(nops < mnops && n2->op->optype == DNPY_NONCOMM)
+                                    op2apply[nops++] = n2->op;
+                                else
+                                    ready_queue[ready_queue_size++] = n2->op;
+                            }
                         n1 = n2;
                     }
-                    n2 = n2->next;
+                    n2 = n2->next;//Go to next node.
                 }
-            }
-        }
-        else
-        {
-            dndsvb *svb = op->svbs[j];
-            while((*svb->rootnode) != NULL &&
-                  (*svb->rootnode)->op == op)
-                *svb->rootnode = (*svb->rootnode)->next;
-            dndnode *n1 = *svb->rootnode;
-
-            //We are finished if the list has become empty.
-            if(n1 == NULL)
-                continue;
-
-            //Handle the first node in the list.
-            if(dndnode_conflict(op, j, n1->op, n1->op_ary_idx))
-                if(--n1->op->refcount == 0)
-                    ready_queue[ready_queue_size++] = n1->op;
-
-            //Handle the rest of the nodes in the list.
-            dndnode *n2 = n1->next;
-            while(n2 != NULL)
-            {
-                assert(n1->next == n2);
-                if(n2->op == op)//Remove the node.
-                    n1->next = n2->next;
-                else
-                {
-                    if(dndnode_conflict(op, j, n2->op, n2->op_ary_idx))
-                         if(--n2->op->refcount == 0)
-                            ready_queue[ready_queue_size++] = n2->op;
-                    n1 = n2;
-                }
-                n2 = n2->next;//Go to next node.
             }
         }
     }
@@ -2844,7 +2877,8 @@ static void dag_svg_remove(dndop *op)
         DNDTIME_SUM(tdelta, t_dag_svb_remove)
     #endif
 
-}/* dndnode_conflict */
+    return nops;
+}/* dag_svg_remove */
 
 
 /*===================================================================
@@ -2974,26 +3008,37 @@ static void dag_svb_flush(void)
 
         //Apply one non-communication node and move new non-depend
         //nodes to the ready queue.
+        //Instead of moving new non-depended non-communication nodes
+        //to the ready queue they are directly applied.
         if(ncommsize > 0)
         {
             dndop *op = ncomm[--ncommsize];//Using a FILO order.
-            dag_svg_remove(op);//We need to do this before rm_dndview().
-            switch(op->op)
+            dndop **op2apply = workbuf_nextfree;
+            npy_intp nops = dag_svg_remove(op, op2apply);
+            npy_intp cur_op;
+            workbuf_nextfree += nops;//Reserve memory.
+
+            for(cur_op=0; cur_op < nops; cur_op++)
             {
-                case DNPY_UFUNC:
-                    apply_ufunc((dndop_ufunc*)op);
-                    Py_DECREF(((dndop_ufunc*)op)->PyOp);
-                    break;
-                case DNPY_DESTROY_ARRAY:
-                    assert(op->narys == 1);
-                    assert(op->views[0] != NULL);
-                    rm_dndview(op->views[0]->uid);
-                    break;
-                default:
-                    fprintf(stderr, "Unknown DAG operation: %s.\n",
-                            optype2str(op->op));
-                    MPI_Abort(MPI_COMM_WORLD, -1);
+                op = op2apply[cur_op];
+                switch(op->op)
+                {
+                    case DNPY_UFUNC:
+                        apply_ufunc((dndop_ufunc*)op);
+                        Py_DECREF(((dndop_ufunc*)op)->PyOp);
+                        break;
+                    case DNPY_DESTROY_ARRAY:
+                        assert(op->narys == 1);
+                        assert(op->views[0] != NULL);
+                        rm_dndview(op->views[0]->uid);
+                        break;
+                    default:
+                        fprintf(stderr, "Unknown DAG operation: %s.\n",
+                                optype2str(op->op));
+                        MPI_Abort(MPI_COMM_WORLD, -1);
+                }
             }
+            workbuf_nextfree -= nops;//Unreserve memory.
         }
         //Test for ready communication and possibly move new non-depend
         //nodes to the ready queue. Furthermore, if there is nothing
@@ -3027,7 +3072,7 @@ static void dag_svb_flush(void)
             for(f=0; f<fcommsize; f++)
             {
                 dndop *op = comm[fcomm[f]];
-                dag_svg_remove(op);
+                dag_svg_remove(op, NULL);
             }
             for(f=0; f<fcommsize; f++)
             {
