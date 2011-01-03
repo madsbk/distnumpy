@@ -3221,7 +3221,13 @@ array_subscript(PyArrayObject *self, PyObject *op)
     fancy = fancy_indexing_check(op);
     if (fancy != SOBJ_NOTFANCY) {
         int oned;
-
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(self))
+        {
+            PyErr_SetString(PyExc_IndexError, "Fancy indexing of "
+                            "distributed arrays is not support.");
+            return NULL;
+        }
         oned = ((self->nd == 1) &&
                 !(PyTuple_Check(op) && PyTuple_GET_SIZE(op) > 1));
 
@@ -3442,7 +3448,15 @@ array_ass_sub(PyArrayObject *self, PyObject *index, PyObject *op)
     PyErr_Clear();
 
     fancy = fancy_indexing_check(index);
-    if (fancy != SOBJ_NOTFANCY) {
+    if(fancy != SOBJ_NOTFANCY)
+    {
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(self))
+        {
+            PyErr_SetString(PyExc_IndexError, "Fancy indexing of "
+                            "distributed arrays is not support.");
+            return -1;
+        }
         oned = ((self->nd == 1) &&
                 !(PyTuple_Check(index) && PyTuple_GET_SIZE(index) > 1));
         mit = (PyArrayMapIterObject *) PyArray_MapIterNew(index, oned, fancy);
