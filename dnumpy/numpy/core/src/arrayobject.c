@@ -3442,6 +3442,10 @@ array_ass_sub(PyArrayObject *self, PyObject *index, PyObject *op)
                 return -1;
             }
         }
+        /* DISTNUMPY */
+        if(PyArray_ISDISTRIBUTED(self))
+            return dnumpy_dndarray_putitem(PyArray_DNDUID(self),vals,op);
+
         item = PyArray_GetPtr(self, vals);
         return self->descr->f->setitem(op, item, self);
     }
