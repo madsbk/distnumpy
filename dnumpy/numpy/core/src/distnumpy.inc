@@ -707,11 +707,11 @@ idx_v2b(const dndview *view, npy_intp vindex)
             break;
         if(view->slice[i].nsteps != PseudoIndex)
             bindex++;
-
         vindex--;
     }
-    assert(bindex < view->base->ndims);
-    return bindex;
+    //We need the MIN since bindex is too high when PseudoIndex is
+    //used at the end of the view.
+    return MIN(bindex, view->base->ndims-1);
 } /* idx_v2b */
 
 /*===================================================================
