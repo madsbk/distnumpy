@@ -34,7 +34,7 @@ BOUNDi += 1#ones
 for i in xrange(nx):
     for j in xrange(ny):
         for k in xrange(nz):
-            if ((i-4)**2+(j-5)**2+(k-6)**2) < 6:# or j == 0 or k == 0:
+            if ((i-4)**2+(j-5)**2+(k-6)**2) < 6:
                 BOUND[i,j,k] += 1.0
                 BOUNDi[i,j,k] += 0.0
 
