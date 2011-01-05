@@ -32,7 +32,7 @@ lx = int(sys.argv[2]) #250
 ly = int(sys.argv[3]) #51
 obst_x = lx/5.+1               # position of the cylinder; (exact
 obst_y = ly/2.+1               # y-symmetry is avoided)
-obst_r = ly/10.+1              # radius of the cylinder
+obst_r = 10 #ly/10.+1              # radius of the cylinder
 uMax   = 0.02                  # maximum velocity of Poiseuille inflow
 Re     = 100                   # Reynolds number
 nu     = uMax * 2.*obst_r / Re # kinematic viscosity
@@ -147,6 +147,7 @@ def lbm2d():
 
 t1 = time.time()
 lbm2d()
+np.core.multiarray.evalflush()
 t2 = time.time()
 print 'Iter: %d size: (%d, %d) time: '%(maxT,lx,ly), t2-t1,
 if DIST:
