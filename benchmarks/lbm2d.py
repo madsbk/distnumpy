@@ -53,12 +53,12 @@ not_bbRegion += 1.0
 for x in xrange(lx):
     for y in xrange(ly):
         if (x-obst_x)**2 + (y-obst_y)**2 <= obst_r**2:
-            bbRegion[x,y] = 1.0
-            not_bbRegion[x,y] = 0.0
+            bbRegion[x,y] += 1.0
+            not_bbRegion[x,y] *= 0.0
 bbRegion[:,0] += 1.0
 bbRegion[:,-1] += 1.0
-not_bbRegion[:,0] = 0.0
-not_bbRegion[:,-1] = 0.0
+not_bbRegion[:,0] *= 0.0
+not_bbRegion[:,-1] *= 0.0
 
 # Initial condition: (rho=0, u=0) ==> fIn[i] = t[i]
 fIn = (np.zeros([9,lx,ly], dtype=float, dist=DIST)+1) * t[:,np.newaxis,np.newaxis]
