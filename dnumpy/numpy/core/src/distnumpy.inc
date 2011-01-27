@@ -425,7 +425,8 @@ static void rm_dndview(npy_intp uid)
                             rootarray = view->base->next;
                     #endif
                     MPI_Type_free(&view->base->mpi_dtype);
-                    MPI_Free_mem(view->base->data);
+                    if(view->base->data != NULL)
+                        MPI_Free_mem(view->base->data);
                     free(view->base->rootnodes);
                     free(view->base);
                 }
@@ -506,6 +507,25 @@ calc_svb_MPIdatatype(const dndview *view, dndsvb *svb)
     MPI_Type_commit(&comm_viewNEW);
     return comm_viewNEW;
 }/* calc_svb_MPIdatatype */
+
+
+/*===================================================================
+ *
+ * Makes sure that the array's memory has been allocated.
+ * Private.
+ */
+static void
+delayed_array_allocation(dndarray *ary)
+{
+    if(ary->data == NULL)
+        if(MPI_Alloc_mem(ary->nelements * ary->elsize,
+                         MPI_INFO_NULL, &ary->data) != MPI_SUCCESS)
+        {
+            fprintf(stderr, "Out of memory!\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+}/* delayed_array_allocation */
+
 
 /*===================================================================
  *
@@ -646,8 +666,8 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         //Save data pointer if local data.
         if(svb[s].rank == myrank)
         {
-            vblock->sub[s].data = view->base->data +
-                                  svb[s].comm_offset;
+            delayed_array_allocation(view->base);
+            vblock->sub[s].data = view->base->data + svb[s].comm_offset;
         }
 
         //Iterate Sub-vblocks coordinate (Row-major).
@@ -757,10 +777,13 @@ apply_ufunc(dndop_ufunc *apply)
     //Pack all data.
     char *tdata[NPY_MAXARGS];
     for(j=0; j<narys; j++)
+    {
         if(apply->views[j]->ndims == 0)
             tdata[j] = apply->views[j]->base->data;
         else
             tdata[j] = apply->svbs[j]->data + apply->asvb[j].offset;
+        assert(tdata[j] != NULL);
+    }
 
     if(apply->func == NULL)//Compatible Mode.
     {
@@ -1075,13 +1098,8 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
     for(i=0; i<ary->nblocks; i++)
         ary->rootnodes[i] = NULL;
 
-    //Allocate local data.
-    if(MPI_Alloc_mem(nelements * ary->elsize, MPI_INFO_NULL,
-                     &ary->data) != MPI_SUCCESS)
-    {
-        fprintf(stderr, "Out of memory!\n");
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
+    //The memory allocation is delayed to the point where it is used.
+    ary->data = NULL;
 
     //Create a MPI-datatype that correspond to an array element.
     MPI_Type_contiguous(ary->elsize, MPI_BYTE, &ary->mpi_dtype);
@@ -1296,6 +1314,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
     for(i=view->base->ndims-1; i>=0; i--)//Row-major.
         offset += (vblock.sub[b].start[i] + tcoord[i] * step[i]) *
                    vblock.sub[b].stride[i];
+    delayed_array_allocation(view->base);
     data = view->base->data + offset*view->base->elsize;
 
     if(vblock.sub[b].rank == 0)//Local copying.
@@ -2371,6 +2390,7 @@ static void do_ZEROFILL(dndview *view)
 
     dag_svb_flush();
 
+    delayed_array_allocation(view->base);
     memset(view->base->data, 0, view->base->nelements *
                                 view->base->elsize);
 } /* do_ZEROFILL */
@@ -2423,6 +2443,8 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos,
     MPI_File_set_view(fh, filepos, view->base->mpi_dtype, dtype,
                       "native", MPI_INFO_NULL);
 
+    delayed_array_allocation(view->base);
+
     /* Do operation */
     MPI_Status status;
     switch(op) {
@@ -2467,6 +2489,8 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
     #endif
 
     dag_svb_flush();
+    delayed_array_allocation(in->base);
+    delayed_array_allocation(out->base);
 
     //Create the window for one-sided communication.
     MPI_Win comm_win;
@@ -2572,6 +2596,10 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                         "supports doubles.\n");
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
+
+    delayed_array_allocation(A->base);
+    delayed_array_allocation(B->base);
+    delayed_array_allocation(C->base);
 
     //Global index of row and column that hold current row and column
     //for rank-1 update.
@@ -2928,7 +2956,7 @@ static void dag_svb_flush(void)
                         assert(C->narys == 1);
                         comm_dtype = calc_svb_MPIdatatype(C->views[0],
                                                           C->svbs[0]);
-                        assert(C->views[0]->base->data != NULL);
+                        delayed_array_allocation(C->views[0]->base);
                         MPI_Irecv(C->views[0]->base->data +
                                   C->svbs[0]->comm_offset,
                                   1, comm_dtype,
@@ -2952,7 +2980,7 @@ static void dag_svb_flush(void)
                         assert(C->narys == 1);
                         comm_dtype = calc_svb_MPIdatatype(C->views[0],
                                                           C->svbs[0]);
-                        assert(C->views[0]->base->data != NULL);
+                        delayed_array_allocation(C->views[0]->base);
                         MPI_Isend(C->views[0]->base->data +
                                   C->svbs[0]->comm_offset,
                                   1, comm_dtype,
