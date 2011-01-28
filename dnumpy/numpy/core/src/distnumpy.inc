@@ -57,7 +57,8 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
     struct timezone tz;
     static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
         t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
-        t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0;
+        t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0,             \
+        t_arydata_malloc=0, t_arydata_free=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -517,6 +518,11 @@ calc_svb_MPIdatatype(const dndview *view, dndsvb *svb)
 static void
 delayed_array_allocation(dndarray *ary)
 {
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     if(ary->data == NULL)
         if(MPI_Alloc_mem(ary->nelements * ary->elsize,
                          MPI_INFO_NULL, &ary->data) != MPI_SUCCESS)
@@ -524,6 +530,10 @@ delayed_array_allocation(dndarray *ary)
             fprintf(stderr, "Out of memory!\n");
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_arydata_malloc)
+    #endif
 }/* delayed_array_allocation */
 
 
@@ -3941,12 +3951,14 @@ dnumpy_exit()
         DNDTIME_SUM(t_app_total, total);
         printf("app_total:         %6.llu ms\n", total/1000);
         printf("  dag_svb_flush:   %6.llu ms\n", t_dag_svb_flush/1000);
-        printf("    t_dag_svb_rm:  %6.llu ms\n", t_dag_svb_remove/1000);
+        printf("    dag_svb_rm:    %6.llu ms\n", t_dag_svb_remove/1000);
         printf("    apply_ufunc:   %6.llu ms\n", t_apply_ufunc/1000);
         printf("    ufunc_comm:    %6.llu ms\n", t_ufunc_comm/1000);
+        printf("    data free:     %6.llu ms\n", t_arydata_free/1000);
         printf("  ufunc_svb:       %6.llu ms\n", t_ufunc_svb/1000);
         printf("    dag_svb_add:   %6.llu ms\n", t_dag_svb_add/1000);
         printf("    calc_vblock:   %6.llu ms\n", t_calc_vblock/1000);
+        printf("  data malloc:     %6.llu ms\n", t_arydata_malloc/1000);
         }
     #endif
 
