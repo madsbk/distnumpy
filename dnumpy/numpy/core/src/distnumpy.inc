@@ -427,7 +427,18 @@ static void rm_dndview(npy_intp uid)
                     #endif
                     MPI_Type_free(&view->base->mpi_dtype);
                     if(view->base->data != NULL)
+                    {
+                        #ifdef DNDY_TIME
+                            unsigned long long tdelta;
+                            DNDTIME(tdelta);
+                        #endif
+
                         MPI_Free_mem(view->base->data);
+
+                        #ifdef DNDY_TIME
+                            DNDTIME_SUM(tdelta, t_arydata_free)
+                        #endif
+                    }
                     free(view->base->rootnodes);
                     free(view->base);
                 }
