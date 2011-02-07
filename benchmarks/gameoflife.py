@@ -65,5 +65,7 @@ for i in range(int(sys.argv[3])):
     # ABGR is the order...
     if DISPLAY:
         np.save("%s.%08d"%(sys.argv[2],i), full)
+
+np.core.multiarray.evalflush()
 t2 = time.time()
 print "Time spent:", t2-t1

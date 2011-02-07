@@ -98,6 +98,7 @@ while epsilon<delta:
     np.save("%s.%08d"%(sys.argv[3],i), cells)
     print epsilon,'<',delta
 
+np.core.multiarray.evalflush()
 t2 = time.time()
 print "Itterations", i
 print "Time spent:", t2-t1

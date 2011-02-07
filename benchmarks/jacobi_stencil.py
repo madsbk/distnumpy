@@ -45,6 +45,7 @@ while (forcedIter and forcedIter > i) or \
   delta = np.add.reduce(tmpdelta)
   cells[:] = work
 
+np.core.multiarray.evalflush()
 t2 = time.time()
 print 'Iter: ', i, ' size: ', H,' time: ', t2-t1,
 if DIST:

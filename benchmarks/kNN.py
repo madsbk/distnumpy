@@ -25,6 +25,7 @@ base = np.ufunc_random(np.empty((db_length, ndims), dtype=float,\
 t1 = time.time()
 for t in targets:
     compute_targets(base, t)
+np.core.multiarray.evalflush()
 t2 = time.time()
 
 if DIST:

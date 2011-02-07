@@ -17,13 +17,14 @@ def MC_int(c, s, dist):
         z = np.less_equal(x, 1)
         sum += np.add.reduce(z)*4.0/s
     sum = sum / c
+    np.core.multiarray.evalflush()
     stop=time.time()
     print 'Pi: ', sum, ' with ', s,' samples in sec: ', stop-start,
     if dist:
         print "(Dist) notes: %s"%sys.argv[4]
     else:
         print "(Non-Dist) notes: %s"%sys.argv[4]
-                    
+
 
 D=int(sys.argv[1])
 N=int(sys.argv[2])
