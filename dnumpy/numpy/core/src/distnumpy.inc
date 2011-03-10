@@ -3497,6 +3497,8 @@ dnumpy_data_overlap(intp Auid, intp Buid)
     dndview *A = get_dndview(Auid);
     dndview *B = get_dndview(Buid);
     //At the moment we only check at the array-base level.
+    if(Auid == Buid)
+	return 0;
     if(A->base->uid == B->base->uid)
         return 1;
     else
