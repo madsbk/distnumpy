@@ -7,6 +7,7 @@ def MC_int(c, s, dist):
     x = np.empty([s], dtype=np.double, dist=dist)
     y = np.empty([s], dtype=np.double, dist=dist)
     sum=0.0
+    np.core.multiarray.evalflush()
     start=time.time()
     for i in range(c):
         np.ufunc_random(x,x)
@@ -29,6 +30,7 @@ def MC_int(c, s, dist):
 D=int(sys.argv[1])
 N=int(sys.argv[2])
 C=int(sys.argv[3])
+
 
 MC_int(C, N, D)
 

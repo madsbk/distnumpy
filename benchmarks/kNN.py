@@ -22,6 +22,7 @@ for i in xrange(niter):
 base = np.ufunc_random(np.empty((db_length, ndims), dtype=float,\
                                 dist=DIST))
 
+np.core.multiarray.evalflush()
 t1 = time.time()
 for t in targets:
     compute_targets(base, t)

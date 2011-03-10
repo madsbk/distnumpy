@@ -25,6 +25,7 @@ full[:,-1] += -273.15
 full[0,:]  +=  40.0
 full[-1,:] += -273.13
 
+np.core.multiarray.evalflush()
 t1 = time.time()
 
 epsilon=W*H*0.010

@@ -36,6 +36,7 @@ OnesCol = np.zeros((n,1), dtype=float, dist=d)+1.0
 OnesRow = np.zeros((1,n), dtype=float, dist=d)+1.0
 #Identity= array(diag([1]*n), dtype=double, dist=d)
 
+np.core.multiarray.evalflush()
 stime = time.time()
 for i in xrange(k):
     #distance between all pairs of objects
