@@ -2045,6 +2045,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
     dndview *out_view = get_dndview(out_ary_uid);
     dndarray *out_ary = out_view->base;
+    PyObject *subres = NULL;
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -2067,16 +2068,19 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     //The senders should send its sub-results to the receiver with
     //identical coordinates beside zero in the axis-dimension.
 
-    PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
-                                              in_ary->localdims,
-                                              in_ary->dtype,
-                                              in_ary->data);
+    if(in_ary->nelements > 0)
+    {
+        PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
+                                                  in_ary->localdims,
+                                                  in_ary->dtype,
+                                                  in_ary->data);
 
-    //All MPI-processes computes its own sub-result.
-    PyObject *subres = PyObject_CallMethod(PyOp, "reduce", "(O,i)",
-                                           tmp, axis);
-    //Clean up.
-    Py_DECREF(tmp);
+        //All MPI-processes computes its own sub-result.
+        subres = PyObject_CallMethod(PyOp, "reduce", "(O,i)",
+                                               tmp, axis);
+        //Clean up.
+        Py_DECREF(tmp);
+    }
 
     int cart_coords[NPY_MAXDIMS];
     rank2cart(in_ary->ndims, myrank, cart_coords);
@@ -2093,32 +2097,46 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             cart_coords[axis]++)
         {
             int rank = cart2rank(in_ary->ndims, cart_coords);
-
+            int not_empty = 1;
             //Compute the dim of the receiving array.
             int count = 0;
             for(i=0; i < in_ary->ndims; i++)
+            {
+                npy_intp d = dnumroc(in_ary->dims[i], blocksize,
+                                     cart_coords[i],
+                                     cart_dim_sizes[in_ary->ndims-1][i]);
+                if(d <= 0)//Its empty.
+                {
+                    not_empty = 0;
+                    break;
+                }
                 if(i != axis)
-                    recv_dims[count++] = dnumroc(in_ary->dims[i],
-                                blocksize, cart_coords[i],
-                                cart_dim_sizes[in_ary->ndims-1][i]);
+                    recv_dims[count++] = d;
+            }
 
-            //Receive the sub-result from the sender into 'tmpres'.
-            PyObject *tmpres = PyArray_SimpleNew(out_ary->ndims,
-                               recv_dims, out_ary->dtype);
-            MPI_Recv(PyArray_DATA(tmpres), PyArray_SIZE(tmpres) *
-                     out_ary->elsize, MPI_BYTE, rank, 0,
-                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            if(not_empty)
+            {
+                //Receive the sub-result from the sender into 'tmpres'.
+                PyObject *tmpres = PyArray_SimpleNew(out_ary->ndims,
+                                   recv_dims, out_ary->dtype);
 
-            //We use ufunc to "reduce" the two arrays over the
-            //non-existing 'axis' dimension.
-            PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)", subres,
-                                                tmpres, subres);
-            Py_DECREF(t);
-            Py_DECREF(tmpres);
+                MPI_Recv(PyArray_DATA(tmpres), PyArray_SIZE(tmpres) *
+                         out_ary->elsize, MPI_BYTE, rank, 0,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+                //We use ufunc to "reduce" the two arrays over the
+                //non-existing 'axis' dimension.
+                PyObject *t = PyObject_CallFunction(PyOp, "(O,O,O)",
+                                                    subres, tmpres,
+                                                    subres);
+                Py_DECREF(t);
+                Py_DECREF(tmpres);
+            }
         }
     }
-    else//MPI-process is a sender.
+    else if(subres != NULL)//MPI-process is a sender.
     {
+
         //Send subresult to receiver.
         cart_coords[axis] = 0;
         MPI_Send(PyArray_DATA(subres),
@@ -2385,7 +2403,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     dag_svb_flush();
 
     //Cleanup
-    Py_DECREF(subres);
+    Py_XDECREF(subres);
     Py_DECREF(PyOp);
 
 } /* do_UFUNC_REDUCE */
