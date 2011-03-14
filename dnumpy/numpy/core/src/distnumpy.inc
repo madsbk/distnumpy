@@ -1064,6 +1064,34 @@ static void do_INIT_PROC_GRID(npy_intp *new_cart_dim_sizes)
     #endif
 } /* do_INIT_PROC_GRID */
 
+
+/*===================================================================
+ *
+ * Message handler for RESET_TIME.
+ * Private.
+ */
+static void do_RESET_TIME(void)
+{
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("RESET_TIME\n");
+    #endif
+
+    #ifdef DNDY_TIME
+        t_dag_svb_flush=0;
+        t_dag_svb_add=0;
+        t_dag_svb_remove=0;
+        t_calc_vblock=0;
+        t_ufunc_svb=0;
+        t_apply_ufunc=0;
+        t_ufunc_comm=0;
+        t_arydata_malloc=0;
+        t_arydata_free=0;
+        DNDTIME(t_app_total)
+    #endif
+
+} /* do_RESET_TIME */
+
 /*===================================================================
  *
  * Message handler for CREATE_ARRAY.
@@ -3507,6 +3535,24 @@ dnumpy_evalflush(void)
 /*NUMPY_API
  *===================================================================
  * Public
+ * Reset the timing.
+ */
+static PyObject *
+dnumpy_reset_time(void)
+{
+    //Tell slaves
+    msg[0] = RESET_TIME;
+    msg[1] = DNPY_MSG_END;
+    msg2slaves(msg, 2 * sizeof(npy_intp));
+
+    //The master should also do the operation.
+    do_RESET_TIME();
+    Py_RETURN_NONE;
+} /* dnumpy_reset_time */
+
+/*NUMPY_API
+ *===================================================================
+ * Public
  * Returns True when the two array-view overlap.
  */
 static char
@@ -3516,7 +3562,7 @@ dnumpy_data_overlap(intp Auid, intp Buid)
     dndview *B = get_dndview(Buid);
     //At the moment we only check at the array-base level.
     if(Auid == Buid)
-	return 0;
+        return 0;
     if(A->base->uid == B->base->uid)
         return 1;
     else
@@ -4224,6 +4270,9 @@ dnumpy_master_slave_split(void)
                 ary2 = get_dndview(((npy_intp*)msg_data)[1]);
                 ary3 = get_dndview(((npy_intp*)msg_data)[2]);
                 do_MATMUL(ary, ary2, ary3);
+                break;
+            case RESET_TIME:
+                do_RESET_TIME();
                 break;
             default:
                 fprintf(stderr, "Unknown msg: %ld\n", (long)msg[0]);

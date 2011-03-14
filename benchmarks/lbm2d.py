@@ -144,6 +144,7 @@ def lbm2d():
             canvas.show()
         """
 
+np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
 t1 = time.time()
 lbm2d()
