@@ -42,9 +42,12 @@ tPlot  = 5                     # cycles
 
 # D2Q9 Lattice constants
 t  = np.array([4/9., 1/9.,1/9.,1/9.,1/9., 1/36.,1/36.,1/36.,1/36.], dtype=float, dist=DIST)
+t_l  = np.array([4/9., 1/9.,1/9.,1/9.,1/9., 1/36.,1/36.,1/36.,1/36.], dtype=float, dist=False)
 cx = np.array([  0,   1,  0, -1,  0,    1,  -1,  -1,   1], dtype=float, dist=DIST)
+cx_l = np.array([  0,   1,  0, -1,  0,    1,  -1,  -1,   1], dtype=float, dist=False)
 cy = np.array([  0,   0,  1,  0, -1,    1,   1,  -1,  -1], dtype=float, dist=DIST)
-opp = np.array([ 0,   3,  4,  1,  2,    7,   8,   5,   6], dtype=float, dist=DIST)
+cy_l = np.array([  0,   0,  1,  0, -1,    1,   1,  -1,  -1], dtype=float, dist=False)
+opp = np.array([ 0,   3,  4,  1,  2,    7,   8,   5,   6], dtype=float, dist=False)
 col = np.array(xrange(2,ly), dtype=float, dist=DIST)
 
 bbRegion = np.zeros((lx,ly), dtype=float, dist=DIST)
@@ -90,16 +93,16 @@ def lbm2d():
         ux[-1,2:] = ux[-2, 2:]
 
         for i in xrange(0, 9):
-            cu = 3 * (cx[i] * ux + cy[i] * uy)
-            fEq[i] = rho * t[i] * (1 + cu + 0.5 * cu ** 2 - 1.5 * (ux ** 2 + uy ** 2))
+            cu = 3 * (cx_l[i] * ux + cy_l[i] * uy)
+            fEq[i] = rho * t_l[i] * (1 + cu + 0.5 * cu ** 2 - 1.5 * (ux ** 2 + uy ** 2))
             fOut[i] = fIn[i] - omega * (fIn[i] - fEq[i])
 
         # Microscopic boundary conditions
         for i in xrange(0, 9):
             # Left boundary:
-            fOut[i, 0, 2:] = fEq[i,0,2:] + 18 * t[i] * cx[i] * cy[i] * (fIn[7,0,2:] - fIn[6,0,2:] - fEq[7,0,2:] + fEq[6,0,2:])
+            fOut[i, 0, 2:] = fEq[i,0,2:] + 18 * t_l[i] * cx_l[i] * cy_l[i] * (fIn[7,0,2:] - fIn[6,0,2:] - fEq[7,0,2:] + fEq[6,0,2:])
             # Right boundary:
-            fOut[i,-1,2:] = fEq[i,-1,2:] + 18 * t[i] * cx[i] * cy[i] *(fIn[5,-1,2:] - fIn[8,-1,2:] - fEq[5,-1,2:] + fEq[8,-1,2:])
+            fOut[i,-1,2:] = fEq[i,-1,2:] + 18 * t_l[i] * cx_l[i] * cy_l[i] *(fIn[5,-1,2:] - fIn[8,-1,2:] - fEq[5,-1,2:] + fEq[8,-1,2:])
             # Bounce back region:
             BB = np.zeros((lx,ly), dist=DIST)
             BB[:] = fIn[opp[i]]
@@ -109,28 +112,29 @@ def lbm2d():
 
         # Streaming step
         for i in xrange(0,9):
-            if cx[i] == 1:
+            if cx_l[i] == 1:
                 t1 = np.empty(fOut[i].shape, dtype=float, dist=DIST)
                 t1[1:] = fOut[i][:-1]
                 t1[0] = fOut[i][-1]
                 fOut[i] = t1
-            elif cx[i] == -1:
+            elif cx_l[i] == -1:
                 t1 = np.empty(fOut[i].shape, dtype=float, dist=DIST)
                 t1[:-1] = fOut[i][1:]
                 t1[-1] = fOut[i][0]
                 fOut[i] = t1
-            if cy[i] == 1:
+            if cy_l[i] == 1:
                 t1 = np.empty(fOut[i].shape, dtype=float, dist=DIST)
                 t1[:,1:] = fOut[i][:,:-1]
                 t1[:,0] = fOut[i][:,-1]
                 fIn[i] = t1
-            elif cy[i] == -1:
+            elif cy_l[i] == -1:
                 t1 = np.empty(fOut[i].shape, dtype=float, dist=DIST)
                 t1[:,:-1] = fOut[i][:,1:]
                 t1[:,-1] = fOut[i][:,0]
                 fIn[i] = t1
             else:
                 fIn[i] = fOut[i]
+
         """
         if not cycle%tPlot:
             u = np.sqrt(ux**2+uy**2)
@@ -144,7 +148,6 @@ def lbm2d():
             canvas.show()
         """
 
-np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
 t1 = time.time()
 lbm2d()
