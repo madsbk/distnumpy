@@ -7,6 +7,7 @@ def MC_int(c, s, dist):
     x = np.empty([s], dtype=np.double, dist=dist)
     y = np.empty([s], dtype=np.double, dist=dist)
     sum=0.0
+    np.core.multiarray.timer_reset()
     np.core.multiarray.evalflush()
     start=time.time()
     for i in range(c):

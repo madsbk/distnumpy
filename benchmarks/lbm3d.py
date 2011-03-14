@@ -41,6 +41,7 @@ for i in xrange(nx):
 BOUND[i,0,k] += 1.0
 BOUNDi[i,0,k] *= 0.0
 
+np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
 t1 = time.time()
 while ts<ITER:

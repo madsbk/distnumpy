@@ -34,6 +34,7 @@ for i in range(W):
       if random.random() > .8:
           cells[i][j] = 1
 
+np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
 t1 = time.time()
 

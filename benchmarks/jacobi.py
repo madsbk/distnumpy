@@ -12,6 +12,7 @@ def jacobi(A, B, tol=0.005, forcedIter=0):
     n = 0
     tmp0 = np.empty(np.shape(A), float, dist=A.dist())
     tmp1 = np.empty(np.shape(B), float, dist=A.dist())
+    np.core.multiarray.timer_reset()
     np.core.multiarray.evalflush()
     t1 = time.time()
     AD = np.diagonal(A)

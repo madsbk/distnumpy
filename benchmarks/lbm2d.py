@@ -147,7 +147,7 @@ def lbm2d():
             axes3.imshow(uy.T)
             canvas.show()
         """
-
+np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
 t1 = time.time()
 lbm2d()
