@@ -59,7 +59,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
         t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
         t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0,             \
         t_arydata_malloc=0, t_arydata_free=0, t_reduce=0,           \
-        t_zerofill=0;
+        t_zerofill=0, t_msg2slaves=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -466,8 +466,16 @@ static void msg2slaves(npy_intp *msg, int msgsize)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_msg2slaves)
+    #endif
 
 } /* msg2slaves */
 
@@ -1090,6 +1098,7 @@ static void do_RESET_TIME(void)
         t_arydata_free=0;
         t_reduce=0;
         t_zerofill=0;
+        t_msg2slaves=0;
         DNDTIME(t_app_total)
     #endif
 
@@ -4054,18 +4063,21 @@ dnumpy_exit()
         {
         unsigned long long total=0;
         DNDTIME_SUM(t_app_total, total);
-        printf("app_total:         %6.llu ms\n", total/1000);
-        printf("  dag_svb_flush:   %6.llu ms\n", t_dag_svb_flush/1000);
-        printf("    dag_svb_rm:    %6.llu ms\n", t_dag_svb_remove/1000);
-        printf("    apply_ufunc:   %6.llu ms\n", t_apply_ufunc/1000);
-        printf("    ufunc_comm:    %6.llu ms\n", t_ufunc_comm/1000);
-        printf("    data free:     %6.llu ms\n", t_arydata_free/1000);
-        printf("  reduce:          %6.llu ms\n", t_reduce/1000);
-        printf("  zerofill:        %6.llu ms\n", t_zerofill/1000);
-        printf("  ufunc_svb:       %6.llu ms\n", t_ufunc_svb/1000);
-        printf("    dag_svb_add:   %6.llu ms\n", t_dag_svb_add/1000);
-        printf("    calc_vblock:   %6.llu ms\n", t_calc_vblock/1000);
-        printf("  data malloc:     %6.llu ms\n", t_arydata_malloc/1000);
+        printf("app_total:       %6.llu ms\n", total/1000);
+        printf("  dag_svb_flush: %6.llu ms\n", t_dag_svb_flush/1000);
+        printf("    dag_svb_rm:  %6.llu ms\n", t_dag_svb_remove/1000);
+        printf("    apply_ufunc: %6.llu ms\n", t_apply_ufunc/1000);
+        printf("    ufunc_comm:  %6.llu ms\n", t_ufunc_comm/1000);
+        printf("    data free:   %6.llu ms\n", t_arydata_free/1000);
+        printf("  reduce:        %6.llu ms\n", t_reduce/1000);
+        printf("  zerofill:      %6.llu ms\n", t_zerofill/1000);
+        printf("  ufunc_svb:     %6.llu ms\n", t_ufunc_svb/1000);
+        printf("    dag_svb_add: %6.llu ms\n", t_dag_svb_add/1000);
+        printf("    calc_vblock: %6.llu ms\n", t_calc_vblock/1000);
+        printf("  data malloc:   %6.llu ms\n", t_arydata_malloc/1000);
+        printf("  msg2slaves:    %6.llu ms\n", t_msg2slaves/1000);
+
+
         }
     #endif
 
@@ -4202,7 +4214,6 @@ dnumpy_master_slave_split(void)
         npy_intp d1, d2, d3, d4, d5;
         long l1;
         dndview *ary, *ary2, *ary3;
-        MPI_Barrier(MPI_COMM_WORLD);
         //Receive message from master.
         MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
         char *msg_data = (char *) &msg[1];
