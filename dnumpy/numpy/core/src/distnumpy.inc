@@ -58,7 +58,8 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
     static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
         t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
         t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0,             \
-        t_arydata_malloc=0, t_arydata_free=0;
+        t_arydata_malloc=0, t_arydata_free=0, t_reduce=0,           \
+        t_zerofill=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -1087,6 +1088,8 @@ static void do_RESET_TIME(void)
         t_ufunc_comm=0;
         t_arydata_malloc=0;
         t_arydata_free=0;
+        t_reduce=0;
+        t_zerofill=0;
         DNDTIME(t_app_total)
     #endif
 
@@ -1996,6 +1999,11 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     //If output is a scalar we just use this simple method.
     if(in_ary->ndims == 1)
     {
@@ -2068,6 +2076,11 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         }
         Py_DECREF(local_scalar);
         Py_DECREF(PyOp);
+
+        #ifdef DNDY_TIME
+            DNDTIME_SUM(tdelta, t_reduce)
+        #endif
+
         return;
     }
 
@@ -2428,6 +2441,10 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     //Sync mpi_tag.
     mpi_tag += out_view->nblocks;
 
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_reduce)
+    #endif
+
     dag_svb_flush();
 
     //Cleanup
@@ -2448,6 +2465,7 @@ static void do_ZEROFILL(dndview *view)
         printf("ZEROFILL - uid: %ld\n", (long)view->uid);
     #endif
 
+
     //Check if the view covers the whole array.
     if(view->alterations != 0)
     {
@@ -2457,9 +2475,19 @@ static void do_ZEROFILL(dndview *view)
 
     dag_svb_flush();
 
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     delayed_array_allocation(view->base);
     memset(view->base->data, 0, view->base->nelements *
                                 view->base->elsize);
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, t_zerofill)
+    #endif
+
 } /* do_ZEROFILL */
 
 /*===================================================================
@@ -4032,6 +4060,8 @@ dnumpy_exit()
         printf("    apply_ufunc:   %6.llu ms\n", t_apply_ufunc/1000);
         printf("    ufunc_comm:    %6.llu ms\n", t_ufunc_comm/1000);
         printf("    data free:     %6.llu ms\n", t_arydata_free/1000);
+        printf("  reduce:          %6.llu ms\n", t_reduce/1000);
+        printf("  zerofill:        %6.llu ms\n", t_zerofill/1000);
         printf("  ufunc_svb:       %6.llu ms\n", t_ufunc_svb/1000);
         printf("    dag_svb_add:   %6.llu ms\n", t_dag_svb_add/1000);
         printf("    calc_vblock:   %6.llu ms\n", t_calc_vblock/1000);
