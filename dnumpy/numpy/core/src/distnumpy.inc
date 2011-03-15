@@ -58,8 +58,8 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
     static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
         t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
         t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0,             \
-        t_arydata_malloc=0, t_arydata_free=0, t_reduce=0,           \
-        t_zerofill=0, t_msg2slaves=0;
+        t_arydata_malloc=0, t_arydata_free=0, t_reduce_1d=0,        \
+        t_zerofill=0, t_msg2slaves=0, t_reduce_nd=0, t_reduce_nd_apply=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -1096,7 +1096,9 @@ static void do_RESET_TIME(void)
         t_ufunc_comm=0;
         t_arydata_malloc=0;
         t_arydata_free=0;
-        t_reduce=0;
+        t_reduce_1d=0;
+        t_reduce_nd=0;
+        t_reduce_nd_apply=0;
         t_zerofill=0;
         t_msg2slaves=0;
         DNDTIME(t_app_total)
@@ -2087,7 +2089,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         Py_DECREF(PyOp);
 
         #ifdef DNDY_TIME
-            DNDTIME_SUM(tdelta, t_reduce)
+            DNDTIME_SUM(tdelta, t_reduce_1d)
         #endif
 
         return;
@@ -2118,6 +2120,11 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     //The senders should send its sub-results to the receiver with
     //identical coordinates beside zero in the axis-dimension.
 
+    #ifdef DNDY_TIME
+        unsigned long long tdelta2;
+        DNDTIME(tdelta2);
+    #endif
+
     if(in_ary->nelements > 0)
     {
         PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
@@ -2131,6 +2138,10 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         //Clean up.
         Py_DECREF(tmp);
     }
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta2, t_reduce_nd_apply)
+    #endif
 
     int cart_coords[NPY_MAXDIMS];
     rank2cart(in_ary->ndims, myrank, cart_coords);
@@ -2451,7 +2462,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     mpi_tag += out_view->nblocks;
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_reduce)
+        DNDTIME_SUM(tdelta, t_reduce_nd)
     #endif
 
     dag_svb_flush();
@@ -4069,15 +4080,15 @@ dnumpy_exit()
         printf("    apply_ufunc: %6.llu ms\n", t_apply_ufunc/1000);
         printf("    ufunc_comm:  %6.llu ms\n", t_ufunc_comm/1000);
         printf("    data free:   %6.llu ms\n", t_arydata_free/1000);
-        printf("  reduce:        %6.llu ms\n", t_reduce/1000);
+        printf("  reduce (1-d):  %6.llu ms\n", t_reduce_1d/1000);
+        printf("  reduce (n-d):  %6.llu ms\n", t_reduce_nd/1000);
+        printf("    pre_apply:   %6.llu ms\n", t_reduce_nd_apply/1000);
         printf("  zerofill:      %6.llu ms\n", t_zerofill/1000);
         printf("  ufunc_svb:     %6.llu ms\n", t_ufunc_svb/1000);
         printf("    dag_svb_add: %6.llu ms\n", t_dag_svb_add/1000);
         printf("    calc_vblock: %6.llu ms\n", t_calc_vblock/1000);
         printf("  data malloc:   %6.llu ms\n", t_arydata_malloc/1000);
         printf("  msg2slaves:    %6.llu ms\n", t_msg2slaves/1000);
-
-
         }
     #endif
 
