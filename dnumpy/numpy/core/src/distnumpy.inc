@@ -59,7 +59,8 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
         t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
         t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0,             \
         t_arydata_malloc=0, t_arydata_free=0, t_reduce_1d=0,        \
-        t_zerofill=0, t_msg2slaves=0, t_reduce_nd=0, t_reduce_nd_apply=0;
+        t_zerofill=0, t_msg2slaves=0, t_reduce_nd=0,                \
+        t_reduce_nd_apply=0, t_comm_init=0;
     #define DNDTIME(output)                                         \
         gettimeofday(&tv, &tz);                                     \
         output = (unsigned long long) tv.tv_usec +                  \
@@ -1101,6 +1102,7 @@ static void do_RESET_TIME(void)
         t_reduce_nd_apply=0;
         t_zerofill=0;
         t_msg2slaves=0;
+        t_comm_init=0;
         DNDTIME(t_app_total)
     #endif
 
@@ -3052,6 +3054,11 @@ static void dag_svb_flush(void)
     commsize=0; ncommsize=0;
     while(ready_queue_size + commsize + ncommsize > 0)
     {
+        #ifdef DNDY_TIME
+            unsigned long long tdelta2;
+            DNDTIME(tdelta2);
+        #endif
+
         assert(ready_queue_size <= DNPY_RDY_QUEUE_MAXSIZE);
         //Sort the queue into two queues - one for communication and
         //one for non-communication nodes.
@@ -3148,6 +3155,10 @@ static void dag_svb_flush(void)
         }
         //The ready queue is now empty.
         ready_queue_size = 0;
+
+        #ifdef DNDY_TIME
+            DNDTIME_SUM(tdelta2, t_comm_init)
+        #endif
 
         //Apply one non-communication node and move new non-depend
         //nodes to the ready queue.
@@ -4079,6 +4090,7 @@ dnumpy_exit()
         printf("    dag_svb_rm:  %6.llu ms\n", t_dag_svb_remove/1000);
         printf("    apply_ufunc: %6.llu ms\n", t_apply_ufunc/1000);
         printf("    ufunc_comm:  %6.llu ms\n", t_ufunc_comm/1000);
+        printf("    comm_init:   %6.llu ms\n", t_comm_init/1000);
         printf("    data free:   %6.llu ms\n", t_arydata_free/1000);
         printf("  reduce (1-d):  %6.llu ms\n", t_reduce_1d/1000);
         printf("  reduce (n-d):  %6.llu ms\n", t_reduce_nd/1000);
