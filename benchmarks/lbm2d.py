@@ -26,6 +26,8 @@ canvas.get_tk_widget().pack(expand = True, fill = Tkinter.BOTH)
 """
 
 DIST=int(sys.argv[1])
+NO_OBST = 1
+
 
 # General flow constants
 lx = int(sys.argv[2]) #250
@@ -53,11 +55,12 @@ col = np.array(xrange(2,ly), dtype=float, dist=DIST)
 bbRegion = np.zeros((lx,ly), dtype=float, dist=DIST)
 not_bbRegion = np.zeros((lx,ly), dtype=float, dist=DIST)
 not_bbRegion += 1.0
-for x in xrange(lx):
-    for y in xrange(ly):
-        if (x-obst_x)**2 + (y-obst_y)**2 <= obst_r**2:
-            bbRegion[x,y] += 1.0
-            not_bbRegion[x,y] *= 0.0
+if not NO_OBST:
+    for x in xrange(lx):
+        for y in xrange(ly):
+            if (x-obst_x)**2 + (y-obst_y)**2 <= obst_r**2:
+                bbRegion[x,y] += 1.0
+                not_bbRegion[x,y] *= 0.0
 bbRegion[:,0] += 1.0
 bbRegion[:,-1] += 1.0
 not_bbRegion[:,0] *= 0.0
