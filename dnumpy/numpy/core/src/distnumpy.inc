@@ -35,6 +35,8 @@ static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
 //Unique MPI tag.
 npy_intp mpi_tag=0;
+//Memory pool.
+static dndmem *mem_pool = NULL;
 //Pointers to the cblas functions.
 typedef void (cblas_func_type)(const enum CBLAS_ORDER Order,...);
 static cblas_func_type *cblas_dgemm_func = NULL;
@@ -69,6 +71,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes);
         gettimeofday(&tv, &tz);                                     \
         sum += ((unsigned long long) tv.tv_usec +                   \
                 (unsigned long long) tv.tv_sec * 1000000) - in;
+    static npy_intp mem_pool_reused = 0;
 #endif
 
 /*===================================================================
@@ -434,8 +437,12 @@ static void rm_dndview(npy_intp uid)
                             unsigned long long tdelta;
                             DNDTIME(tdelta);
                         #endif
+                        dndmem *mem = (dndmem*) (view->base->data -
+                                                 sizeof(dndmem));
 
-                        MPI_Free_mem(view->base->data);
+                        //Put the allocated memory in front of the pool.
+                        mem->next = mem_pool;
+                        mem_pool = mem;
 
                         #ifdef DNDY_TIME
                             DNDTIME_SUM(tdelta, t_arydata_free)
@@ -530,6 +537,23 @@ calc_svb_MPIdatatype(const dndview *view, dndsvb *svb)
     return comm_viewNEW;
 }/* calc_svb_MPIdatatype */
 
+/*===================================================================
+ *
+ * Frees the memory pool from a given memory allocation.
+ * Private.
+ */
+static void
+free_mem_pool(dndmem *mem)
+{
+    while(mem != NULL)
+    {
+        dndmem *next = mem->next;
+        MPI_Free_mem(mem);
+        mem = next;
+    }
+} /* free_mem_pool */
+
+
 
 /*===================================================================
  *
@@ -543,14 +567,72 @@ delayed_array_allocation(dndarray *ary)
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
+    npy_intp size = ary->nelements * ary->elsize;
+    npy_intp count = 0;
+    dndmem *free = NULL;
 
-    if(ary->data == NULL)
-        if(MPI_Alloc_mem(ary->nelements * ary->elsize,
-                         MPI_INFO_NULL, &ary->data) != MPI_SUCCESS)
+    if(ary->data != NULL)//Already allocated.
+        return;
+
+    //Check if there is some free memory in the memory pool.
+    if(mem_pool != NULL)
+    {
+        dndmem *prev = mem_pool;
+        dndmem *next = mem_pool->next;
+
+        //Handle first iteration as a special case.
+        if(mem_pool->size == size)
+        {
+            ary->data = ((char*)mem_pool) + sizeof(dndmem);
+            mem_pool = mem_pool->next;//Remove from pool.
+            #ifdef DNDY_TIME
+                ++mem_pool_reused;
+            #endif
+        }
+        else//Handle the rest.
+        {
+            while(next != NULL)
+            {
+                assert(prev->next == next);
+                if(next->size == size)
+                {
+                    ary->data = ((char*)next) + sizeof(dndmem);
+                    prev->next = next->next;//Remove from pool.
+                    #ifdef DNDY_TIME
+                        ++mem_pool_reused;
+                    #endif
+                    break;
+                }
+                if(++count == DNPY_MAX_MEM_POOL)
+                {
+                    //Will remove all mem after this one.
+                    prev->next = NULL;
+                    free = next;
+                }
+
+                //Go to next memory allocation.
+                prev = next;
+                next = next->next;
+            }
+        }
+    }
+
+    if(ary->data == NULL)//Need to allocate new memory.
+    {
+        dndmem *mem;
+        if(MPI_Alloc_mem(size + sizeof(dndmem), MPI_INFO_NULL,
+                         &mem) != MPI_SUCCESS)
         {
             fprintf(stderr, "Out of memory!\n");
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
+        mem->size = size;
+        ary->data = (char*) (mem + 1);
+    }
+
+    //Reduce the pool size to DNPY_MAX_MEM_POOL.
+    if(free != NULL)
+        free_mem_pool(free);
 
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_arydata_malloc)
@@ -1103,7 +1185,8 @@ static void do_RESET_TIME(void)
         t_zerofill=0;
         t_msg2slaves=0;
         t_comm_init=0;
-        DNDTIME(t_app_total)
+        DNDTIME(t_app_total);
+        mem_pool_reused=0;
     #endif
 
 } /* do_RESET_TIME */
@@ -4101,6 +4184,9 @@ dnumpy_exit()
         printf("    calc_vblock: %6.llu ms\n", t_calc_vblock/1000);
         printf("  data malloc:   %6.llu ms\n", t_arydata_malloc/1000);
         printf("  msg2slaves:    %6.llu ms\n", t_msg2slaves/1000);
+        printf("**************************\n");
+        printf("mem reused:      %6.ld\n", mem_pool_reused);
+
         }
     #endif
 
@@ -4120,6 +4206,9 @@ dnumpy_exit()
     if(nleaks > 0)
         printf("DistNumPy - Warning %d distributed arrays didn't get "
                "deallocated.\n", nleaks);
+
+    //Free the memory pool.
+    free_mem_pool(mem_pool);
 
     MPI_Finalize();
 } /* dnumpy_exit */

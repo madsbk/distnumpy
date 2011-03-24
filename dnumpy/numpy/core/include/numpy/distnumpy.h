@@ -39,6 +39,9 @@ typedef struct {
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*4
 
+//Maximum number of memory allocations in the memory pool.
+#define DNPY_MAX_MEM_POOL 5
+
 //Maximum number of view block operations in the sub-view-block DAG.
 #define DNPY_MAX_VB_IN_SVB_DAG 1000
 
@@ -70,6 +73,16 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
 //dndnode prototype.
 typedef struct dndnode_struct dndnode;
 typedef struct dndarray_struct dndarray;
+typedef struct dndmem_struct dndmem;
+
+//Type describing a memory allocation.
+struct dndmem_struct
+{
+    //Size of allocated memory.
+    npy_intp size;
+    //Pointer to the next free memory allocation.
+    dndmem *next;
+};
 
 //Type describing a distributed array.
 struct dndarray_struct
