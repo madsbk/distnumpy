@@ -221,7 +221,8 @@ while ts<ITER:
 
 np.core.multiarray.evalflush()
 t2 = time.time()
-print 'Iter: ', ts, ' size: ', nx,' time: ', t2-t1,
+print 'Iter: %d size: (%d,%d,%d)'%(ts,nx,ny,nz),
+print ' time: ', t2-t1,
 if DIST:
     print "(Dist) notes: %s"%sys.argv[6]
 else:
