@@ -36,13 +36,9 @@ t1 = time.time()
 
 for n in range(ITERATIONS):
     z *= z
-    print "HEJ2"
     z += c
-    print "HEJ3"
     mask = (fractal == 255) & (abs(z) > 10)
-    print "HEJ4"
     fractal *= ~mask
-    print "HEJ5"
     fractal += mask * 254 * n / float(ITERATIONS)
 
 np.core.multiarray.evalflush()
