@@ -9,6 +9,7 @@ import numpy as np
 import time
 import sys
 
+NO_OBST = True
 DIST = int(sys.argv[1])
 nx = int(sys.argv[2])
 ny = int(sys.argv[3])
@@ -31,15 +32,16 @@ deltaU=1e-7
 BOUND = np.zeros((nx,ny,nz), dtype=float, dist=DIST)
 BOUNDi = np.zeros((nx,ny,nz), dtype=float, dist=DIST)
 BOUNDi += 1#ones
-for i in xrange(nx):
-    for j in xrange(ny):
-        for k in xrange(nz):
-            if ((i-4)**2+(j-5)**2+(k-6)**2) < 6:
-                BOUND[i,j,k] += 1.0
-                BOUNDi[i,j,k] += 0.0
+if not NO_OBST:
+    for i in xrange(nx):
+        for j in xrange(ny):
+            for k in xrange(nz):
+                if ((i-4)**2+(j-5)**2+(k-6)**2) < 6:
+                    BOUND[i,j,k] += 1.0
+                    BOUNDi[i,j,k] += 0.0
 
-BOUND[i,0,k] += 1.0
-BOUNDi[i,0,k] *= 0.0
+BOUND[:,0,:] += 1.0
+BOUNDi[:,0,:] *= 0.0
 
 np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
