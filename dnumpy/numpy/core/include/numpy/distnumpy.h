@@ -40,7 +40,7 @@ typedef struct {
 #define DNPY_MAX_MSG_SIZE 1024*4
 
 //Maximum number of memory allocations in the memory pool.
-#define DNPY_MAX_MEM_POOL 5
+#define DNPY_MAX_MEM_POOL 10
 
 //Maximum number of view block operations in the sub-view-block DAG.
 #define DNPY_MAX_VB_IN_SVB_DAG 1000
