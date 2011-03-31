@@ -31,13 +31,10 @@ for t in targets:
 np.core.multiarray.evalflush()
 t2 = time.time()
 
+print "ndims: %d, dbsize: %d, iters: %d - time: %f sec."\
+      %(ndims, db_length, niter, t2-t1),
 if DIST:
-    print "(Par)",
+    print "(Dist) notes: %s"%sys.argv[5]
 else:
-    print "(Seq)",
-print "db has %d dims and %d*%d entries - time: %f sec."\
-       %(ndims, db_length, niter, t2-t1),
-if len(sys.argv) > 5:
-    print " notes: ", sys.argv[5]
-else:
-    print ""
+    print "(Non-Dist) notes: %s"%sys.argv[5]
+
