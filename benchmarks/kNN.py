@@ -4,7 +4,8 @@ import sys
 
 def compute_targets(base, targets):
     b1 = base[:,np.newaxis,:]
-    d1 = (b1-targets)**2
+    d0 = b1-targets
+    d1 = d0**2
     d2 = np.add.reduce(d1, 2)
     d3 = np.sqrt(d2)
     r  = np.max(d2, axis=1)
