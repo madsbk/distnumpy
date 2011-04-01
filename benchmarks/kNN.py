@@ -2,37 +2,39 @@ import numpy as np
 import time
 import sys
 
-def compute_targets(base, targets):
-    b1 = base[:,np.newaxis,:]
-    d0 = b1-targets
-    d1 = d0**2
-    d2 = np.add.reduce(d1, 2)
-    d3 = np.sqrt(d2)
-    r  = np.max(d2, axis=1)
+def compute_targets_pyloop(base, targets):
+    dist = (base[0]-targets[0])**2
+    for i in range(1,len(base)):
+        dist += (base[i]-targets[i])**2
+    dist = np.sqrt(dist)
+    r  = np.max(dist, axis=0)
+    return r
+
+def compute_targets(base, target):
+    dist = (base-target[:,np.newaxis])**2
+    dist = np.add.reduce(dist)
+    dist = np.sqrt(dist)
+    r  = np.max(dist, axis=0)
     return r
 
 DIST = int(sys.argv[1])
 ndims = int(sys.argv[2])
 db_length = int(sys.argv[3])
-niter = int(sys.argv[4])
+niters = int(sys.argv[4])
 
-targets = []
-for i in xrange(niter):
-    targets.append(np.ufunc_random(np.empty((db_length, ndims), \
-                                             dtype=float, dist=DIST)))
-base = np.ufunc_random(np.empty((db_length, ndims), dtype=float,\
-                                dist=DIST))
+targets = np.ufunc_random(np.empty((ndims, db_length), dtype=float, dist=DIST))
+base = np.ufunc_random(np.empty((ndims,db_length), dtype=float, dist=DIST))
 
 np.core.multiarray.timer_reset()
 np.core.multiarray.evalflush()
 t1 = time.time()
-for t in targets:
-    compute_targets(base, t)
+for i in xrange(niters):
+    compute_targets_pyloop(base, targets[:,i])
 np.core.multiarray.evalflush()
 t2 = time.time()
 
-print "ndims: %d, dbsize: %d, iters: %d - time: %f sec."\
-      %(ndims, db_length, niter, t2-t1),
+print "ndims: %d, dbsize: %d, niters: %d - time: %f sec."\
+      %(ndims, db_length, niters, t2-t1),
 if DIST:
     print "(Dist) notes: %s"%sys.argv[5]
 else:
