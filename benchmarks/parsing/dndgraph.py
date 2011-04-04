@@ -1,9 +1,6 @@
 #!/usr/bin/python
 #Test and demonstration of DistNumPy.
-import numpy as np
-import random
 import sys
-import time
 import os
 import getopt
 import subprocess
@@ -58,21 +55,18 @@ if __name__ == "__main__":
     set y2range [0:100]
     set key left top
     set grid ytic
-    #set ytics (1,2,4,8,16,32,64,128)
+    set ytics (1,2,4,8,16,32,64,128)
     set datafile separator ";"
     set ytics nomirror
     set y2tics
-    set terminal postscript
-    """
-    gnuplot += "set output  '%s' \n"%output
-    gnuplot += "plot '%s' using 2:xticlabels(1) axis x1y1 with lines title 'Blocking',"%T1
-    gnuplot += "'%s' using 2:xticlabels(1) axis x1y1 with lines title 'Latency-Hiding'\n"%T2
-    gnuplot += \
-    """
+    set log y
     set style data histograms
     set style fill pattern 1.0 border
     """
-    gnuplot += "replot '%s' using 3 axis x1y2 title 'Blocking', '%s' using 3 axis x1y2 title 'No-Latency'\n"%(T1,T2)
+    gnuplot += "plot '%s' using 3 axis x1y2 title 'Blocking', '%s' using 3 axis x1y2 title 'No-Latency'\n"%(T1,T2)
+    gnuplot += "set terminal postscript \n set output  '%s' \n"%output
+    gnuplot += "replot '%s' using 2:xticlabels(1) axis x1y1 with lines title 'Blocking',"%T1
+    gnuplot += "'%s' using 2:xticlabels(1) axis x1y1 with lines title 'Latency-Hiding'\n"%T2
 
     if output == "":# we just return the gnuplot source output.
         print gnuplot

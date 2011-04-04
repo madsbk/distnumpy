@@ -109,6 +109,7 @@ def calc_data(dict):
 if __name__ == "__main__":
     MERGED_NAME = True
     FIND_SPEEDUP = True
+    MAX_NP = 16
     assert len(sys.argv) == 2, "the input directory is not specifed"
     inputs = [os.path.join(sys.argv[1], i) for i in os.listdir(sys.argv[1])]
 
@@ -119,10 +120,10 @@ if __name__ == "__main__":
     core={}
     node={}
 
-    processed={}
+    #Now the data has been cleaned
+    max_nodes=1
+    max_cores=1
 
-
-    CORES_PR_NODE = 8
     #Clean up data - eliminate bad messurements
     for key in results.keys():
         clean_data(results[key],'app_total') #We eliminate experiments with too
@@ -131,7 +132,9 @@ if __name__ == "__main__":
     #Now the data has been cleaned
     for key in results.keys():
         if key=='seq':
-            procs='seq'
+            results[key]['nodes']=1
+            results[key]['cores']=1
+            results[key]['procs'] = 'seq'
         else:
             if MERGED_NAME:                       #Old naming - without cores and nodes
                 data = key.split('_')             #as keys
@@ -141,33 +144,52 @@ if __name__ == "__main__":
                 nodes=mes['nodes'][0]
                 cores=mes['cores'][0]
 
-            procs = nodes*cores
+            results[key]['nodes']=nodes
+            results[key]['cores']=cores
+            results[key]['procs']=nodes*cores
 
-        cur=processed[procs]=calc_data(results[key])
+            max_nodes=max(nodes, max_nodes)
+            max_cores=max(cores, max_cores)
+
+    for key in results.keys():
+        cur=calc_data(results[key])
+
+        nodes=results[key]['nodes']
+        cores=results[key]['cores']
+        procs=results[key]['procs']
 
         wait_time=cur['ufunc_comm'].avg + cur['comm_init'].avg +cur['(n-d)'].avg-cur['pre_apply'].avg+cur['msg2slaves'].avg
-
-
-        if nodes>=cores or procs=='seq':
-            node[procs]=result(processed[procs]['app_total'].avg, wait_time)
-        if cores>=nodes or cores%CORES_PR_NODE==0 or procs=='seq':
-            core[procs]=result(processed[procs]['app_total'].avg, wait_time)
+        if nodes>cores or nodes==max_nodes or procs=='seq':
+            node[procs]=result(cur['app_total'].avg, wait_time)
+        if cores>nodes or cores==max_cores or procs=='seq':
+            core[procs]=result(cur['app_total'].avg, wait_time)
 
 
     keys=node.keys()
     keys.sort()
     print '#CPUs;Runtime(node);Commtime(node);Runtime(core);Overhead(core)'
 
+    bycore = True
     if FIND_SPEEDUP:
         seq=node['seq'].run
         for key in node.keys():
             node[key].wait=node[key].wait*100/node[key].run
-            core[key].wait=core[key].wait*100/core[key].run
             node[key].run=seq/node[key].run
-            core[key].run=seq/core[key].run
+            try:
+                core[key].wait=core[key].wait*100/core[key].run
+                core[key].run=seq/core[key].run
+            except:
+                bycore = False
 
     key='seq'
 
-    print '#',key,';',node[key].run,';',node[key].wait,';',core[key].run,';',core[key].wait,';'
+    print '#',key,';',node[key].run,';',node[key].wait,';',
+    if bycore:
+        print core[key].run,';',core[key].wait,';',
+    print ""
     for key in keys[:-1]:
-        print key,';',node[key].run,';',node[key].wait,';',core[key].run,';',core[key].wait,';'
+        if key <= MAX_NP:
+            print key,';',node[key].run,';',node[key].wait,';',
+            if bycore:
+                print core[key].run,';',core[key].wait,';',
+            print ""
