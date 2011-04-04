@@ -1,0 +1,173 @@
+#!/usr/bin/python
+import sys
+import numpy
+import os
+
+class stats(): #Container for statistics
+    def __init__(self, avg, min, max, var, std):
+        self.avg=avg
+        self.min=min
+        self.max=max
+        self.var=var
+        self.std=std
+
+class result(): #Container final results
+    def __init__(self, run, wait):
+        self.run=run
+        self.wait=wait
+
+
+def parse(fname, results): #Parse input file all words that end with : are
+    file=open(fname,'r')   #considered keys in a dictionary with the next entry
+    data=file.readlines()  #as the value
+    file.close()
+
+    dict = {}
+    target = None
+
+    for line in data:
+        elem = line.split()
+        for i in range(len(elem)):
+            if elem[i]=='(Non-Dist)':target='seq'
+            else:
+                if elem[i][-1]==':':
+                    key=elem[i][:-1]
+                    try:
+                        dict[key]=elem[i+1]
+                    except:
+                        pass #maybe there is no data :)
+
+    if not target:
+        try:
+            target=dict['notes']
+        except:
+            print '# Unable to determine run_name of',fname,'dropping file'
+            return
+
+    if results.has_key(target):
+        for e in dict.keys():
+            if results[target].has_key(e):
+                try:
+                    results[target][e].append(float(dict[e]))
+                except: pass
+            else:
+                try:
+                    results[target][e]=[float(dict[e])]
+                except: pass
+
+    else:
+        results[target]={}
+        for e in dict.keys():
+            try:
+                results[target][e]=[float(dict[e])]
+            except:
+                results[target][e]=[]
+
+    return results
+
+def get_bad(data):
+    num=numpy.array(data)
+    avg=numpy.average(num)
+    std=numpy.std(num)
+    min=avg-2*std
+    max=avg+2*std
+
+    res = []
+
+    for i in range(len(data)):
+        if not min<=data[i]<=max:
+            res.append(i)
+
+    return res
+
+def clean_data(target, key):
+    bad=get_bad(target[key])
+    for k in target.keys():
+        for b in bad:
+            try:
+                target[k].pop(b)
+            except:
+                pass
+
+def calc_data(dict):
+    result={}
+    for key in dict.keys():
+        try:
+            data=numpy.array(dict[key])
+            avg=numpy.average(data)
+            min=numpy.min(data)
+            max=numpy.max(data)
+            var=numpy.var(data)
+            std=numpy.std(data)
+            result[key]=stats(avg, min, max, var, std)
+        except Exception, e:
+            result[key]=stats(.0, .0, .0, .0, .0)
+
+    return result
+
+#########Processing Script#############
+if __name__ == "__main__":
+    MERGED_NAME = True
+    FIND_SPEEDUP = True
+    assert len(sys.argv) == 2, "the input directory is not specifed"
+    inputs = [os.path.join(sys.argv[1], i) for i in os.listdir(sys.argv[1])]
+
+    results = {}
+    for i in inputs:
+        parse(i, results)
+
+    core={}
+    node={}
+
+    processed={}
+
+
+    CORES_PR_NODE = 8
+    #Clean up data - eliminate bad messurements
+    for key in results.keys():
+        clean_data(results[key],'app_total') #We eliminate experiments with too
+                                              #large variase on execution time
+
+    #Now the data has been cleaned
+    for key in results.keys():
+        if key=='seq':
+            procs='seq'
+        else:
+            if MERGED_NAME:                       #Old naming - without cores and nodes
+                data = key.split('_')             #as keys
+                nodes=int(data[1])
+                cores=int(data[2])
+            else:
+                nodes=mes['nodes'][0]
+                cores=mes['cores'][0]
+
+            procs = nodes*cores
+
+        cur=processed[procs]=calc_data(results[key])
+
+        wait_time=cur['ufunc_comm'].avg + cur['comm_init'].avg +cur['(n-d)'].avg-cur['pre_apply'].avg+cur['msg2slaves'].avg
+
+
+        if nodes>=cores or procs=='seq':
+            node[procs]=result(processed[procs]['app_total'].avg, wait_time)
+        if cores>=nodes or cores%CORES_PR_NODE==0 or procs=='seq':
+            core[procs]=result(processed[procs]['app_total'].avg, wait_time)
+
+
+    keys=node.keys()
+    keys.sort()
+    print '#CPUs;Runtime(node);Commtime(node);Runtime(core);Overhead(core)'
+
+    if FIND_SPEEDUP:
+        seq=node['seq'].run
+        for key in node.keys():
+            node[key].wait=node[key].wait*100/node[key].run
+            core[key].wait=core[key].wait*100/core[key].run
+            node[key].run=seq/node[key].run
+            core[key].run=seq/core[key].run
+
+    key='seq'
+
+    print '#',key,';',node[key].run,';',node[key].wait,';',core[key].run,';',core[key].wait,';'
+    for key in keys[:-1]:
+        print key,';',node[key].run,';',node[key].wait,';',core[key].run,';',core[key].wait,';'
