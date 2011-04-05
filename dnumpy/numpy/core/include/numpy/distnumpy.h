@@ -43,13 +43,13 @@ typedef struct {
 #define DNPY_MAX_MEM_POOL 10
 
 //Maximum number of view block operations in the sub-view-block DAG.
-#define DNPY_MAX_VB_IN_SVB_DAG 1
+#define DNPY_MAX_VB_IN_SVB_DAG 1000
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
 
 //Maximum number of operation merged together.
-#define DNPY_MAX_OP_MERGES 1
+#define DNPY_MAX_OP_MERGES 10
 
 //Default blocksize
 #define DNPY_BLOCKSIZE 2
