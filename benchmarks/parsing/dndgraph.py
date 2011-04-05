@@ -65,8 +65,8 @@ if __name__ == "__main__":
     """
     gnuplot += "plot '%s' using 3 axis x1y2 title 'Blocking', '%s' using 3 axis x1y2 title 'No-Latency'\n"%(T1,T2)
     gnuplot += "set terminal postscript \n set output  '%s' \n"%output
-    gnuplot += "replot '%s' using 2:xticlabels(1) axis x1y1 with lines title 'Blocking',"%T1
-    gnuplot += "'%s' using 2:xticlabels(1) axis x1y1 with lines title 'Latency-Hiding'\n"%T2
+    gnuplot += "replot '%s' using 2:xticlabels(1) axis x1y1 with linespoints lw 4 title 'Blocking',"%T1
+    gnuplot += "'%s' using 2:xticlabels(1) axis x1y1 with linespoints lw 4 title 'Latency-Hiding'\n"%T2
 
     if output == "":# we just return the gnuplot source output.
         print gnuplot

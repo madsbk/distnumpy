@@ -109,10 +109,9 @@ def calc_data(dict):
 if __name__ == "__main__":
     MERGED_NAME = True
     FIND_SPEEDUP = True
-    MAX_NP = 16
+    MAX_NP = -1 #Unlimited number of processors
     assert len(sys.argv) == 2, "the input directory is not specifed"
-    inputs = [os.path.join(sys.argv[1], i) for i in os.listdir(sys.argv[1])]
-
+    inputs = [os.path.join(sys.argv[1], i) for i in os.listdir(sys.argv[1]) if os.path.isfile(os.path.join(sys.argv[1], i))]
     results = {}
     for i in inputs:
         parse(i, results)
@@ -182,13 +181,12 @@ if __name__ == "__main__":
                 bycore = False
 
     key='seq'
-
     print '#',key,';',node[key].run,';',node[key].wait,';',
     if bycore:
         print core[key].run,';',core[key].wait,';',
     print ""
     for key in keys[:-1]:
-        if key <= MAX_NP:
+        if MAX_NP == -1 or key <= MAX_NP:
             print key,';',node[key].run,';',node[key].wait,';',
             if bycore:
                 print core[key].run,';',core[key].wait,';',
