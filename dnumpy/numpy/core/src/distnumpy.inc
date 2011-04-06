@@ -30,6 +30,8 @@ static int *cart_dim_sizes[NPY_MAXDIMS];
 static PyObject *ufunc_module;
 //Number of view block operations in the sub-view-block DAG.
 static npy_intp nvb_in_svb_dag=0;
+//Number of nodes in the dependency system.
+static npy_intp laziness=0;
 //The ready queue for operations and its current size.
 static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
@@ -45,7 +47,7 @@ static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 //Prototype for the DAGs.
 static void dag_svb_flush(void);
-static void dag_svb_add(dndnode *nodes, int nnodes);
+static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness);
 //Variables for statistics.
 #ifdef DNPY_STATISTICS
     static int node_uid_count = 0;
@@ -1309,7 +1311,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     workbuf_nextfree += sizeof(dndnode);
     node->op = op;
     node->op_ary_idx = 0;
-    dag_svb_add(node, 1);
+    dag_svb_add(node, 1, 0);
 
 } /* do_DESTROY_ARRAY */
 
@@ -1797,7 +1799,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     workbuf_nextfree += sizeof(dndnode);
                     node->op = (dndop *) op;
                     node->op_ary_idx = 0;
-                    dag_svb_add(node, 1);
+                    dag_svb_add(node, 1, 0);
                 }
                 //Add the apply request to the svb-DAG.
                 dndop_ufunc *op = workbuf_nextfree;
@@ -1884,7 +1886,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     nodes[v].op_ary_idx = v;
                     nodes[v].op = (dndop *)op;
                 }
-                dag_svb_add(nodes, v);
+                dag_svb_add(nodes, v, 0);
             }
             else
             {   //Add send request to the svb-DAG.
@@ -1917,7 +1919,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     workbuf_nextfree += sizeof(dndnode);
                     node->op_ary_idx = 0;
                     node->op = (dndop *)op;
-                    dag_svb_add(node, 1);
+                    dag_svb_add(node, 1, 0);
                 }
             }
 
@@ -1996,7 +1998,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     workbuf_nextfree += sizeof(dndnode);
                     node->op_ary_idx = 0;
                     node->op = (dndop *)op;
-                    dag_svb_add(node, 1);
+                    dag_svb_add(node, 1, 0);
                 }
                 else if(coord_owner != myrank && svb->rank == myrank)
                 {
@@ -2015,7 +2017,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     workbuf_nextfree += sizeof(dndnode);
                     node->op_ary_idx = 0;
                     node->op = (dndop *)op;
-                    dag_svb_add(node, 1);
+                    dag_svb_add(node, 1, 0);
                 }
             }
         #ifdef DNDY_TIME
@@ -2023,12 +2025,14 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         #endif
 
         //We have added a whole view-block operation to the svb-DAG
-        //and we may therefore have to flush it before calculating
-        //new view-blocks.
+        //and we may therefore have to flush and free memory before
+        //calculating a new view-block.
         if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
         {
             dag_svb_flush();
-            //Reset vblocks.
+            //Resetting.
+            nvb_in_svb_dag = 0;
+            workbuf_nextfree = workbuf;
             for(i=0; i<narys; i++)
                 vblocks[i].uid = -1;
         }
@@ -2393,7 +2397,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             workbuf_nextfree += sizeof(dndnode);
             node->op_ary_idx = 0;
             node->op = (dndop *)op;
-            dag_svb_add(node, 1);
+            dag_svb_add(node, 1, 1);
 
             //Iterate coord one local block.
             for(j=in_view->ndims-1; j >= 0; j--)
@@ -2522,7 +2526,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             workbuf_nextfree += sizeof(dndnode);
             node->op_ary_idx = 0;
             node->op = (dndop *)op;
-            dag_svb_add(node, 1);
+            dag_svb_add(node, 1, 1);
 
             //Iterate coord one local block.
             for(j=out_view->ndims-1; j >= 0; j--)
@@ -2551,6 +2555,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     #endif
 
     dag_svb_flush();
+    nvb_in_svb_dag = 0;
+    workbuf_nextfree = workbuf;
+
 
     //Cleanup
     Py_XDECREF(subres);
@@ -3328,10 +3335,8 @@ static void dag_svb_flush(void)
     for(i=0; i<dtypesize; i++)
         MPI_Type_free(&dtype[i]);
 
-    //Resetting.
+    laziness = 0;
     assert(ready_queue_size == 0);
-    nvb_in_svb_dag = 0;
-    workbuf_nextfree = workbuf;
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_dag_svb_flush)
     #endif
@@ -3344,12 +3349,10 @@ static void dag_svb_flush(void)
  * Node that all nodes in the list must relate to the same operation.
  * Private.
  */
-static void dag_svb_add(dndnode *nodes, int nnodes)
+static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
 {
     npy_intp i;
     int n, idx;
-    if(nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)//Check for overflow.
-        dag_svb_flush();
 
     #ifdef DNDY_TIME
         unsigned long long tdelta;
@@ -3369,6 +3372,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes)
         assert(node->op != NULL);
         assert(node->op_ary_idx >= 0);
         assert(node->op_ary_idx < node->op->narys);
+        assert(nodes[0].op == node->op);
         node->next = NULL;
         idx = node->op_ary_idx;
         //We append the new node to the linked list and for each
@@ -3434,10 +3438,14 @@ static void dag_svb_add(dndnode *nodes, int nnodes)
     if(nodes[0].op->refcount == 0)
         ready_queue[ready_queue_size++] = nodes[0].op;
 
+    assert(ready_queue_size > 0);
+
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_dag_svb_add)
     #endif
-    assert(ready_queue_size > 0);
+
+    if(++laziness >= DNPY_MAX_LAZYINESS && !force_laziness)
+        dag_svb_flush();
 
 } /* dag_svb_add */
 
