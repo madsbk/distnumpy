@@ -63,7 +63,7 @@ if __name__ == "__main__":
     set style data histograms
     set style fill pattern 1.0 border
     """
-    gnuplot += "plot '%s' using 3 axis x1y2 title 'Blocking', '%s' using 3 axis x1y2 title 'No-Latency'\n"%(T1,T2)
+    gnuplot += "plot '%s' using 3 axis x1y2 title 'Blocking', '%s' using 3 axis x1y2 title 'Latency-Hiding'\n"%(T1,T2)
     gnuplot += "set terminal postscript \n set output  '%s' \n"%output
     gnuplot += "replot '%s' using 2:xticlabels(1) axis x1y1 with linespoints lw 4 title 'Blocking',"%T1
     gnuplot += "'%s' using 2:xticlabels(1) axis x1y1 with linespoints lw 4 title 'Latency-Hiding'\n"%T2
