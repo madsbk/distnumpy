@@ -150,17 +150,42 @@ while ts<ITER:
     # Relax calculate equilibrium state (FEQ) with equivalent speed and density to F
     DENSITY = np.add.reduce(F)
 
-    T1 = F[5,:,:,:]+F[7,:,:,:]+F[8,:,:,:]+F[11,:,:,:]+F[12,:,:,:]
-    T2 = F[6,:,:,:]+F[9,:,:,:]+F[10,:,:,:]+F[13,:,:,:]+F[14,:,:,:]
-    UX = (T1-T2)/DENSITY
+    #Doing this instead:
+    UX = F[5,:,:,:]
+    UX += F[7,:,:,:]
+    UX += F[8,:,:,:]
+    UX += F[11,:,:,:]
+    UX += F[12,:,:,:]
+    UX -= F[6,:,:,:]
+    UX -= F[9,:,:,:]
+    UX -= F[10,:,:,:]
+    UX -= F[13,:,:,:]
+    UX -= F[14,:,:,:]
+    UX /=DENSITY
 
-    T1 = F[3,:,:,:]+F[7,:,:,:]+F[9,:,:,:]+F[15,:,:,:]+F[16,:,:,:]
-    T2 = F[4,:,:,:]+F[8,:,:,:]+F[10,:,:,:]+F[17,:,:,:]+F[18,:,:,:]
-    UY = (T1-T2)/DENSITY
+    UY = F[3,:,:,:]
+    UY += F[7,:,:,:]
+    UY += F[9,:,:,:]
+    UY += F[15,:,:,:]
+    UY += F[16,:,:,:]
+    UY -= F[4,:,:,:]
+    UY -= F[8,:,:,:]
+    UY -= F[10,:,:,:]
+    UY -= F[17,:,:,:]
+    UY -= F[18,:,:,:]
+    UY /=DENSITY
 
-    T1 = F[1,:,:,:]+F[11,:,:,:]+F[13,:,:,:]+F[15,:,:,:]+F[17,:,:,:]
-    T2 = F[2,:,:,:]+F[12,:,:,:]+F[14,:,:,:]+F[16,:,:,:]+F[18,:,:,:]
-    UZ = (T1-T2)/DENSITY
+    UZ = F[1,:,:,:]
+    UZ += F[11,:,:,:]
+    UZ += F[13,:,:,:]
+    UZ += F[15,:,:,:]
+    UZ += F[17,:,:,:]
+    UZ -= F[2,:,:,:]
+    UZ -= F[12,:,:,:]
+    UZ -= F[14,:,:,:]
+    UZ -= F[16,:,:,:]
+    UZ -= F[18,:,:,:]
+    UZ /=DENSITY
 
     UX[0,:,:] += deltaU #Increase inlet pressure
 
@@ -171,26 +196,12 @@ while ts<ITER:
     DENSITY[:,:,:] *= BOUNDi
 
     U_SQU = UX**2 + UY**2 + UZ**2
-    U8 = UX+UY
-    U9 = UX-UY
-    U10 = -UX+UY
-    U11 = -U8
-    U12 = UX+UZ
-    U13 = UX-UZ
-    U14 = -U13
-    U15 = -U12
-    U16 = UY+UZ
-    U17 = UY-UZ
-    U18 = -U17
-    U19 = -U16
 
     # Calculate equilibrium distribution: stationary
     FEQ[0,:,:,:] = (t1*DENSITY)*(1.0-3.0*U_SQU/2.0)
     # nearest-neighbours
     T1 = 3.0/2.0*U_SQU
     tDENSITY = t2*DENSITY
-    np.core.multiarray.evalflush()
-    ttt = time.time()
     FEQ[1,:,:,:]=tDENSITY*(1.0 + 3.0*UZ + 9.0/2.0*UZ**2 - T1)
     FEQ[2,:,:,:]=tDENSITY*(1.0 - 3.0*UZ + 9.0/2.0*UZ**2 - T1)
     FEQ[3,:,:,:]=tDENSITY*(1.0 + 3.0*UY + 9.0/2.0*UY**2 - T1)
@@ -200,20 +211,44 @@ while ts<ITER:
     # next-nearest neighbours
     T1 = 3.0*U_SQU/2.0
     tDENSITY = t3*DENSITY
+    U8 = UX+UY
     FEQ[7,:,:,:] =tDENSITY*(1.0 + 3.0*U8  + 9.0/2.0*(U8)**2  - T1)
+    U9 = UX-UY
     FEQ[8,:,:,:] =tDENSITY*(1.0 + 3.0*U9  + 9.0/2.0*(U9)**2  - T1)
+    del U9
+    U10 = -UX+UY
     FEQ[9,:,:,:] =tDENSITY*(1.0 + 3.0*U10 + 9.0/2.0*(U10)**2 - T1)
-    FEQ[10,:,:,:]=tDENSITY*(1.0 + 3.0*U11 + 9.0/2.0*(U11)**2 - T1)
+    del U10
+    U8 *= -1.0
+    FEQ[10,:,:,:]=tDENSITY*(1.0 + 3.0*U8 + 9.0/2.0*(U8)**2 - T1)
+    del U8
+    U12 = UX+UZ
     FEQ[11,:,:,:]=tDENSITY*(1.0 + 3.0*U12 + 9.0/2.0*(U12)**2 - T1)
+    U12 *= 1.0
+    FEQ[14,:,:,:]=tDENSITY*(1.0 + 3.0*U12 + 9.0/2.0*(U12)**2 - T1)
+    del U12
+    U13 = UX-UZ
     FEQ[12,:,:,:]=tDENSITY*(1.0 + 3.0*U13 + 9.0/2.0*(U13)**2 - T1)
-    FEQ[13,:,:,:]=tDENSITY*(1.0 + 3.0*U14 + 9.0/2.0*(U14)**2 - T1)
-    FEQ[14,:,:,:]=tDENSITY*(1.0 + 3.0*U15 + 9.0/2.0*(U15)**2 - T1)
+    U13 *= -1.0
+    FEQ[13,:,:,:]=tDENSITY*(1.0 + 3.0*U13 + 9.0/2.0*(U13)**2 - T1)
+    del U13
+    U16 = UY+UZ
     FEQ[15,:,:,:]=tDENSITY*(1.0 + 3.0*U16 + 9.0/2.0*(U16)**2 - T1)
+    U17 = UY-UZ
     FEQ[16,:,:,:]=tDENSITY*(1.0 + 3.0*U17 + 9.0/2.0*(U17)**2 - T1)
-    FEQ[17,:,:,:]=tDENSITY*(1.0 + 3.0*U18 + 9.0/2.0*(U18)**2 - T1)
-    FEQ[18,:,:,:]=tDENSITY*(1.0 + 3.0*U19 + 9.0/2.0*(U19)**2 - T1)
+    U17 *= -1.0
+    FEQ[17,:,:,:]=tDENSITY*(1.0 + 3.0*U17 + 9.0/2.0*(U17)**2 - T1)
+    del U17
+    U16 *= -1.0
+    FEQ[18,:,:,:]=tDENSITY*(1.0 + 3.0*U16 + 9.0/2.0*(U16)**2 - T1)
+    del U16
     F *= (1.0-omega)
     F += omega * FEQ
+    del T1
+    del tDENSITY
+    del UX
+    del UY
+    del UZ
 
     #Densities bouncing back at next timestep
     F[1:,:,:,:] *= BOUNDi[np.newaxis,:,:,:]
