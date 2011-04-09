@@ -45,16 +45,26 @@ for i in xrange(k):
     Fy = np.dot(OnesCol, PyT) - np.dot(Py, OnesRow)
     Fz = np.dot(OnesCol, PzT) - np.dot(Pz, OnesRow)
 
-    Dsq = Fx * Fx + Fy * Fy + Fx * Fz #+ Identity
+    Dsq = Fx * Fx
+    Dsq += Fy * Fy
+    Dsq += Fz * Fz
+    #Dsq += Identity
     D = np.sqrt(Dsq)
 
     #mutual forces between all pairs of objects
-    F = G * np.dot(M, MT) / Dsq
-
+    F = np.dot(M, MT)
+    F *= G
+    F /= Dsq
+    del Dsq
     #F = F - diag(diag(F))#set 'self attraction' to 0
-    Fx = (Fx / D) * F
-    Fy = (Fy / D) * F
-    Fz = (Fz / D) * F
+    Fx /= D
+    Fx *= F
+    Fy /= D
+    Fy *= F
+    Fz /= D
+    Fz *= F
+    del D
+    del F
 
     #net force on each body
     Fnet_x = np.add.reduce(Fx,1)
@@ -73,6 +83,9 @@ for i in xrange(k):
     Vx += Fnet_x / M
     Vy += Fnet_y / M
     Vz += Fnet_z / M
+    del Fnet_x
+    del Fnet_y
+    del Fnet_z
 
     #change in position
     Px += Vx * dT
