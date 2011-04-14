@@ -8,7 +8,7 @@ def CND(X):
     L = np.abs(X)
     K = 1.0 / (1.0 + 0.2316419 * L)
     w = 1.0 - 1.0 / np.sqrt(2*np.pi)*np.exp(-L*L/2.) * \
-        (a1*K + a2*K*K + a3*pow(K,3) + a4*pow(K,4) + a5*pow(K,5))
+        (a1*K + a2*(K**2) + a3*(K**3) + a4*(K**4) + a5*(K**5))
 
     mask = X<0
     w = w * ~mask + (1.0-w)*mask

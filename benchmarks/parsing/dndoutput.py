@@ -108,10 +108,16 @@ def calc_data(dict):
 #########Processing Script#############
 if __name__ == "__main__":
     MERGED_NAME = True
-    FIND_SPEEDUP = True
-    MAX_NP = -1 #Unlimited number of processors
-    assert len(sys.argv) == 2, "the input directory is not specifed"
-    inputs = [os.path.join(sys.argv[1], i) for i in os.listdir(sys.argv[1]) if os.path.isfile(os.path.join(sys.argv[1], i))]
+    FIND_SPEEDUP = 0
+    MAX_NP = 16 #-1 #Unlimited number of processors
+    assert len(sys.argv) == 3, "the input directory is not specifed"
+    if sys.argv[1] == "numpy":
+        FIND_SPEEDUP = 1
+    elif sys.argv[1] == "dnumpy":
+        FIND_SPEEDUP = 2
+
+
+    inputs = [os.path.join(sys.argv[2], i) for i in os.listdir(sys.argv[2]) if os.path.isfile(os.path.join(sys.argv[2], i))]
     results = {}
     for i in inputs:
         parse(i, results)
@@ -170,7 +176,10 @@ if __name__ == "__main__":
 
     bycore = True
     if FIND_SPEEDUP:
-        seq=node['seq'].run
+        if FIND_SPEEDUP == 2:
+            seq=node[2].run*2.
+        else:
+            seq=node['seq'].run
         for key in node.keys():
             node[key].wait=node[key].wait*100/node[key].run
             node[key].run=seq/node[key].run
