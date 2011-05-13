@@ -63,7 +63,7 @@ if __name__ == "__main__":
         set xlabel 'No. of CPU-cores'
         set ylabel 'Speedup of DistNumPy compared to NumPy'
         #set xrange [1:128]
-        set yrange [1:40]
+        set yrange [2:40]
         set key left top
         set grid ytic
         set ytics (1,2,4,8,16,32,64,128)
@@ -78,7 +78,7 @@ if __name__ == "__main__":
         reset
         set encoding iso_8859_1
         #set title "Strong scaling of Test."
-        set xlabel 'No. of CPU-cores'
+        set xlabel 'No. of cluster nodes (one CPU-core per node)'
         set ylabel 'Speedup of DistNumPy compared to NumPy'
         set y2label 'Relative waiting time in percentage of total time'
         #set xrange [1:128]
