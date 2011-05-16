@@ -1767,7 +1767,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             if(coord_owner == myrank)
             {
                 //Add receive request to the svb-DAG.
-                for(v=0; v<narys; v++, mpi_tag++)
+                for(v=0; v<nin; v++, mpi_tag++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
@@ -1800,6 +1800,19 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     node->op = (dndop *) op;
                     node->op_ary_idx = 0;
                     dag_svb_add(node, 1, 0);
+                }
+                for(v=nin; v<narys; v++)//Allocate memory for output
+                {
+                    if(views[v]->base->ndims == 0)
+                        continue;
+                    //The data is located locally.
+                    if(svbs[v]->rank == myrank)
+                        continue;
+                    if(svbs[v]->data != NULL)
+                        continue;
+
+                    svbs[v]->data = workbuf_nextfree;
+                    workbuf_nextfree += svbs[v]->nelem * views[v]->base->elsize;
                 }
                 //Add the apply request to the svb-DAG.
                 dndop_ufunc *op = workbuf_nextfree;
@@ -1890,7 +1903,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             }
             else
             {   //Add send request to the svb-DAG.
-                for(v=0; v<narys; v++, mpi_tag++)
+                for(v=0; v<nin; v++, mpi_tag++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
