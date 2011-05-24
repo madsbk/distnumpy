@@ -1092,73 +1092,6 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 
 } /* create_mpi_dtype */
 
-
-/*===================================================================
- *
- * Message handler for INIT_BLOCKSIZE.
- * Private.
- */
-static void do_INIT_BLOCKSIZE(npy_intp new_blocksize)
-{
-    //Print debug info.
-    #ifdef DISTNUMPY_DEBUG
-        printf("INIT_BLOCKSIZE - block size: %ld\n",(long)new_blocksize);
-    #endif
-
-    blocksize = new_blocksize;
-
-
-} /* do_INIT_BLOCKSIZE */
-
-/*===================================================================
- *
- * Message handler for INIT_PROC_GRID.
- * Private.
- */
-static void do_INIT_PROC_GRID(npy_intp *new_cart_dim_sizes)
-{
-    int j,i;
-    //Save the cart_dim_sizes and compute the cart_dim_strides.
-    for(i=0; i<NPY_MAXDIMS; i++)
-    {
-        int ndims = i+1;
-        cart_dim_sizes[i] = malloc(ndims*sizeof(int));
-        for(j=0; j<ndims; j++)
-            cart_dim_sizes[i][j] = new_cart_dim_sizes[i*NPY_MAXDIMS+j];
-
-        //Allocate cartesian information.
-        cart_dim_strides[i] = malloc(ndims*sizeof(int));
-        memset(cart_dim_strides[i], 0, ndims*sizeof(int));
-
-        //Compute strides for all dims. Using row-major like MPI.
-        //A 2x2 process grid looks like:
-        //    coord (0,0): rank 0.
-        //    coord (0,1): rank 1.
-        //    coord (1,0): rank 2.
-        //    coord (1,1): rank 3.
-        for(j=0; j<ndims; j++)
-        {
-            int stride = 1, s;
-            for(s=j+1; s<ndims; s++)
-                stride *= cart_dim_sizes[i][s];
-            cart_dim_strides[i][j] = stride;
-        }
-    }
-    //Print debug info.
-    #ifdef DISTNUMPY_DEBUG
-        printf("INIT_PROC_GRID - process grid (the first three): ");
-        for(i=0; i<3; i++)
-        {
-            printf("(%d)[", i+1);
-            for(j=0; j<i; j++)
-                printf("%d,", cart_dim_sizes[i][j]);
-            printf("%d] ", cart_dim_sizes[i][i]);
-        }
-        printf("\n");
-    #endif
-} /* do_INIT_PROC_GRID */
-
-
 /*===================================================================
  *
  * Message handler for RESET_TIME.
@@ -4110,6 +4043,8 @@ static void
 dnumpy_init(void)
 {
     int provided;
+    int j,i;
+    dndinitmsg initmsg;
 
     //We make use of MPI_Init_thread even though we only ask for
     //a MPI_THREAD_SINGLE level thread-safety because MPICH2 only
@@ -4125,6 +4060,121 @@ dnumpy_init(void)
     workbuf = malloc(DNPY_WORK_BUFFER_MAXSIZE);
     workbuf_nextfree = workbuf;
     assert(workbuf != NULL);
+
+    if(myrank == 0)
+    {
+        int tmpsizes[NPY_MAXDIMS*NPY_MAXDIMS];
+        char *env;
+
+        //Check for user-defined block size.
+        env = getenv("DNPY_BLOCKSIZE");
+        if(env == NULL)
+            initmsg.blocksize = DNPY_BLOCKSIZE;
+        else
+            initmsg.blocksize = atoi(env);
+
+        if(initmsg.blocksize <= 0)
+        {
+            fprintf(stderr, "User-defined blocksize must be greater "
+                            "than zero\n");
+            MPI_Abort(MPI_COMM_WORLD, -1);
+        }
+
+        //Check for user-defined process grid.
+        //The syntax used is: ndims:dim:size;
+        //E.g. DNPY_PROC_SIZE="2:2:4;3:3:2" which means that array
+        //with two dimensions should, at its second dimension, have
+        //a size of four etc.
+        memset(tmpsizes, 0, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
+        env = getenv("DNPY_PROC_GRID");
+        if(env != NULL)
+        {
+            char *res = strtok(env, ";");
+            while(res != NULL)
+            {
+                char *size_ptr;
+                int dsize = 0;
+                int dim = 0;
+                int ndims = strtol(res, &size_ptr, 10);
+                if(size_ptr != '\0')
+                    dim = strtol(size_ptr+1, &size_ptr, 10);
+                if(size_ptr != '\0')
+                    dsize = strtol(size_ptr+1, NULL, 10);
+                //Make sure the input is valid.
+                if(dsize <= 0 || dim <= 0 || dim > ndims ||
+                   ndims <= 0 || ndims > NPY_MAXDIMS)
+                {
+                    fprintf(stderr, "DNPY_PROC_GRID, invalid syntax or"
+                                    " value at \"%s\"\n", res);
+                    MPI_Abort(MPI_COMM_WORLD, -1);
+                }
+                tmpsizes[(ndims-1)*NPY_MAXDIMS+(dim-1)] = dsize;
+                //Go to next token.
+                res = strtok(NULL, ";");
+            }
+        }
+        //Initilization of cart_dim_strides.
+        for(i=0; i<NPY_MAXDIMS; i++)
+        {
+            int ndims = i+1;
+            int t[NPY_MAXDIMS];
+            int d = 0;
+            //Need to reverse the order to match MPI_Dims_create
+            for(j=i; j>=0; j--)
+                t[d++] = tmpsizes[i*NPY_MAXDIMS+j];
+
+            //Find a balanced distributioin of processes per direction
+            //and use the restrictions specified by the user.
+            MPI_Dims_create(worldsize, ndims, t);
+            d = ndims;
+            for(j=0; j<ndims; j++)
+                initmsg.proc_grid[i*NPY_MAXDIMS+j] = t[--d];
+        }
+    }
+    //Broadcast to all ranks.
+    MPI_Bcast(&initmsg, sizeof(dndinitmsg), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    //Save blocksize
+    blocksize = initmsg.blocksize;
+
+    //Save the cart_dim_sizes and compute the cart_dim_strides.
+    for(i=0; i<NPY_MAXDIMS; i++)
+    {
+        int ndims = i+1;
+        cart_dim_sizes[i] = malloc(ndims*sizeof(int));
+        for(j=0; j<ndims; j++)
+            cart_dim_sizes[i][j] = initmsg.proc_grid[i*NPY_MAXDIMS+j];
+
+        //Allocate cartesian information.
+        cart_dim_strides[i] = malloc(ndims*sizeof(int));
+        memset(cart_dim_strides[i], 0, ndims*sizeof(int));
+
+        //Compute strides for all dims. Using row-major like MPI.
+        //A 2x2 process grid looks like:
+        //    coord (0,0): rank 0.
+        //    coord (0,1): rank 1.
+        //    coord (1,0): rank 2.
+        //    coord (1,1): rank 3.
+        for(j=0; j<ndims; j++)
+        {
+            int stride = 1, s;
+            for(s=j+1; s<ndims; s++)
+                stride *= cart_dim_sizes[i][s];
+            cart_dim_strides[i][j] = stride;
+        }
+    }
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("INIT_PROC_GRID - process grid (the first three): ");
+        for(i=0; i<3; i++)
+        {
+            printf("(%d)[", i+1);
+            for(j=0; j<i; j++)
+                printf("%d,", cart_dim_sizes[i][j]);
+            printf("%d] ", cart_dim_sizes[i][i]);
+        }
+        printf("\n");
+    #endif
 
 } /* dnumpy_init */
 
@@ -4207,7 +4257,6 @@ dnumpy_exit()
         printf("  msg2slaves:    %6.llu ms\n", t_msg2slaves/1000);
         printf("**************************\n");
         printf("mem reused:      %6.ld\n", mem_pool_reused);
-
         }
     #endif
 
@@ -4244,99 +4293,12 @@ dnumpy_exit()
 static PyObject *
 dnumpy_master_slave_split(void)
 {
-    char *env;
-    int i,j;
-    int tmpsizes[NPY_MAXDIMS*NPY_MAXDIMS];
-
     #ifdef DNDY_TIME
         DNDTIME(t_app_total)
     #endif
 
     if(myrank == 0)
     {
-        npy_intp msg[NPY_MAXDIMS*NPY_MAXDIMS+2];
-
-        //Check for user-defined block size.
-        env = getenv("DNPY_BLOCKSIZE");
-        if(env == NULL)
-            blocksize = DNPY_BLOCKSIZE;
-        else
-            blocksize = atoi(env);
-
-        if(blocksize <= 0)
-        {
-            fprintf(stderr, "User-defined blocksize must be greater "
-                            "than zero\n");
-            MPI_Abort(MPI_COMM_WORLD, -1);
-        }
-        //Send block size to clients.
-        msg[0] = DNPY_INIT_BLOCKSIZE;
-        msg[1] = blocksize;
-        msg[2] = DNPY_MSG_END;
-        msg2slaves(msg, 3 * sizeof(npy_intp));
-        #ifdef DISTNUMPY_DEBUG
-            printf("Rank 0 received msg: ");
-        #endif
-        do_INIT_BLOCKSIZE(msg[1]);
-
-        //Check for user-defined process grid.
-        //The syntax used is: ndims:dim:size;
-        //E.g. DNPY_PROC_SIZE="2:2:4;3:3:2" which means that array
-        //with two dimensions should, at its second dimension, have
-        //a size of four etc.
-        memset(tmpsizes, 0, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
-        env = getenv("DNPY_PROC_GRID");
-        if(env != NULL)
-        {
-            char *res = strtok(env, ";");
-            while(res != NULL)
-            {
-                char *size_ptr;
-                int dsize = 0;
-                int dim = 0;
-                int ndims = strtol(res, &size_ptr, 10);
-                if(size_ptr != '\0')
-                    dim = strtol(size_ptr+1, &size_ptr, 10);
-                if(size_ptr != '\0')
-                    dsize = strtol(size_ptr+1, NULL, 10);
-                //Make sure the input is valid.
-                if(dsize <= 0 || dim <= 0 || dim > ndims ||
-                   ndims <= 0 || ndims > NPY_MAXDIMS)
-                {
-                    fprintf(stderr, "DNPY_PROC_GRID, invalid syntax or"
-                                    " value at \"%s\"\n", res);
-                    MPI_Abort(MPI_COMM_WORLD, -1);
-                }
-                tmpsizes[(ndims-1)*NPY_MAXDIMS+(dim-1)] = dsize;
-                //Go to next token.
-                res = strtok(NULL, ";");
-            }
-        }
-        //Initilization of cart_dim_strides.
-        for(i=0; i<NPY_MAXDIMS; i++)
-        {
-            int ndims = i+1;
-            int t[NPY_MAXDIMS];
-            int d = 0;
-            //Need to reverse the order to match MPI_Dims_create
-            for(j=i; j>=0; j--)
-                t[d++] = tmpsizes[i*NPY_MAXDIMS+j];
-
-            //Find a balanced distributioin of processes per direction
-            //and use the restrictions specified by the user.
-            MPI_Dims_create(worldsize, ndims, t);
-            d = ndims;
-            for(j=0; j<ndims; j++)
-                msg[1+i*NPY_MAXDIMS+j] = t[--d];
-        }
-        //Process grid to clients.
-        msg[0] = DNPY_INIT_PROC_GRID;
-        msg[NPY_MAXDIMS*NPY_MAXDIMS+1] = DNPY_MSG_END;
-        msg2slaves(msg, (NPY_MAXDIMS*NPY_MAXDIMS+2)*sizeof(npy_intp));
-        #ifdef DISTNUMPY_DEBUG
-            printf("Rank 0 received msg: ");
-        #endif
-        do_INIT_PROC_GRID(&msg[1]);
         return Py_True;
     }
 
@@ -4355,12 +4317,6 @@ dnumpy_master_slave_split(void)
         #endif
         switch(msg[0])
         {
-            case DNPY_INIT_BLOCKSIZE:
-                do_INIT_BLOCKSIZE(*((npy_intp*)msg_data));
-                break;
-            case DNPY_INIT_PROC_GRID:
-                do_INIT_PROC_GRID((npy_intp*)msg_data);
-                break;
             case DNPY_CREATE_ARRAY:
                 t1 = msg_data + sizeof(dndarray);
                 do_CREATE_ARRAY((dndarray*) msg_data, (dndview*) t1);

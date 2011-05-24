@@ -31,6 +31,7 @@ typedef struct {
 //#define DNPY_STATISTICS
 //#define DNDY_TIME
 //#define DNDY_TIME_NODE 0
+#define DNPY_SPMD
 
 
 //Easy retrieval of dnduid
@@ -68,11 +69,20 @@ typedef struct {
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_CREATE_VIEW, DNPY_SHUTDOWN, DNPY_PUT_ITEM, DNPY_GET_ITEM,
           DNPY_UFUNC, DNPY_UFUNC_REDUCE, DNPY_ZEROFILL, DNPY_DATAFILL,
-          DNPY_DATADUMP, DNPY_INIT_BLOCKSIZE, DNPY_DIAGONAL, DNPY_MATMUL,
+          DNPY_DATADUMP, DNPY_DIAGONAL, DNPY_MATMUL,
           DNPY_RECV, DNPY_SEND, DNPY_BUF_RECV, DNPY_BUF_SEND, DNPY_APPLY,
           DNPY_EVALFLUSH, DNPY_READ, DNPY_WRITE, DNPY_COMM, DNPY_NONCOMM,
-          DNPY_REDUCE_SEND, DNPY_REDUCE_RECV, DNPY_INIT_PROC_GRID,
+          DNPY_REDUCE_SEND, DNPY_REDUCE_RECV,
           RESET_TIME};
+
+//Type describing the initial message.
+typedef struct
+{
+    //Blocksize
+    npy_intp blocksize;
+    //User-defined process grid.
+    npy_intp proc_grid[NPY_MAXDIMS*NPY_MAXDIMS];
+} dndinitmsg;
 
 //dndnode prototype.
 typedef struct dndnode_struct dndnode;
