@@ -14,7 +14,9 @@
 */
 static int myrank, worldsize;
 static npy_intp blocksize;
+#ifndef DNPY_SPMD
 static npy_intp msg[DNPY_MAX_MSG_SIZE];
+#endif
 //The work buffer and its next free slot.
 static void *workbuf;
 static void *workbuf_nextfree;
@@ -460,7 +462,7 @@ static void rm_dndview(npy_intp uid)
     return;
 }/* Put, get & rm dndview */
 
-
+#ifndef DNPY_SPMD
 /*===================================================================
  *
  * Sends a message to all slaves.
@@ -488,6 +490,7 @@ static void msg2slaves(npy_intp *msg, int msgsize)
     #endif
 
 } /* msg2slaves */
+#endif
 
 /*===================================================================
  *  Returns a MPI data type that match the specified sub-view-block.
@@ -3433,7 +3436,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype,
         newview->slice[i].step = 1;
         newview->slice[i].nsteps = dims[i];
     }
-
+#ifndef DNPY_SPMD
     //Tell slaves about the new array
     msg[0] = DNPY_CREATE_ARRAY;
     memcpy(&msg[1], newarray, sizeof(dndarray));
@@ -3443,7 +3446,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype,
     *(((char *) &msg[1])+sizeof(dndarray)+sizeof(dndview)) = DNPY_MSG_END;
 
     msg2slaves(msg,2*sizeof(npy_intp)+sizeof(dndarray)+sizeof(dndview));
-
+#endif
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
@@ -3468,11 +3471,13 @@ dnumpy_destroy_dndarray(intp uid)
     //Get arrray structs.
     dndview *ary = get_dndview(uid);
 
+#ifndef DNPY_SPMD
     //Tell slaves about the destruction
     msg[0] = DNPY_DESTROY_ARRAY;
     msg[1] = ary->uid;
     msg[2] = DNPY_MSG_END;
     msg2slaves(msg,3 * sizeof(npy_intp));
+#endif
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -3589,6 +3594,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
     //Save the total number of sliceses for the new view.
     newview.nslice = ni;
 
+#ifndef DNPY_SPMD
     //Tell slaves about the new view.
     //NB: It is up to the slaves to add the newview.base adresse.
     msg[0] = DNPY_CREATE_VIEW;
@@ -3597,6 +3603,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
     *(((char *) &msg[2])+sizeof(dndview)) = DNPY_MSG_END;
 
     msg2slaves(msg, 3 * sizeof(npy_intp) + sizeof(dndview));
+#endif
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
@@ -3615,11 +3622,12 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
 static PyObject *
 dnumpy_evalflush(void)
 {
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_EVALFLUSH;
     msg[1] = DNPY_MSG_END;
     msg2slaves(msg, 2 * sizeof(npy_intp));
-
+#endif
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: EVALFLUSH\n");
@@ -3636,11 +3644,12 @@ dnumpy_evalflush(void)
 static PyObject *
 dnumpy_reset_time(void)
 {
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = RESET_TIME;
     msg[1] = DNPY_MSG_END;
     msg2slaves(msg, 2 * sizeof(npy_intp));
-
+#endif
     //The master should also do the operation.
     do_RESET_TIME();
     Py_RETURN_NONE;
@@ -3693,6 +3702,7 @@ dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
         return -1;
     }
 
+#ifndef DNPY_SPMD
     //Tell slaves about the new item.
     msg[0] = DNPY_PUT_ITEM;
     msg[1] = view->uid;
@@ -3703,6 +3713,7 @@ dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
 
     msg2slaves(msg, 3 * sizeof(npy_intp) + elsize +
                     ndims * sizeof(npy_intp));
+#endif
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -3730,6 +3741,7 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
     //Get arrray structs.
     dndview *view = get_dndview(uid);
 
+#ifndef DNPY_SPMD
     //Tell slaves to send item.
     msg[0] = DNPY_GET_ITEM;
     msg[1] = view->uid;
@@ -3737,6 +3749,7 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
     *(((char *) &msg[2]) + sizeof(npy_intp)*view->ndims) = DNPY_MSG_END;
 
     msg2slaves(msg, 3*sizeof(npy_intp) + view->ndims*sizeof(npy_intp));
+#endif
 
     //The master will retrive the whole array.
     #ifdef DISTNUMPY_DEBUG
@@ -3758,13 +3771,10 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
              int nout_arys, char *op, int appropriate_function)
 {
     int i;
-    //Tell slaves about the ufunc operations.
-    msg[0] = DNPY_UFUNC;
-    msg[1] = narys;
-    msg[2] = nout_arys;
-    msg[3] = appropriate_function;
-    msg[4] = 0; //Scalar datatype.
-    msg[5] = 0; //Scalar datasize, zero if no scalar is in arylist.
+    npy_intp type_num = 0; //Scalar datatype.
+    npy_intp elsize = 0; //Scalar datasize, zero if no scalar is in arylist.
+    char *scalar = NULL;
+    npy_intp aryuids[NPY_MAXARGS];
 
     //Copy scalar if one is in the arylist.
     for(i=0; i<narys;i++)
@@ -3778,11 +3788,24 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
                                 "Scalars is allowed though.\n");
                 return -1;
             }
-            msg[4] = arylist[i]->descr->type_num;
-            msg[5] = arylist[i]->descr->elsize;
-            memcpy(msg+6, arylist[i]->data, msg[5]);
+            type_num = arylist[i]->descr->type_num;
+            elsize = arylist[i]->descr->elsize;
+            scalar = arylist[i]->data;
             break;
         }
+
+    for(i=0; i<narys;i++)
+        aryuids[i] = arylist[i]->dnduid;
+
+#ifndef DNPY_SPMD
+    msg[0] = DNPY_UFUNC;
+    msg[1] = narys;
+    msg[2] = nout_arys;
+    msg[3] = appropriate_function;
+    msg[4] = type_num; //Scalar datatype.
+    msg[5] = elsize; //Scalar datasize, zero if no scalar is in arylist.
+    if(elsize > 0)
+        memcpy(msg+6, scalar, msg[5]);
 
     //Copy arylist's uid to msg.
     for(i=0; i<narys;i++)
@@ -3795,14 +3818,15 @@ dnumpy_ufunc(PyArrayObject *arylist[NPY_MAXARGS], int narys,
     *(((char*)(msg+6+msg[1]))+msg[5]+strlen(op)+1) = DNPY_MSG_END;
 
     msg2slaves(msg, (7+msg[1])*sizeof(npy_intp)+msg[5]+strlen(op)+1);
+#endif
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC((npy_intp*)(((char*)(msg+6))+msg[5]), msg[1], msg[2], msg[3],
-              msg[4], msg[5], (char*) (msg+6), op);
+    do_UFUNC(aryuids, narys, nout_arys, appropriate_function, type_num,
+             elsize, scalar, op);
     return 0;
 } /* dnumpy_ufunc */
 
@@ -3912,6 +3936,7 @@ dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
     //Get filename length
     int filename_length = strlen(filename);
 
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_DATAFILL;
     msg[1] = view->uid;
@@ -3919,6 +3944,7 @@ dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
     strcpy((char*)&msg[2]+sizeof(long), filename);
     *(&msg[2]+sizeof(long)+(filename_length+1)*sizeof(char)) = DNPY_MSG_END;
     msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
+#endif
 
     //The master should also do the operation.
     do_FILEIO(view, filename, datapos, DNPY_DATAFILL);
@@ -3938,6 +3964,7 @@ dnumpy_datadump(intp ary_uid, const char *filename, long datapos)
     //Get filename length
     int filename_length = strlen(filename);
 
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_DATADUMP;
     msg[1] = view->uid;
@@ -3945,6 +3972,7 @@ dnumpy_datadump(intp ary_uid, const char *filename, long datapos)
     strcpy((char*)&msg[2]+sizeof(long), filename);
     *(&msg[2]+sizeof(long)+(filename_length+1)*sizeof(char)) = DNPY_MSG_END;
     msg2slaves(msg, 3*sizeof(npy_intp) + sizeof(long) + (filename_length+1)*sizeof(char));
+#endif
 
     //The master should also do the operation.
     do_FILEIO(view, filename, datapos, DNPY_DATADUMP);
@@ -4013,6 +4041,7 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
                       NPY_BEHAVED | NPY_CARRAY | DNPY_DISTRIBUTED,
                       NULL);
 
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_DIAGONAL;
     msg[1] = view->uid;
@@ -4022,6 +4051,7 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
     msg[5] = axis2;
     msg[6] = DNPY_MSG_END;
     msg2slaves(msg, 7 * sizeof(npy_intp));
+#endif
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -4193,6 +4223,7 @@ dnumpy_matrix_multiplication(intp Auid, intp Buid, intp Cuid)
     dndview *B = get_dndview(Buid);
     dndview *C = get_dndview(Cuid);
 
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_MATMUL;
     msg[1] = Auid;
@@ -4200,6 +4231,7 @@ dnumpy_matrix_multiplication(intp Auid, intp Buid, intp Cuid)
     msg[3] = Cuid;
     msg[4] = DNPY_MSG_END;
     msg2slaves(msg, 5 * sizeof(npy_intp));
+#endif
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -4219,6 +4251,7 @@ static void
 dnumpy_exit()
 {
     int i;
+#ifndef DNPY_SPMD
     if(myrank == 0)
     {
         //Shutdown slaves
@@ -4229,6 +4262,7 @@ dnumpy_exit()
             printf("Rank 0 received msg: SHUTDOWN\n");
         #endif
     }
+#endif
     //Make sure that the sub-view-block DAG is flushed.
     dag_svb_flush();
 
@@ -4297,7 +4331,9 @@ dnumpy_master_slave_split(void)
         DNDTIME(t_app_total)
     #endif
 
+#ifndef DNPY_SPMD
     if(myrank == 0)
+#endif
     {
         return Py_True;
     }
