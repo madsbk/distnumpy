@@ -34,8 +34,8 @@ for i in range(W):
       if random.random() > .8:
           cells[i][j] = 1
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 t1 = time.time()
 
 for i in range(int(sys.argv[3])):
@@ -68,6 +68,6 @@ for i in range(int(sys.argv[3])):
     if DISPLAY:
         np.save("%s.%08d"%(sys.argv[2],i), full)
 
-np.core.multiarray.evalflush()
+np.evalflush()
 t2 = time.time()
 print "Time spent:", t2-t1

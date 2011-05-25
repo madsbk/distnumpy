@@ -30,8 +30,8 @@ else:
 z[:] = c
 fractal = np.zeros(z.shape, dtype=np.uint8, dist=DIST) + 255
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 t1 = time.time()
 
 for n in range(ITERATIONS):
@@ -41,7 +41,7 @@ for n in range(ITERATIONS):
     fractal *= ~mask
     fractal += mask * 254 * n / float(ITERATIONS)
 
-np.core.multiarray.evalflush()
+np.evalflush()
 t2 = time.time()
 
 if DEBUG and not DIST:

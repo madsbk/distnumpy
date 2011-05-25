@@ -38,11 +38,11 @@ def LU_factor(A):
     return A, pivot
 
 A = np.ufunc_random(np.empty((N,N), dtype=float, dist=DIST))
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 t1 = time.time()
 LU_factor(A)
-np.core.multiarray.evalflush()
+np.evalflush()
 t1 = time.time() - t1
 
 print 'Iter: ', I, ' size: ', N,' time: ', t1,

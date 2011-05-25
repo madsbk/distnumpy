@@ -25,8 +25,8 @@ full[:,-1] += -273.15
 full[0,:]  +=  40.0
 full[-1,:] += -273.13
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 t1 = time.time()
 
 epsilon=W*H*0.010
@@ -47,7 +47,7 @@ while (forcedIter and forcedIter > i) or \
   delta = np.add.reduce(tmpdelta)
   cells[:] = work
 
-np.core.multiarray.evalflush()
+np.evalflush()
 t2 = time.time()
 print 'Iter: ', i, ' size: ', H,' time: ', t2-t1,
 if DIST:

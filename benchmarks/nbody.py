@@ -36,8 +36,8 @@ OnesCol = np.zeros((n,1), dtype=float, dist=d)+1.0
 OnesRow = np.zeros((1,n), dtype=float, dist=d)+1.0
 #Identity= array(diag([1]*n), dtype=double, dist=d)
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 stime = time.time()
 for i in xrange(k):
     #distance between all pairs of objects
@@ -92,7 +92,7 @@ for i in xrange(k):
     Py += Vy * dT
     Pz += Vz * dT
 
-np.core.multiarray.evalflush()
+np.evalflush()
 print 'nbody with #bodies: ', n,', iter: ', i+1, 'in sec: ', time.time() - stime,
 if d:
     print " (Dist) notes: %s"%sys.argv[4]

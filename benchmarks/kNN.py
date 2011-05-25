@@ -32,13 +32,13 @@ base = targets #np.ufunc_random(np.empty((ndims,db_length), dtype=float, dist=DI
 tmp1 = np.empty((ndims,step,step), dtype=float, dist=DIST)
 tmp2 = np.empty((step,step), dtype=float, dist=DIST)
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 t1 = time.time()
 for i in xrange(0, db_length, step):
     for j in xrange(0, db_length, step):
         compute_targets(base[:,i:i+step], targets[:,j:j+step], tmp1, tmp2)
-np.core.multiarray.evalflush()
+np.evalflush()
 t2 = time.time()
 
 print "ndims: %d, dbsize: %d, step: %d - time: %f sec."\

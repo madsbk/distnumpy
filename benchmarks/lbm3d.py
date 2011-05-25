@@ -43,8 +43,8 @@ if not NO_OBST:
 BOUND[:,0,:] += 1.0
 BOUNDi[:,0,:] *= 0.0
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 t1 = time.time()
 while ts<ITER:
     ##Propagate / Streaming step
@@ -256,7 +256,7 @@ while ts<ITER:
 
     ts += 1
 
-np.core.multiarray.evalflush()
+np.evalflush()
 t2 = time.time()
 print 'Iter: %d size: (%d,%d,%d)'%(ts,nx,ny,nz),
 print ' time: ', t2-t1,

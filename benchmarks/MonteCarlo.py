@@ -7,8 +7,8 @@ def MC_int(c, s, dist):
     x = np.empty([s], dtype=np.double, dist=dist)
     y = np.empty([s], dtype=np.double, dist=dist)
     sum=0.0
-    np.core.multiarray.timer_reset()
-    np.core.multiarray.evalflush()
+    np.timer_reset()
+    np.evalflush()
     start=time.time()
     for i in range(c):
         np.ufunc_random(x,x)
@@ -19,7 +19,7 @@ def MC_int(c, s, dist):
         z = np.less_equal(x, 1)
         sum += np.add.reduce(z)*4.0/s
     sum = sum / c
-    np.core.multiarray.evalflush()
+    np.evalflush()
     stop=time.time()
     print 'Pi: ', sum, ' with ', s,' samples in sec: ', stop-start,
     if dist:

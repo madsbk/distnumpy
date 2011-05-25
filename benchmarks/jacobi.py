@@ -13,8 +13,8 @@ def jacobi(A, B, tol=0.005, forcedIter=0):
     tmp0 = np.empty(np.shape(A), float, dist=A.dist())
     tmp1 = np.empty(np.shape(B), float, dist=A.dist())
     AD = np.diagonal(A)
-    np.core.multiarray.timer_reset()
-    np.core.multiarray.evalflush()
+    np.timer_reset()
+    np.evalflush()
     t1 = time.time()
     while (forcedIter and forcedIter > n) or \
           (forcedIter == 0 and dmax > tol):
@@ -32,7 +32,7 @@ def jacobi(A, B, tol=0.005, forcedIter=0):
         h = hnew
 
 
-    np.core.multiarray.evalflush()
+    np.evalflush()
     t1 = time.time() - t1
 
     print 'Iter: ', n, ' size: ', np.shape(B),' time: ', t1,

@@ -3658,6 +3658,17 @@ dnumpy_reset_time(void)
 /*NUMPY_API
  *===================================================================
  * Public
+ * Returning the rank of the calling MPI-process
+ */
+static PyObject *
+dnumpy_myrank(void)
+{
+    return PyLong_FromLong((long) myrank);
+} /* dnumpy_myrank */
+
+/*NUMPY_API
+ *===================================================================
+ * Public
  * Returns True when the two array-view overlap.
  */
 static char

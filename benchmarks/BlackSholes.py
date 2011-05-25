@@ -40,13 +40,13 @@ year=int(sys.argv[3])
 day=1.0/year
 T=day
 
-np.core.multiarray.timer_reset()
-np.core.multiarray.evalflush()
+np.timer_reset()
+np.evalflush()
 stime = time.time()
 for t in xrange(year):
     np.sum(BlackSholes('c', S, X, T, r, v))/N
     T+=day
-np.core.multiarray.evalflush()
+np.evalflush()
 print 'N: ', N, ' iter: ', year, 'in sec: ', time.time() - stime,
 if DIST:
     print " (Dist) notes: %s"%sys.argv[4]

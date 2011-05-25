@@ -8425,6 +8425,9 @@ static struct PyMethodDef array_module_methods[] = {
     {"timer_reset",
         (PyCFunction)dnumpy_reset_time,
         METH_VARARGS, NULL},
+    {"myrank",
+        (PyCFunction)dnumpy_myrank,
+        METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}                /* sentinel */
 };
 

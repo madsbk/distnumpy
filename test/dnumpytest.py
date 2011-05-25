@@ -88,9 +88,9 @@ if __name__ == "__main__":
                 r1 = 0; r2 = 0
                 r1 = sys.gettotalrefcount()
                 try:
-                    np.core.multiarray.evalflush()
+                    np.evalflush()
                     m.run()
-                    np.core.multiarray.evalflush()
+                    np.evalflush()
                 except:
                     err = True
                     msg = "Error message: %s"%sys.exc_info()[1]
