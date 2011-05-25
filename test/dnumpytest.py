@@ -20,15 +20,15 @@ def array_equal(A,B):
             return True
         else:
             return False
-
-    A = A.flatten()
-    B = B.flatten()
-    if not len(A) == len(B):
-        return False
-
-    for i in range(len(A)):
-        if not A[i] == B[i]:
+    if np.myrank == 0:
+        A = A.flatten()
+        B = B.flatten()
+        if not len(A) == len(B):
             return False
+
+        for i in range(len(A)):
+            if not A[i] == B[i]:
+                return False
     return True
 
 def random_list(dims):
