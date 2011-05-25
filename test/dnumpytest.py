@@ -20,7 +20,7 @@ def array_equal(A,B):
             return True
         else:
             return False
-    if np.myrank == 0:
+    if np.myrank() == 0:
         A = A.flatten()
         B = B.flatten()
         if not len(A) == len(B):
@@ -72,16 +72,18 @@ if __name__ == "__main__":
 
     random.seed(seed)
 
-    print "*"*100
-    print "*"*31, "Testing Distributed Numerical Python", "*"*31
+    if np.myrank() == 0:
+        print "*"*100
+        print "*"*31, "Testing Distributed Numerical Python", "*"*31
     for i in xrange(len(script_list)):
         f = script_list[i]
         if f.startswith("test_") and f.endswith("py")\
            and f not in exclude_list:
             m = f[:-3]#Remove ".py"
             m = __import__(m)
-            print "*"*100
-            print "Testing %s"%f
+            if np.myrank() == 0:
+                print "*"*100
+                print "Testing %s"%f
             err = False
             msg = ""
             if pydebug:
@@ -99,13 +101,14 @@ if __name__ == "__main__":
                     print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
             else:
                 m.run()
-            if err:
-                print "Error in %s! Random seed: %d"%(f, seed)
-                print msg
-            else:
-                print "Succes"
-
-    print "*"*100
-    print "*"*46, "Finish", "*"*46
-    print "*"*100
+            if np.myrank() == 0:
+                if err:
+                    print "Error in %s! Random seed: %d"%(f, seed)
+                    print msg
+                else:
+                    print "Succes"
+    if np.myrank() == 0:
+        print "*"*100
+        print "*"*46, "Finish", "*"*46
+        print "*"*100
 
