@@ -3687,8 +3687,6 @@ dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
 {
     //Get arrray structs.
     dndview *view = get_dndview(uid);
-    int ndims = view->ndims;
-    int elsize = view->base->elsize;
 
     //Convert item to a compatible type.
     PyObject *item2 = PyArray_FROM_O(item);
@@ -3703,6 +3701,8 @@ dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
     }
 
 #ifndef DNPY_SPMD
+    int ndims = view->ndims;
+    int elsize = view->base->elsize;
     //Tell slaves about the new item.
     msg[0] = DNPY_PUT_ITEM;
     msg[1] = view->uid;
@@ -3736,7 +3736,7 @@ dnumpy_dndarray_putitem(intp uid, intp coordinate[NPY_MAXDIMS],
  */
 static void
 dnumpy_dndarray_getitem(char *retdata, intp uid,
-                        const intp coordinate[NPY_MAXDIMS])
+                        intp coordinate[NPY_MAXDIMS])
 {
     //Get arrray structs.
     dndview *view = get_dndview(uid);
@@ -3756,7 +3756,7 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
         printf("Rank 0 received msg: ");
     #endif
 
-    do_PUTGET_ITEM(0, view, retdata, &msg[2]);
+    do_PUTGET_ITEM(0, view, retdata, coordinate);
 } /* dnumpy_dndarray_getitem */
 
 /*NUMPY_API
@@ -3872,6 +3872,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
         }
     }
 
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_UFUNC_REDUCE;
     msg[1] = in_ary->dnduid;
@@ -3887,14 +3888,17 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
     *(((char*)(msg+6))+strlen(op)+1) = DNPY_MSG_END;
 
     msg2slaves(msg, 7*sizeof(npy_intp)+strlen(op)+1);
+#endif
 
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
     #endif
 
-    do_UFUNC_REDUCE(msg[1], msg[2], msg[3], msg[4],
+    do_UFUNC_REDUCE(in_ary->dnduid, out_ary->dnduid,
+                    PyArray_TYPE(out_ary), PyArray_ITEMSIZE(out_ary),
                     out_ary->data, axis, op);
+
     return 0;
 } /* dnumpy_ufunc_reduce */
 
@@ -3909,11 +3913,13 @@ dnumpy_zerofill(intp ary_uid)
     //Get arrray structs.
     dndview *view = get_dndview(ary_uid);
 
+#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_ZEROFILL;
     msg[1] = view->uid;
     msg[2] = DNPY_MSG_END;
     msg2slaves(msg, 3 * sizeof(npy_intp));
+#endif
 
     //The master should also do the operation.
     #ifdef DISTNUMPY_DEBUG
@@ -3933,10 +3939,10 @@ dnumpy_datafill(intp ary_uid, const char *filename, long datapos)
     //Get arrray structs.
     dndview *view = get_dndview(ary_uid);
 
+#ifndef DNPY_SPMD
     //Get filename length
     int filename_length = strlen(filename);
 
-#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_DATAFILL;
     msg[1] = view->uid;
@@ -3961,10 +3967,10 @@ dnumpy_datadump(intp ary_uid, const char *filename, long datapos)
     //Get array structs.
     dndview *view = get_dndview(ary_uid);
 
+#ifndef DNPY_SPMD
     //Get filename length
     int filename_length = strlen(filename);
 
-#ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_DATADUMP;
     msg[1] = view->uid;
@@ -4331,12 +4337,12 @@ dnumpy_master_slave_split(void)
         DNDTIME(t_app_total)
     #endif
 
-#ifndef DNPY_SPMD
+#ifdef DNPY_SPMD
+    return Py_True;
+#else
+
     if(myrank == 0)
-#endif
-    {
         return Py_True;
-    }
 
     int shutdown = 0;
     while(shutdown == 0)//Work loop
@@ -4446,7 +4452,7 @@ dnumpy_master_slave_split(void)
         }
     }
     return Py_False;
-
+#endif
 } /* dnumpy_master_slave_split */
 
 /*NUMPY_API
