@@ -2064,7 +2064,12 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         #endif
 
         //The master should use the final output address.
+        //NB: in SPMD all ranks are masters.
+    #ifndef DNPY_SPMD
         if(myrank == 0)
+    #else
+        if(1)
+    #endif
             local_scalar = PyArray_SimpleNewFromData(0, NULL,
                            out_scalar_dtype, out_scalar_address);
         else//And the rest just use a new location.
@@ -2125,6 +2130,11 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         }
         Py_DECREF(local_scalar);
         Py_DECREF(PyOp);
+
+    #ifdef DNPY_SPMD
+        MPI_Bcast(out_scalar_address, out_scalar_dtypesize, MPI_BYTE, 0,
+                  MPI_COMM_WORLD);
+    #endif
 
         #ifdef DNDY_TIME
             DNDTIME_SUM(tdelta, t_reduce_1d)
@@ -3876,9 +3886,9 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
         if(in->alterations != 0 || out->alterations != 0)
         {
             PyErr_SetString(PyExc_RuntimeError,
-                            "reduce on distributed arrays must"
-                            "be whole arrays and not a partial"
-                            " view of a underlying array.");
+                            "reduce on distributed arrays must "
+                            "be whole arrays and not a partial "
+                            "view of a underlying array.");
             return -1;
         }
     }
@@ -3908,8 +3918,7 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
 
     do_UFUNC_REDUCE(in_ary->dnduid, out_ary->dnduid,
                     PyArray_TYPE(out_ary), PyArray_ITEMSIZE(out_ary),
-                    out_ary->data, axis, op);
-
+                    PyArray_BYTES(out_ary), axis, op);
     return 0;
 } /* dnumpy_ufunc_reduce */
 
