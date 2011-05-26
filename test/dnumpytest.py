@@ -74,6 +74,7 @@ if __name__ == "__main__":
     if np.myrank() == 0:
         print "*"*100
         print "*"*31, "Testing Distributed Numerical Python", "*"*31
+    np.evalflush(barrier=True)
     for i in xrange(len(script_list)):
         f = script_list[i]
         if f.startswith("test_") and f.endswith("py")\
@@ -89,22 +90,22 @@ if __name__ == "__main__":
             if pydebug:
                 r1 = sys.gettotalrefcount()
             try:
-                np.evalflush()
+                np.evalflush(barrier=True)
                 m.run()
-                np.evalflush()
+                np.evalflush(barrier=True)
             except:
+                np.evalflush(barrier=True)
                 err = True
-                msg = "[rank %d] Error message: %s\n"%(np.myrank(), sys.exc_info()[1]),
+                msg = sys.exc_info()[1]
             if pydebug:
                 r2 = sys.gettotalrefcount()
                 if r2 != r1:
                     print "[rank %d] Memory leak - totrefcount: from %d to %d\n"%(np.myrank(),r1,r2),
             if err:
-                print "[rank %d] Error in %s! Random seed: %d\n"%(f, seed),
-                print msg
+                print "[rank %d] Error in %s! Random seed: %d - message: %s"%(np.myrank(),f, seed, msg),
             else:
                 print "[rank %d] Succes\n"%(np.myrank()),
-    np.evalflush()
+    np.evalflush(barrier=True)
     if np.myrank() == 0:
         print "*"*100
         print "*"*46, "Finish", "*"*46

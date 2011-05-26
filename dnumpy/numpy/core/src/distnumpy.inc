@@ -3657,10 +3657,20 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
  *===================================================================
  * Public
  * Executes all appending operations.
+ * If the optional option barrier is true, a MPI barrier is included
+ * in SPMD mode.
  */
 static PyObject *
-dnumpy_evalflush(void)
+dnumpy_evalflush(PyObject *NPY_UNUSED(ignored), PyObject *args,
+                 PyObject *kws)
 {
+    Bool barrier = FALSE;
+    static char *kwd[]= {"barrier", NULL};
+
+    if(!PyArg_ParseTupleAndKeywords(args, kws, "|O&", kwd,
+                                    PyArray_BoolConverter, &barrier))
+        return NULL;
+
 #ifndef DNPY_SPMD
     //Tell slaves
     msg[0] = DNPY_EVALFLUSH;
@@ -3672,6 +3682,12 @@ dnumpy_evalflush(void)
         printf("Rank 0 received msg: EVALFLUSH\n");
     #endif
     dag_svb_flush();
+
+#ifdef DNPY_SPMD
+    if(barrier)
+        MPI_Barrier(MPI_COMM_WORLD);
+#endif
+
     Py_RETURN_NONE;
 } /* dnumpy_evalflush */
 
@@ -4303,7 +4319,7 @@ dnumpy_matrix_multiplication(intp Auid, intp Buid, intp Cuid)
  * De-initialization of distnumpy.
  */
 static void
-dnumpy_exit()
+dnumpy_exit(void)
 {
     int i;
 #ifndef DNPY_SPMD
@@ -4523,7 +4539,7 @@ dnumpy_reg_ufunc_module(PyObject *module)
  * found.
  */
 static PyObject*
-dnumpy_get_reged_ufunc_module()
+dnumpy_get_reged_ufunc_module(void)
 {
     return ufunc_module;
 } /* dnumpy_get_reged_ufunc_module */

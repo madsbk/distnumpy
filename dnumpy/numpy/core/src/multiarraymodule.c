@@ -8421,7 +8421,7 @@ static struct PyMethodDef array_module_methods[] = {
         METH_VARARGS, NULL},
     {"evalflush",
         (PyCFunction)dnumpy_evalflush,
-        METH_VARARGS, NULL},
+        METH_VARARGS|METH_KEYWORDS, NULL},
     {"timer_reset",
         (PyCFunction)dnumpy_reset_time,
         METH_VARARGS, NULL},
