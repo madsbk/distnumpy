@@ -1,6 +1,5 @@
 #Test and demonstration of DistNumPy.
 import numpy as np
-import random
 import sys
 import time
 import subprocess
@@ -31,13 +30,17 @@ def array_equal(A,B):
     return True
 
 def random_list(dims):
-    if len(dims) == 0:
-        return random.randint(0,100000)
+    (val,unique) = _random_list(dims)
+    return val
 
+def _random_list(dims, unique=1):
+    if len(dims) == 0:
+        return ([unique], unique + 1)
     list = []
     for i in range(dims[-1]):
-        list.append(random_list(dims[0:-1]))
-    return list
+        (val,unique) = _random_list(dims[0:-1], unique + i)
+        list.append(val)
+    return (list, unique + dims[-1])
 
 
 if __name__ == "__main__":
@@ -68,8 +71,6 @@ if __name__ == "__main__":
 
     if len(script_list) == 0:
         script_list = os.listdir(os.path.dirname(sys.argv[0]))
-
-    random.seed(seed)
 
     if np.myrank() == 0:
         print "*"*100
