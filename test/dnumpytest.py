@@ -20,15 +20,14 @@ def array_equal(A,B):
             return True
         else:
             return False
-    if np.myrank() == 0:
-        A = A.flatten()
-        B = B.flatten()
-        if not len(A) == len(B):
-            return False
+    A = A.flatten()
+    B = B.flatten()
+    if not len(A) == len(B):
+        return False
 
-        for i in range(len(A)):
-            if not A[i] == B[i]:
-                return False
+    for i in range(len(A)):
+        if not A[i] == B[i]:
+            return False
     return True
 
 def random_list(dims):
@@ -98,7 +97,7 @@ if __name__ == "__main__":
                     msg = "Error message: %s"%sys.exc_info()[1]
                 r2 = sys.gettotalrefcount()
                 if r2 != r1:
-                    print "Memory leak - totrefcount: from %d to %d"%(r1,r2)
+                    print "[rank %d] Memory leak - totrefcount: from %d to %d"%(np.myrank(),r1,r2)
             else:
                 m.run()
             if np.myrank() == 0:

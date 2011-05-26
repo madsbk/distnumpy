@@ -1403,6 +1403,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
     delayed_array_allocation(view->base);
     data = view->base->data + offset*view->base->elsize;
 
+#ifndef DNPY_SPMD
     if(vblock.sub[b].rank == 0)//Local copying.
     {
         if(myrank == 0)
@@ -1431,6 +1432,34 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
             MPI_Ssend(data, 1, view->base->mpi_dtype, 0, 0,
                      MPI_COMM_WORLD);
     }
+#else
+    if(Direction)
+    {
+        if(vblock.sub[b].rank == 0)//Local copying.
+        {
+            if(myrank == 0)
+                memcpy(data, item, view->base->elsize);
+        }
+        else if(myrank == 0)
+        {
+            MPI_Ssend(item, 1, view->base->mpi_dtype, vblock.sub[b].rank,
+                     0, MPI_COMM_WORLD);
+        }
+        else if(myrank == vblock.sub[b].rank)
+        {
+            MPI_Recv(data, 1, view->base->mpi_dtype, 0, 0,
+                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+    }
+    else
+    {
+        if(vblock.sub[b].rank == myrank)//Local copying.
+            memcpy(item, data, view->base->elsize);
+
+        MPI_Bcast(item, view->base->elsize, MPI_BYTE, vblock.sub[b].rank,
+                  MPI_COMM_WORLD);
+    }
+#endif
 
     dag_svb_flush();//Will cleanup the used sub-view-blocks.
 
