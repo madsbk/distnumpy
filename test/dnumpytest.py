@@ -85,23 +85,20 @@ if __name__ == "__main__":
                 print "Testing %s"%f
             err = False
             msg = ""
+            r1 = 0; r2 = 0
             if pydebug:
-                r1 = 0; r2 = 0
                 r1 = sys.gettotalrefcount()
-                try:
-                    np.evalflush()
-                    m.run()
-                    np.evalflush()
-                except:
-                    err = True
-                    msg = "Error message: %s"%sys.exc_info()[1]
-                r2 = sys.gettotalrefcount()
-                if r2 != r1:
-                    print "[rank %d] Memory leak - totrefcount: from %d to %d"%(np.myrank(),r1,r2)
-            else:
+            try:
                 np.evalflush()
                 m.run()
                 np.evalflush()
+            except:
+                err = True
+                msg = "Error message: %s"%sys.exc_info()[1]
+            if pydebug:
+                r2 = sys.gettotalrefcount()
+                if r2 != r1:
+                    print "[rank %d] Memory leak - totrefcount: from %d to %d"%(np.myrank(),r1,r2)
             if np.myrank() == 0:
                 if err:
                     print "Error in %s! Random seed: %d"%(f, seed)
