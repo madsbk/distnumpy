@@ -5,7 +5,7 @@ import random
 def run():
     max_ndim = 6
     for i in range(1,max_ndim+1):
-        src = dnumpytest.random_list(random.sample(range(1, 10),i))
+        src = dnumpytest.random_list(range(2, i+2))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
         for j in range(len(Ad.shape)):

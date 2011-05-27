@@ -1,17 +1,12 @@
 import numpy as np
 import dnumpytest
-import random
 
 def run():
     max_ndim = 6
     for i in xrange(1,max_ndim+1):
-        src = dnumpytest.random_list(random.sample(xrange(1, 10),i))
+        src = dnumpytest.random_list(range(2, i+2))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
-        ran = random.randint(0,i-1)
-        if i > 1 and ran > 0:
-            for j in range(0,ran):
-                src = src[0]
         Bd = np.array(src, dtype=float, dist=True)
         Bf = np.array(src, dtype=float, dist=False)
         Cd = Ad + Bd + 42 + Bd[-1]
