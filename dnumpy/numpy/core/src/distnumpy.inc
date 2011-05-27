@@ -3444,37 +3444,35 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
  * Public
  */
 static intp
-dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype,
-                       intp dtypesize)
+dnumpy_create_dndarray(PyArrayObject *pyary)
 {
     int i;
-    assert(ndims > 0);
-    assert(ndims < NPY_MAXDIMS);
 
     //Create dndarray.
     dndarray *newarray = malloc(sizeof(dndarray));
 
-    newarray->dtype = dtype;
-    newarray->elsize = dtypesize;
-    newarray->ndims = ndims;
+    newarray->dtype = PyArray_TYPE(pyary);
+    newarray->elsize = PyArray_ITEMSIZE(pyary);
+    newarray->ndims = PyArray_NDIM(pyary);
     newarray->refcount = 1;
-    for(i=0; i<ndims; i++)
-        newarray->dims[i] = dims[i];
+    for(i=0; i<PyArray_NDIM(pyary); i++)
+        newarray->dims[i] = PyArray_DIM(pyary, i);
 
     //Create dndview. NB: the base will have to be set when 'newarray'
     //has found its final resting place. (Done by put_dndarray).
     dndview *newview = malloc(sizeof(dndview));
     newview->uid = ++uid_count;
-    newview->nslice = ndims;
-    newview->ndims = ndims;
+    newview->nslice = PyArray_NDIM(pyary);
+    newview->ndims = PyArray_NDIM(pyary);
     newview->alterations = 0;
-    for(i=0; i<ndims; i++)
+    for(i=0; i<PyArray_NDIM(pyary); i++)
     {
         //Default the view will span over the whole array.
         newview->slice[i].start = 0;
         newview->slice[i].step = 1;
-        newview->slice[i].nsteps = dims[i];
+        newview->slice[i].nsteps = PyArray_DIM(pyary, i);
     }
+
 #ifndef DNPY_SPMD
     //Tell slaves about the new array
     msg[0] = DNPY_CREATE_ARRAY;
@@ -3486,6 +3484,7 @@ dnumpy_create_dndarray(int ndims, intp dims[NPY_MAXDIMS], int dtype,
 
     msg2slaves(msg,2*sizeof(npy_intp)+sizeof(dndarray)+sizeof(dndview));
 #endif
+
     //The master should also do the operation
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
@@ -4103,7 +4102,6 @@ dnumpy_diagonal(intp uid, int offset, int axis1, int axis2)
         start = offset;
         stop = MIN(n1, n2-offset)*(n2+1) + offset;
     }
-    //count = ceil((stop-start)/step)
     count = ((stop-start) / step) + (((stop-start) % step) != 0);
 
     //Create the returning distributed vector.
