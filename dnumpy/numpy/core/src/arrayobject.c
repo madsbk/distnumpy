@@ -6178,7 +6178,9 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
         self->dimensions = self->strides = NULL;
     }
 
-    if (data == NULL) {
+    /* DISTNUMPY */
+    self->data = data;
+    if (self->data == NULL) {
         /* DISTNUMPY */
         if(PyArray_ISDISTRIBUTED(self))
         {
@@ -6190,27 +6192,30 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
             sd = 0;
         }
 
-        /*
-         * Allocate something even for zero-space arrays
-         * e.g. shape=(0,) -- otherwise buffer exposure
-         * (a.data) doesn't work as it should.
-         */
-        if (sd == 0) {
-            sd = descr->elsize;
-        }
-        if ((data = PyDataMem_NEW(sd)) == NULL) {
-            PyErr_NoMemory();
-            goto fail;
+        //dnumpy_create_dndarray() may have allocated memory.
+        if(self->data == NULL)
+        {
+            /*
+             * Allocate something even for zero-space arrays
+             * e.g. shape=(0,) -- otherwise buffer exposure
+             * (a.data) doesn't work as it should.
+             */
+            if (sd == 0) {
+                sd = descr->elsize;
+            }
+            if ((self->data = PyDataMem_NEW(sd)) == NULL) {
+                PyErr_NoMemory();
+                goto fail;
+            }
+            /*
+             * It is bad to have unitialized OBJECT pointers
+             * which could also be sub-fields of a VOID array
+             */
+            if (PyDataType_FLAGCHK(descr, NPY_NEEDS_INIT)) {
+                memset(self->data, 0, sd);
+            }
         }
         self->flags |= OWNDATA;
-
-        /*
-         * It is bad to have unitialized OBJECT pointers
-         * which could also be sub-fields of a VOID array
-         */
-        if (PyDataType_FLAGCHK(descr, NPY_NEEDS_INIT)) {
-            memset(data, 0, sd);
-        }
     }
     else {
         /*
@@ -6230,7 +6235,6 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
             goto fail;
         }
     }
-    self->data = data;
 
     /*
      * call the __array_finalize__
