@@ -1134,7 +1134,7 @@ static void do_RESET_TIME(void)
  * Message handler for CREATE_ARRAY.
  * Private.
  */
-static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
+static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
 {
     int ndims = ary->ndims;
     int *cdims = cart_dim_sizes[ndims-1];
@@ -1199,9 +1199,6 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
         view->nblocks *= view->blockdims[i];
     }
 
-    //Save the new view.
-    put_dndview(view);
-
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
         printf("CREATE_ARRAY - uid: %ld, dtype: %s(%d),"
@@ -1216,6 +1213,9 @@ static void do_CREATE_ARRAY(dndarray *ary, dndview *view)
             printf("%ld ", (long)ary->localdims[i]);
         printf("%ld}, \n", (long)ary->localdims[ndims-1]);
     #endif
+
+    //Save the new view.
+    return put_dndview(view);
 
 } /* do_CREATE_ARRAY */
 
@@ -3489,7 +3489,12 @@ dnumpy_create_dndarray(PyArrayObject *pyary)
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
     #endif
-    do_CREATE_ARRAY(newarray, newview);
+    dndview *retview = do_CREATE_ARRAY(newarray, newview);
+
+#ifdef DNPY_SPMD
+    //In SPMD the python array points directly to the local data
+    PyArray_BYTES(pyary) = retview->base->data;
+#endif
 
     //Freeup memory.
     free(newarray);
