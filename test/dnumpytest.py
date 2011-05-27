@@ -35,7 +35,7 @@ def random_list(dims):
 
 def _random_list(dims, unique=1):
     if len(dims) == 0:
-        return ([unique], unique + 1)
+        return (unique, unique + 1)
     list = []
     for i in range(dims[-1]):
         (val,unique) = _random_list(dims[0:-1], unique + i)
@@ -82,9 +82,11 @@ if __name__ == "__main__":
            and f not in exclude_list:
             m = f[:-3]#Remove ".py"
             m = __import__(m)
+            np.evalflush(barrier=True)
             if np.myrank() == 0:
                 print "*"*100
                 print "Testing %s"%f
+            np.evalflush(barrier=True)
             err = False
             msg = ""
             r1 = 0; r2 = 0
@@ -103,7 +105,7 @@ if __name__ == "__main__":
                 if r2 != r1:
                     print "[rank %d] Memory leak - totrefcount: from %d to %d\n"%(np.myrank(),r1,r2),
             if err:
-                print "[rank %d] Error in %s! Random seed: %d - message: %s"%(np.myrank(),f, seed, msg),
+                print "[rank %d] Error in %s! Random seed: %d - message: %s\n"%(np.myrank(),f, seed, msg),
             else:
                 print "[rank %d] Succes\n"%(np.myrank()),
     np.evalflush(barrier=True)
