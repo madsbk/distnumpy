@@ -2029,7 +2029,7 @@ dist(PyArrayObject *self, PyObject *args)
 {
     if (!PyArg_ParseTuple(args, ""))
         return NULL;
-    
+
     if(PyArray_ISDISTRIBUTED(self))
         Py_RETURN_TRUE;
 
@@ -2162,7 +2162,9 @@ static PyMethodDef array_methods[] = {
     {"view", (PyCFunction)array_view,
          METH_VARARGS | METH_KEYWORDS, NULL},
     {"dist", (PyCFunction)dist,
-         METH_VARARGS | METH_KEYWORDS, NULL},            
+         METH_VARARGS | METH_KEYWORDS, NULL},
+    {"local", (PyCFunction)dnumpy_local_data,
+         METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}           /* sentinel */
 };
 

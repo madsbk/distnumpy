@@ -194,3 +194,4 @@ dnumpy_evalflush
 dnumpy_data_overlap
 dnumpy_reset_time
 dnumpy_myrank
+dnumpy_local_data

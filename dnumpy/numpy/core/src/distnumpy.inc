@@ -3447,6 +3447,7 @@ static intp
 dnumpy_create_dndarray(PyArrayObject *pyary)
 {
     int i;
+    dndview *retview;
 
     //Create dndarray.
     dndarray *newarray = malloc(sizeof(dndarray));
@@ -3489,7 +3490,7 @@ dnumpy_create_dndarray(PyArrayObject *pyary)
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: ");
     #endif
-    dndview *retview = do_CREATE_ARRAY(newarray, newview);
+    retview = do_CREATE_ARRAY(newarray, newview);
 
 #ifdef DNPY_SPMD
     //In SPMD the python array points directly to the local data
@@ -4560,3 +4561,41 @@ dnumpy_reg_cblas(void *dgemm, void *sgemm, void *zgemm, void *cgemm)
     cblas_zgemm_func = zgemm;
     cblas_cgemm_func = cgemm;
 } /* dnumpy_reg_Xgemm */
+
+
+/*NUMPY_API
+ * ===================================================================
+ * Public
+ * Returns a Python Array Object that points to the local part of the
+ * distributed array.
+ */
+static PyObject *
+dnumpy_local_data(PyArrayObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, ""))
+        return NULL;
+
+    if(!PyArray_ISDISTRIBUTED(self))
+    {
+
+        PyErr_SetString(PyExc_RuntimeError,
+                        "The array is already a local numpy array.");
+        return NULL;
+    }
+
+    dndview *ary = get_dndview(PyArray_DNDUID(self));
+
+    if(ary->alterations != 0)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "local of a distributed "
+                        "array must be a whole array and not a "
+                        "partial view of a underlying array.");
+        return NULL;
+    }
+
+    return PyArray_SimpleNewFromData(ary->base->ndims,
+                                     ary->base->localdims,
+                                     ary->base->dtype,
+                                     ary->base->data);
+    dag_svb_flush();
+}/* local_data*/
