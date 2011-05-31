@@ -4593,9 +4593,12 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         return NULL;
     }
 
+    delayed_array_allocation(ary->base);
+    dag_svb_flush();
+
     return PyArray_SimpleNewFromData(ary->base->ndims,
                                      ary->base->localdims,
                                      ary->base->dtype,
                                      ary->base->data);
-    dag_svb_flush();
+
 }/* local_data*/
