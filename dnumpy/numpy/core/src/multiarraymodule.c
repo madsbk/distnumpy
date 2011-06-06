@@ -8428,6 +8428,9 @@ static struct PyMethodDef array_module_methods[] = {
     {"myrank",
         (PyCFunction)dnumpy_myrank,
         METH_VARARGS, NULL},
+    {"blocksize",
+        (PyCFunction)dnumpy_blocksize,
+        METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}                /* sentinel */
 };
 

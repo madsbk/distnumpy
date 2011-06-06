@@ -72,7 +72,7 @@ if __name__ == "__main__":
     if len(script_list) == 0:
         script_list = os.listdir(os.path.dirname(sys.argv[0]))
 
-    if np.myrank() == 0:
+    if np.RANK == 0:
         print "*"*100
         print "*"*31, "Testing Distributed Numerical Python", "*"*31
     np.evalflush(barrier=True)
@@ -83,7 +83,7 @@ if __name__ == "__main__":
             m = f[:-3]#Remove ".py"
             m = __import__(m)
             np.evalflush(barrier=True)
-            if np.myrank() == 0:
+            if np.RANK == 0:
                 print "*"*100
                 print "Testing %s"%f
             np.evalflush(barrier=True)
@@ -103,13 +103,13 @@ if __name__ == "__main__":
             if pydebug:
                 r2 = sys.gettotalrefcount()
                 if r2 != r1:
-                    print "[rank %d] Memory leak - totrefcount: from %d to %d\n"%(np.myrank(),r1,r2),
+                    print "[rank %d] Memory leak - totrefcount: from %d to %d\n"%(np.RANK,r1,r2),
             if err:
-                print "[rank %d] Error in %s! Random seed: %d - message: %s\n"%(np.myrank(),f, seed, msg),
+                print "[rank %d] Error in %s! Random seed: %d - message: %s\n"%(np.RANK,f, seed, msg),
             else:
-                print "[rank %d] Succes\n"%(np.myrank()),
+                print "[rank %d] Succes\n"%(np.RANK),
     np.evalflush(barrier=True)
-    if np.myrank() == 0:
+    if np.RANK == 0:
         print "*"*100
         print "*"*46, "Finish", "*"*46
         print "*"*100

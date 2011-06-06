@@ -2838,10 +2838,10 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
         //Copy iwrk'th row to work-array.
         if(mycoord[0] == icur[0])
         {
-                double *Bdata = ((double *)B->base->data)+ldb*ii;
-                for(i=0; i<iwrk; i++)
-                    for(j=0; j<B->base->localdims[1]; j++)
-                        work1[i*B->base->localdims[1]+j] = Bdata[i*ldb+j];
+            double *Bdata = ((double *)B->base->data)+ldb*ii;
+            for(i=0; i<iwrk; i++)
+                for(j=0; j<B->base->localdims[1]; j++)
+                    work1[i*B->base->localdims[1]+j] = Bdata[i*ldb+j];
         }
         if(cart_dim[1] > 1)
         {
@@ -3726,6 +3726,19 @@ dnumpy_myrank(void)
     return PyLong_FromLong((long) myrank);
 } /* dnumpy_myrank */
 
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returning the rank of the calling MPI-process
+ */
+static PyObject *
+dnumpy_blocksize(void)
+{
+    return PyLong_FromLong((long) blocksize);
+} /* dnumpy_blocksize */
+
+
 /*NUMPY_API
  *===================================================================
  * Public
@@ -4593,12 +4606,10 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         return NULL;
     }
 
-    delayed_array_allocation(ary->base);
     dag_svb_flush();
-
+    delayed_array_allocation(ary->base);
     return PyArray_SimpleNewFromData(ary->base->ndims,
                                      ary->base->localdims,
                                      ary->base->dtype,
                                      ary->base->data);
-
 }/* local_data*/
