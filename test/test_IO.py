@@ -4,6 +4,10 @@ import random
 import subprocess
 
 def run():
+    if np.SPMD_MODE:
+        print "[rank %d] Warning - ignored in SPMD mode\n"%(np.RANK),
+        return
+
     import zlib#Make sure that it fails here if zlib is not available
     max_ndim = 6
     for i in xrange(1,max_ndim+1):

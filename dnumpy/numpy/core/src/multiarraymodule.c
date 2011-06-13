@@ -8431,6 +8431,9 @@ static struct PyMethodDef array_module_methods[] = {
     {"blocksize",
         (PyCFunction)dnumpy_blocksize,
         METH_VARARGS, NULL},
+    {"SPMD_MODE",
+        (PyCFunction)dnumpy_SPMD_mode,
+        METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}                /* sentinel */
 };
 

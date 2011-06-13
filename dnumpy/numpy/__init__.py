@@ -161,9 +161,10 @@ else:
     #DISTNUMPY
     evalflush   = core.multiarray.evalflush
     timer_reset = core.multiarray.timer_reset
-    RANK      = core.multiarray.myrank()
+    RANK        = core.multiarray.myrank()
     BLOCKSIZE   = core.multiarray.blocksize()
-    __all__.extend(['myrank', 'evalflush', 'timer_reset'])
+    SPMD_MODE   = core.multiarray.SPMD_MODE()
+    __all__.extend(['SPMD_MODE','BLOCKSIZE','RANK','evalflush','timer_reset'])
     if not core.multiarray.dnumpy_init():
         import sys
         sys.exit(0)

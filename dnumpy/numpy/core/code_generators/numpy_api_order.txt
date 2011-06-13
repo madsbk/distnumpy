@@ -196,3 +196,4 @@ dnumpy_reset_time
 dnumpy_myrank
 dnumpy_local_data
 dnumpy_blocksize
+dnumpy_SPMD_mode

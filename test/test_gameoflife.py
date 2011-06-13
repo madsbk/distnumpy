@@ -56,6 +56,9 @@ def gameoflife(W,H,ITER,DIST,random_state):
     return full
 
 def run():
+    if np.SPMD_MODE: #SPMD mode is not support since we use random values.
+        print "[rank %d] Warning - ignored in SPMD mode\n"%(np.RANK),
+        return
     random_state = random.getstate()
     Seq = gameoflife(100,100,5,False,random_state)
     Par = gameoflife(100,100,5,True,random_state)

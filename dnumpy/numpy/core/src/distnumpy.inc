@@ -3742,6 +3742,22 @@ dnumpy_blocksize(void)
 /*NUMPY_API
  *===================================================================
  * Public
+ * Returns True if DistNumPy is compiled in SPMD mode.
+ */
+static PyObject *
+dnumpy_SPMD_mode(void)
+{
+    #ifdef DNPY_SPMD
+        Py_RETURN_TRUE;
+    #else
+        Py_RETURN_FALSE;
+    #endif
+} /* dnumpy_SPMD_mode */
+
+
+/*NUMPY_API
+ *===================================================================
+ * Public
  * Returns True when the two array-view overlap.
  */
 static char
