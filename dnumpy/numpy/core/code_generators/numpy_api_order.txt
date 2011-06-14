@@ -198,3 +198,4 @@ dnumpy_local_data
 dnumpy_blocksize
 dnumpy_SPMD_mode
 dnumpy_proc_grid
+dnumpy_proc_grid_mycoord

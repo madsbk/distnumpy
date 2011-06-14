@@ -2796,7 +2796,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     delayed_array_allocation(B->base);
     delayed_array_allocation(C->base);
 
-    //Global index of row and column that hold current row and column
+    //Process index of row and column that hold current row and column
     //for rank-1 update.
     int icur[2] = {0,0};
     //local index of row and column for rank-1 update
@@ -4595,7 +4595,7 @@ dnumpy_reg_cblas(void *dgemm, void *sgemm, void *zgemm, void *cgemm)
 /*NUMPY_API
  *===================================================================
  * Public
- * Returns the process grid the array distributed on.
+ * Returns the process grid the array is distributed on.
  */
 static PyObject *
 dnumpy_proc_grid(PyArrayObject *self, PyObject *args)
@@ -4621,6 +4621,37 @@ dnumpy_proc_grid(PyArrayObject *self, PyObject *args)
     return tuple;
 
 } /* dnumpy_proc_grid */
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returns the process coordinate in the process grid the array is
+ * distributed on.
+ */
+static PyObject *
+dnumpy_proc_grid_mycoord(PyArrayObject *self, PyObject *args)
+{
+    int i;
+    if (!PyArg_ParseTuple(args, ""))
+        return NULL;
+
+    if(!PyArray_ISDISTRIBUTED(self))
+    {
+
+        PyErr_SetString(PyExc_RuntimeError,
+                        "The array is not distributed.");
+        return NULL;
+    }
+    dndview *ary = get_dndview(PyArray_DNDUID(self));
+    int coords[NPY_MAXDIMS];
+    rank2cart(ary->base->ndims, myrank, coords);
+    PyObject *tuple = PyTuple_New(ary->base->ndims);
+    for(i=0; i<ary->base->ndims; ++i)
+        PyTuple_SetItem(tuple, i, PyInt_FromLong((long) coords[i]));
+
+    return tuple;
+
+} /* dnumpy_proc_grid_mycoord */
 
 /*NUMPY_API
  * ===================================================================
