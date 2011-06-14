@@ -70,7 +70,8 @@ if __name__ == "__main__":
             assert False, "unhandled option"
 
     if len(script_list) == 0:
-        script_list = os.listdir(os.path.dirname(sys.argv[0]))
+        script_list = os.listdir(\
+                      os.path.dirname(os.path.abspath(__file__)))
 
     if np.RANK == 0:
         print "*"*100
