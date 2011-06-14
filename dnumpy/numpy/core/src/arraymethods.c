@@ -2165,6 +2165,8 @@ static PyMethodDef array_methods[] = {
          METH_VARARGS | METH_KEYWORDS, NULL},
     {"local", (PyCFunction)dnumpy_local_data,
          METH_VARARGS, NULL},
+    {"pgrid", (PyCFunction)dnumpy_proc_grid,
+         METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}           /* sentinel */
 };
 

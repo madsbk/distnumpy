@@ -3735,7 +3735,7 @@ dnumpy_myrank(void)
 static PyObject *
 dnumpy_blocksize(void)
 {
-    return PyLong_FromLong((long) blocksize);
+    return PyInt_FromLong((long) blocksize);
 } /* dnumpy_blocksize */
 
 
@@ -4591,6 +4591,36 @@ dnumpy_reg_cblas(void *dgemm, void *sgemm, void *zgemm, void *cgemm)
     cblas_cgemm_func = cgemm;
 } /* dnumpy_reg_Xgemm */
 
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returns the process grid the array distributed on.
+ */
+static PyObject *
+dnumpy_proc_grid(PyArrayObject *self, PyObject *args)
+{
+    int i;
+    if (!PyArg_ParseTuple(args, ""))
+        return NULL;
+
+    if(!PyArray_ISDISTRIBUTED(self))
+    {
+
+        PyErr_SetString(PyExc_RuntimeError,
+                        "The array is not distributed.");
+        return NULL;
+    }
+
+    dndview *ary = get_dndview(PyArray_DNDUID(self));
+    int *cdims = cart_dim_sizes[ary->base->ndims-1];
+    PyObject *tuple = PyTuple_New(ary->base->ndims);
+    for(i=0; i<ary->base->ndims; ++i)
+        PyTuple_SetItem(tuple, i, PyInt_FromLong((long) cdims[i]));
+
+    return tuple;
+
+} /* dnumpy_proc_grid */
 
 /*NUMPY_API
  * ===================================================================
