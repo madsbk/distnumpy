@@ -4,7 +4,8 @@ import numpy as np
 def summa(a,b,out=None):
     """
     Matrix multiplication using the SUMMA algorithm.
-
+    Views of arrays is allowed if there are aligned to the global
+    blocksize
     """
     ksize = a.shape[1] #Number of rows and columns in the match dimension
 
