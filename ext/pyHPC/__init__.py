@@ -1,0 +1,19 @@
+"""
+pyHPC is a collection of useful numerical operations for distributed
+NumPy arrays.
+
+All communication is implemented in Python using DistNumPy in SPMD mode.
+Therefore, any application that uses pyHPC must run in SPMD mode.
+Please note that most operations in pyHPC do not support arbitrary
+views of arrays. In most cases, array views must be aligned with the
+global block-size.
+
+"""
+
+from summa import summa
+
+#Default matrix multiplication
+matmul = summa
+
+
+__all__ = ['summa', 'matmul']

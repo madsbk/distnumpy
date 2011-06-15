@@ -1,13 +1,14 @@
-import os, sys
-sys.path.append(\
-os.path.join(os.path.dirname(os.path.abspath(__file__)),'../pyHPC'))
 import numpy as np
 import dnumpytest
-import summa
 
 def run():
     if not np.SPMD_MODE:
         print "[rank %d] Warning - ignored in non-SPMD mode\n"%(np.RANK),
+        return
+    try:#This test requires the pyHPC module
+        import pyHPC
+    except:
+        print "[rank %d] Warning - ignored pyHPC not found\n"%(np.RANK),
         return
 
     #Non-view test - identical to the one in test_dot.py
@@ -21,7 +22,7 @@ def run():
                 Af = np.array(Asrc, dtype=float, dist=False)
                 Bd = np.array(Bsrc, dtype=float, dist=True)
                 Bf = np.array(Bsrc, dtype=float, dist=False)
-                Cd = summa.summa(Ad,Bd)
+                Cd = pyHPC.summa(Ad,Bd)
                 Cf = np.dot(Af,Bf)
                 if not dnumpytest.array_equal(Cd,Cf):
                     raise Exception("Uncorrect result matrix\n")
@@ -42,7 +43,7 @@ def run():
                 tBd = Bd[k:,n:]
                 tBf = Bf[k:,n:]
                 tCd = Cd[m:,n:]
-                tCd = summa.summa(tAd,tBd)
+                tCd = pyHPC.matmul(tAd,tBd)
                 tCf = np.dot(tAf,tBf)
                 if not dnumpytest.array_equal(tCd,tCf):
                     raise Exception("Uncorrect result matrix\n")
