@@ -48,7 +48,7 @@ static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
 //Prototype for the DAGs.
-static void dag_svb_flush(void);
+static void dag_svb_flush(int free_workbuf);
 static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness);
 //Variables for statistics.
 #ifdef DNPY_STATISTICS
@@ -1337,7 +1337,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
         }
     #endif
 
-    dag_svb_flush();
+    dag_svb_flush(1);
 
     //Convert to block coordinates.
     for(i=0; i<view->ndims; i++)
@@ -1461,7 +1461,7 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
     }
 #endif
 
-    dag_svb_flush();//Will cleanup the used sub-view-blocks.
+    dag_svb_flush(1);//Will cleanup the used sub-view-blocks.
 
 } /* do_PUTGET_ITEM */
 
@@ -2007,10 +2007,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         //calculating a new view-block.
         if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
         {
-            dag_svb_flush();
+            dag_svb_flush(1);
             //Resetting.
-            nvb_in_svb_dag = 0;
-            workbuf_nextfree = workbuf;
             for(i=0; i<narys; i++)
                 vblocks[i].uid = -1;
         }
@@ -2068,7 +2066,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    dag_svb_flush();
+    dag_svb_flush(1);
 
     //At the moment we don't support views.
     if(in_view->alterations != 0)
@@ -2542,10 +2540,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         DNDTIME_SUM(tdelta, t_reduce_nd)
     #endif
 
-    dag_svb_flush();
-    nvb_in_svb_dag = 0;
-    workbuf_nextfree = workbuf;
-
+    dag_svb_flush(1);
 
     //Cleanup
     Py_XDECREF(subres);
@@ -2573,7 +2568,7 @@ static void do_ZEROFILL(dndview *view)
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    dag_svb_flush();
+    dag_svb_flush(1);
 
     #ifdef DNDY_TIME
         unsigned long long tdelta;
@@ -2608,7 +2603,7 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos,
         MPI_Abort(MPI_COMM_WORLD, -1);
     }
 
-    dag_svb_flush();
+    dag_svb_flush(1);
 
     /* File access mode */
     int mode = 0;
@@ -2683,7 +2678,7 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
                             axis1, axis2);
     #endif
 
-    dag_svb_flush();
+    dag_svb_flush(1);
     delayed_array_allocation(in->base);
     delayed_array_allocation(out->base);
 
@@ -2773,7 +2768,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                                                        (long)C->uid);
     #endif
 
-    dag_svb_flush();
+    dag_svb_flush(1);
 
     //Check if the views covers the whole array.
     if(A->alterations != 0 || B->alterations != 0 ||
@@ -3106,10 +3101,11 @@ static npy_intp dag_svg_remove(dndop *op, dndop *op2apply[])
 
 /*===================================================================
  *
- * Flush the sub-view block DAG and the work buffer.
+ * Flush the sub-view block DAG.
+ * Frees the work buffer when 'free_workbuf' is true.
  * Private.
  */
-static void dag_svb_flush(void)
+static void dag_svb_flush(int free_workbuf)
 {
     npy_intp i, j, f, commsize, ncommsize;
     int fcomm[DNPY_RDY_QUEUE_MAXSIZE];
@@ -3328,6 +3324,11 @@ static void dag_svb_flush(void)
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, t_dag_svb_flush)
     #endif
+    if(free_workbuf)
+    {
+        nvb_in_svb_dag = 0;
+        workbuf_nextfree = workbuf;
+    }
 }/* dag_svb_flush */
 
 
@@ -3433,7 +3434,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
     #endif
 
     if(++laziness >= DNPY_MAX_LAZYINESS && !force_laziness)
-        dag_svb_flush();
+        dag_svb_flush(0);//Note that we do not free the work buffer
 
 } /* dag_svb_add */
 
@@ -3686,7 +3687,7 @@ dnumpy_evalflush(PyObject *NPY_UNUSED(ignored), PyObject *args,
     #ifdef DISTNUMPY_DEBUG
         printf("Rank 0 received msg: EVALFLUSH\n");
     #endif
-    dag_svb_flush();
+    dag_svb_flush(1);
 
 #ifdef DNPY_SPMD
     if(barrier)
@@ -4368,7 +4369,7 @@ dnumpy_exit(void)
     }
 #endif
     //Make sure that the sub-view-block DAG is flushed.
-    dag_svb_flush();
+    dag_svb_flush(1);
 
     #ifdef DNDY_TIME
         #ifdef DNDY_TIME_NODE
@@ -4479,7 +4480,7 @@ dnumpy_master_slave_split(void)
                 #ifdef DISTNUMPY_DEBUG
                     printf("EVALFLUSH\n");
                 #endif
-                dag_svb_flush();
+                dag_svb_flush(1);
                 break;
             case DNPY_PUT_ITEM:
                 ary = get_dndview(*((npy_intp*)msg_data));
@@ -4683,7 +4684,7 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         return NULL;
     }
 
-    dag_svb_flush();
+    dag_svb_flush(1);
     delayed_array_allocation(ary->base);
     return PyArray_SimpleNewFromData(ary->base->ndims,
                                      ary->base->localdims,
