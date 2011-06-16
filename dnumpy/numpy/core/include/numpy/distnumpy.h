@@ -31,7 +31,7 @@ typedef struct {
 //#define DNPY_STATISTICS
 //#define DNDY_TIME
 //#define DNDY_TIME_NODE 0
-//#define DNPY_SPMD
+#define DNPY_SPMD
 
 
 //Easy retrieval of dnduid
