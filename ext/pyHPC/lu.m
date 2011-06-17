@@ -51,7 +51,6 @@ for col=1:BS:SIZE
     end
 
     L(col:col+bs-1,col:col+bs-1) = diagL;
-    L(col:col+bs-1,col:col+bs-1)
     U(col:col+bs-1,col:col+bs-1) = diagU;
     
     % compute multipliers
