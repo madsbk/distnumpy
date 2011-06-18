@@ -1,66 +1,55 @@
-#Blocked LU factorization
 import numpy as np
 from scipy import linalg
 
-SIZE = 4;
-BS = 2;
-Nblock = SIZE / BS;
-Nlocal = BS;
+def lu(A):
+    """
+    Compute LU decompostion of a matrix.
 
-# generate matrix to factorize
-A = np.zeros((SIZE,SIZE), dtype=float);
-for row in xrange(Nblock):
-    for col in xrange(Nblock):
-        for n in xrange(BS):
-            for m in xrange(BS):
-                t1 = float(BS)
-                r = row*t1 + n
-                c = col*t1 + m
-                A[row*BS+n,col*BS+m] = r*c / (Nblock*t1*t1*Nblock)
-        if row == col:
-            for n in xrange(BS):
-                A[row*BS+n,col*BS+n] = A[row*BS+n,col*BS+n] + 10
+    Parameters
+    ----------
+    a : array, shape (M, N)
+        Array to decompose
 
-lapack_getrf = linalg.lapack.get_lapack_funcs(('getrf',),(A,))[0]
+    Returns
+    -------
+    p : array, shape (M, M)
+        Permutation matrix
+    l : array, shape (M, K)
+        Lower triangular or trapezoidal matrix with unit diagonal.
+        K = min(M, N)
+    u : array, shape (K, N)
+        Upper triangular or trapezoidal matrix
+    """
 
-def DGETRF(A):
-    (M,N) = A.shape
-    N = min(M,N)
-    piv = np.zeros(N, dtype=int)
+    if A.shape[0] != A.shape[0]:
+        raise Exception("LU only supports squared matricis")
+    SIZE = A.shape[0]
+    BS = np.BLOCKSIZE
+    L = np.zeros((SIZE,SIZE), dtype=float)
+    U = np.zeros((SIZE,SIZE), dtype=float)
 
-    for k in xrange(0, N, BS):
-        bs = min(BS, N - k)#Current block size
+    for k in xrange(0,SIZE,BS):
+        bs = min(BS,SIZE - k) #Current block size
 
-        #Factor diagonal and subdiagonal blocks
-        A[k:N,k:k+bs], lpiv, info = lapack_getrf(A[k:N,k:k+bs], overwrite_a=False)
+        diagA = A[k:k+bs,k:k+bs]
+        (p,diagL,diagU) = linalg.lu(diagA)
+        if not (np.diag(p) == 1).all():#We do not support pivoting
+            raise Exception("Pivoting was needed!")
 
-        #Adjust local pivots to global pivots
-        piv[k:k+bs] = lpiv[0:bs] + k
+        L[k:k+bs,k:k+bs] = diagL
+        U[k:k+bs,k:k+bs] = diagU
 
-        #Pivots columns not already done in LU on current block column
-        for i in xrange(k, k+bs):
-            tmp = A[i,0:k].copy()
-            A[i,0:k] = A[piv[i],0:k]
-            A[piv[i],0:k] = tmp
+        if k+bs < SIZE:
+            #Compute multipliers
+            for i in xrange(k+bs,SIZE,BS):
+                tbs = min(BS,SIZE - i) #Block size of the i'th block
+                L[i:i+tbs,k:k+bs] = linalg.solve(diagU.T, A[i:i+tbs,k:k+bs].T).T
+                U[k:k+bs,i:i+tbs] = linalg.solve(diagL , A[k:k+bs,i:i+tbs])
 
-            tmp = A[i,k+bs:N].copy()
-            A[i,k+bs:N] = A[piv[i],k+bs:N]
-            A[piv[i],k+bs:N] = tmp
+            #Apply to remaining submatrix
+            A[k+bs:, k+bs:] -= np.dot(L[k+bs:,k:k+bs], U[k:k+bs,k+bs:])
 
-        #Triangular solve with matrix right hand side
-        triled = linalg.tril(A[k:k+bs,k:k+bs], -1)
-        triled += np.ma.identity(bs,dtype=float)
+    A = L + U - np.identity(SIZE) #Merge L and U into A.
 
-        A[k:k+bs,k+bs:N] = linalg.solve(triled, A[k:k+bs,k+bs:N])
+    return (L, U)
 
-        #Update trailing submatrix
-        A[k+bs:N,k+bs:N] = A[k+bs:N,k+bs:N] - np.dot(A[k+bs:N,k:k+bs] , A[k:k+bs,k+bs:N])
-
-    return A
-
-
-lu = DGETRF(A.copy())
-print lu
-
-lu, lpiv, info = lapack_getrf(A.copy(), overwrite_a=False)
-print lu
