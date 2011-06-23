@@ -3328,6 +3328,7 @@ static void dag_svb_flush(int free_workbuf)
     {
         nvb_in_svb_dag = 0;
         workbuf_nextfree = workbuf;
+        mpi_tag = 0;
     }
 }/* dag_svb_flush */
 
