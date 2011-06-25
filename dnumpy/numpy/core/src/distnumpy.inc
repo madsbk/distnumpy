@@ -75,7 +75,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness);
         gettimeofday(&tv, &tz);                                     \
         sum += ((unsigned long long) tv.tv_usec +                   \
                 (unsigned long long) tv.tv_sec * 1000000) - in;
-    static npy_intp mem_pool_reused = 0;
+    static npy_intp t_mem_reused=0, t_nconnect=0, t_nconnect_max=0, t_napply=0, t_nflush=0;
 #endif
 
 /*===================================================================
@@ -591,7 +591,7 @@ delayed_array_allocation(dndarray *ary)
             ary->data = ((char*)mem_pool) + sizeof(dndmem);
             mem_pool = mem_pool->next;//Remove from pool.
             #ifdef DNDY_TIME
-                ++mem_pool_reused;
+                ++t_mem_reused;
             #endif
         }
         else//Handle the rest.
@@ -604,7 +604,7 @@ delayed_array_allocation(dndarray *ary)
                     ary->data = ((char*)next) + sizeof(dndmem);
                     prev->next = next->next;//Remove from pool.
                     #ifdef DNDY_TIME
-                        ++mem_pool_reused;
+                        ++t_mem_reused;
                     #endif
                     break;
                 }
@@ -1124,7 +1124,11 @@ static void do_RESET_TIME(void)
         t_msg2slaves=0;
         t_comm_init=0;
         DNDTIME(t_app_total);
-        mem_pool_reused=0;
+        t_mem_reused=0;
+        t_nconnect=0;
+        t_nconnect_max=0;
+        t_napply=0;
+        t_nflush=0;
     #endif
 
 } /* do_RESET_TIME */
@@ -3118,6 +3122,7 @@ static void dag_svb_flush(int free_workbuf)
     npy_intp dtypesize=0;
 
     #ifdef DNDY_TIME
+        ++t_nflush; 
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
@@ -3267,6 +3272,10 @@ static void dag_svb_flush(int free_workbuf)
                 }
             }
             workbuf_nextfree -= nops;//Unreserve memory.
+
+            ++t_napply;
+            t_nconnect += commsize;
+            t_nconnect_max = MAX(t_nconnect_max, commsize);
         }
         //Test for ready communication and possibly move new non-depend
         //nodes to the ready queue. Furthermore, if there is nothing
@@ -4396,7 +4405,11 @@ dnumpy_exit(void)
         printf("  data malloc:   %6.llu ms\n", t_arydata_malloc/1000);
         printf("  msg2slaves:    %6.llu ms\n", t_msg2slaves/1000);
         printf("**************************\n");
-        printf("mem reused:      %6.ld\n", mem_pool_reused);
+        printf("mem reused:      %6.ld\n", t_mem_reused);
+        printf("nconnect:        %6.ld\n", t_nconnect);
+        printf("nconnect max:    %6.ld\n", t_nconnect_max);
+        printf("napply:          %6.ld\n", t_napply);
+        printf("nflush:          %6.ld\n", t_nflush);
         }
     #endif
 
