@@ -192,7 +192,8 @@ dnumpy_get_reged_ufunc_module
 dnumpy_reg_cblas
 dnumpy_evalflush
 dnumpy_data_overlap
-dnumpy_reset_time
+dnumpy_time_reset
+dnumpy_time_getdict
 dnumpy_myrank
 dnumpy_local_data
 dnumpy_blocksize

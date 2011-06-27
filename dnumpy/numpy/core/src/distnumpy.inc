@@ -56,27 +56,22 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness);
     static int op_uid_count = 0;
     static dndarray *rootarray = NULL;
 #endif
+
 //Variables for timing.
-#ifdef DNDY_TIME
-    #include <sys/time.h>
-    struct timeval tv;
-    struct timezone tz;
-    static unsigned long long t_app_total=0, t_dag_svb_flush=0,     \
-        t_dag_svb_add=0, t_dag_svb_remove=0, t_calc_vblock=0,       \
-        t_ufunc_svb=0, t_apply_ufunc=0, t_ufunc_comm=0,             \
-        t_arydata_malloc=0, t_arydata_free=0, t_reduce_1d=0,        \
-        t_zerofill=0, t_msg2slaves=0, t_reduce_nd=0,                \
-        t_reduce_nd_apply=0, t_comm_init=0;
-    #define DNDTIME(output)                                         \
-        gettimeofday(&tv, &tz);                                     \
-        output = (unsigned long long) tv.tv_usec +                  \
-                 (unsigned long long) tv.tv_sec * 1000000;
-    #define DNDTIME_SUM(in,sum)                                     \
-        gettimeofday(&tv, &tz);                                     \
-        sum += ((unsigned long long) tv.tv_usec +                   \
-                (unsigned long long) tv.tv_sec * 1000000) - in;
-    static npy_intp t_mem_reused=0, t_nconnect=0, t_nconnect_max=0, t_napply=0, t_nflush=0;
-#endif
+#include <sys/time.h>
+struct timeval tv;
+struct timezone tz;
+static dndtime dndt;
+unsigned long long totaldelta;
+
+#define DNDTIME(output)                                         \
+    gettimeofday(&tv, &tz);                                     \
+    output = (unsigned long long) tv.tv_usec +                  \
+             (unsigned long long) tv.tv_sec * 1000000;
+#define DNDTIME_SUM(in,sum)                                     \
+    gettimeofday(&tv, &tz);                                     \
+    sum += ((unsigned long long) tv.tv_usec +                   \
+            (unsigned long long) tv.tv_sec * 1000000) - in;
 
 /*===================================================================
  *
@@ -449,7 +444,7 @@ static void rm_dndview(npy_intp uid)
                         mem_pool = mem;
 
                         #ifdef DNDY_TIME
-                            DNDTIME_SUM(tdelta, t_arydata_free)
+                            DNDTIME_SUM(tdelta, dndt.arydata_free)
                         #endif
                     }
                     free(view->base->rootnodes);
@@ -486,7 +481,7 @@ static void msg2slaves(npy_intp *msg, int msgsize)
     MPI_Bcast(msg, DNPY_MAX_MSG_SIZE, MPI_BYTE, 0, MPI_COMM_WORLD);
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_msg2slaves)
+        DNDTIME_SUM(tdelta, dndt.msg2slaves)
     #endif
 
 } /* msg2slaves */
@@ -591,7 +586,7 @@ delayed_array_allocation(dndarray *ary)
             ary->data = ((char*)mem_pool) + sizeof(dndmem);
             mem_pool = mem_pool->next;//Remove from pool.
             #ifdef DNDY_TIME
-                ++t_mem_reused;
+                ++dndt.mem_reused;
             #endif
         }
         else//Handle the rest.
@@ -604,7 +599,7 @@ delayed_array_allocation(dndarray *ary)
                     ary->data = ((char*)next) + sizeof(dndmem);
                     prev->next = next->next;//Remove from pool.
                     #ifdef DNDY_TIME
-                        ++t_mem_reused;
+                        ++dndt.mem_reused;
                     #endif
                     break;
                 }
@@ -640,7 +635,7 @@ delayed_array_allocation(dndarray *ary)
         free_mem_pool(free);
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_arydata_malloc)
+        DNDTIME_SUM(tdelta, dndt.arydata_malloc)
     #endif
 }/* delayed_array_allocation */
 
@@ -887,11 +882,6 @@ apply_ufunc(dndop_ufunc *apply)
     npy_intp *lastdims = apply->asvb[narys-1].dims;
     npy_intp lastndims = apply->views[narys-1]->ndims;
 
-    #ifdef DNDY_TIME
-        unsigned long long tdelta;
-        DNDTIME(tdelta);
-    #endif
-
     //Pack all data.
     char *tdata[NPY_MAXARGS];
     for(j=0; j<narys; j++)
@@ -960,6 +950,11 @@ apply_ufunc(dndop_ufunc *apply)
     for(j=0; j<narys; j++)
         steps[j] = strides[j][axis];
 
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     while(niters-- > 0)
     {
         //Apply operation.
@@ -986,7 +981,7 @@ apply_ufunc(dndop_ufunc *apply)
     }
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_apply_ufunc)
+        DNDTIME_SUM(tdelta, dndt.apply_ufunc)
     #endif
 }/* apply_ufunc */
 
@@ -1097,41 +1092,110 @@ static int create_mpi_dtype(dndview *view, MPI_Datatype *dtype)
 
 /*===================================================================
  *
- * Message handler for RESET_TIME.
+ * Message handler for TIME_RESET.
  * Private.
  */
-static void do_RESET_TIME(void)
+static void do_TIME_RESET(void)
 {
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
-        printf("RESET_TIME\n");
+        printf("TIME_RESET\n");
     #endif
 
-    #ifdef DNDY_TIME
-        t_dag_svb_flush=0;
-        t_dag_svb_add=0;
-        t_dag_svb_remove=0;
-        t_calc_vblock=0;
-        t_ufunc_svb=0;
-        t_apply_ufunc=0;
-        t_ufunc_comm=0;
-        t_arydata_malloc=0;
-        t_arydata_free=0;
-        t_reduce_1d=0;
-        t_reduce_nd=0;
-        t_reduce_nd_apply=0;
-        t_zerofill=0;
-        t_msg2slaves=0;
-        t_comm_init=0;
-        DNDTIME(t_app_total);
-        t_mem_reused=0;
-        t_nconnect=0;
-        t_nconnect_max=0;
-        t_napply=0;
-        t_nflush=0;
+    dag_svb_flush(1);
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    memset(&dndt, 0, sizeof(dndtime));
+    DNDTIME(totaldelta);
+
+} /* do_TIME_RESET */
+
+/*===================================================================
+ *
+ * Message handler for TIME_GETDICT.
+ * Private.
+ */
+static PyObject *
+do_TIME_GETDICT(void)
+{
+    Py_ssize_t i;
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("TIME_GETDICT\n");
     #endif
 
-} /* do_RESET_TIME */
+    dag_svb_flush(1);
+    MPI_Barrier(MPI_COMM_WORLD);
+    DNDTIME_SUM(totaldelta, dndt.total);
+
+    if(myrank == 0)
+    {
+        dndtime tmp = dndt;
+        PyObject* ret = PyTuple_New(worldsize);
+
+        for(i=0; i<worldsize; ++i)
+        {
+            PyObject* dict = PyDict_New();
+            if(i > 0)//tmp is already filled for rank zero.
+                MPI_Recv(&tmp, sizeof(dndtime), MPI_BYTE, i, 0,
+                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            PyDict_SetItemString(dict, "total",
+                   PyLong_FromUnsignedLongLong(tmp.total));
+            #ifdef DNDY_TIME
+                PyDict_SetItemString(dict, "dag_svb_flush",
+                       PyLong_FromUnsignedLongLong(tmp.dag_svb_flush));
+                PyDict_SetItemString(dict, "dag_svb_rm",
+                       PyLong_FromUnsignedLongLong(tmp.dag_svb_rm));
+                PyDict_SetItemString(dict, "apply_ufunc",
+                       PyLong_FromUnsignedLongLong(tmp.apply_ufunc));
+                PyDict_SetItemString(dict, "ufunc_comm",
+                       PyLong_FromUnsignedLongLong(tmp.ufunc_comm));
+                PyDict_SetItemString(dict, "comm_init",
+                       PyLong_FromUnsignedLongLong(tmp.comm_init));
+                PyDict_SetItemString(dict, "arydata_free",
+                       PyLong_FromUnsignedLongLong(tmp.arydata_free));
+                PyDict_SetItemString(dict, "reduce_1d",
+                       PyLong_FromUnsignedLongLong(tmp.reduce_1d));
+                PyDict_SetItemString(dict, "reduce_nd",
+                       PyLong_FromUnsignedLongLong(tmp.reduce_nd));
+                PyDict_SetItemString(dict, "reduce_nd_apply",
+                       PyLong_FromUnsignedLongLong(tmp.reduce_nd_apply));
+                PyDict_SetItemString(dict, "zerofill",
+                       PyLong_FromUnsignedLongLong(tmp.zerofill));
+                PyDict_SetItemString(dict, "ufunc_svb",
+                       PyLong_FromUnsignedLongLong(tmp.ufunc_svb));
+                PyDict_SetItemString(dict, "dag_svb_add",
+                       PyLong_FromUnsignedLongLong(tmp.dag_svb_add));
+                PyDict_SetItemString(dict, "calc_vblock",
+                       PyLong_FromUnsignedLongLong(tmp.calc_vblock));
+                PyDict_SetItemString(dict, "arydata_malloc",
+                       PyLong_FromUnsignedLongLong(tmp.arydata_malloc));
+                PyDict_SetItemString(dict, "msg2slaves",
+                       PyLong_FromUnsignedLongLong(tmp.msg2slaves));
+                PyDict_SetItemString(dict, "mem_reused",
+                       PyLong_FromLong(tmp.mem_reused));
+                PyDict_SetItemString(dict, "nconnect",
+                       PyLong_FromLong(tmp.nconnect));
+                PyDict_SetItemString(dict, "nconnect_max",
+                       PyLong_FromLong(tmp.nconnect_max));
+                PyDict_SetItemString(dict, "napply",
+                       PyLong_FromLong(tmp.napply));
+                PyDict_SetItemString(dict, "nflush",
+                       PyLong_FromLong(tmp.nflush));
+            #endif
+            PyTuple_SetItem(ret, i, dict);
+        }
+        return ret;
+    }
+    else
+    {
+        MPI_Send(&dndt, sizeof(dndtime), MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+    }
+
+    Py_RETURN_NONE;
+} /* do_TIME_GETDICT */
+
 
 /*===================================================================
  *
@@ -1672,7 +1736,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             }
 
             #ifdef DNDY_TIME
-                DNDTIME_SUM(tdelta2, t_calc_vblock)
+                DNDTIME_SUM(tdelta2, dndt.calc_vblock)
             #endif
         }
 
@@ -2003,7 +2067,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 }
             }
         #ifdef DNDY_TIME
-            DNDTIME_SUM(tdelta, t_ufunc_svb)
+            DNDTIME_SUM(tdelta, dndt.ufunc_svb)
         #endif
 
         //We have added a whole view-block operation to the svb-DAG
@@ -2168,7 +2232,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     #endif
 
         #ifdef DNDY_TIME
-            DNDTIME_SUM(tdelta, t_reduce_1d)
+            DNDTIME_SUM(tdelta, dndt.reduce_1d)
         #endif
 
         return;
@@ -2219,7 +2283,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     }
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta2, t_reduce_nd_apply)
+        DNDTIME_SUM(tdelta2, dndt.reduce_nd_apply)
     #endif
 
     int cart_coords[NPY_MAXDIMS];
@@ -2541,7 +2605,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     mpi_tag += out_view->nblocks;
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_reduce_nd)
+        DNDTIME_SUM(tdelta, dndt.reduce_nd)
     #endif
 
     dag_svb_flush(1);
@@ -2584,7 +2648,7 @@ static void do_ZEROFILL(dndview *view)
                                 view->base->elsize);
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_zerofill)
+        DNDTIME_SUM(tdelta, dndt.zerofill)
     #endif
 
 } /* do_ZEROFILL */
@@ -3096,7 +3160,7 @@ static npy_intp dag_svg_remove(dndop *op, dndop *op2apply[])
     }
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_dag_svb_remove)
+        DNDTIME_SUM(tdelta, dndt.dag_svb_rm)
     #endif
 
     return nops;
@@ -3122,7 +3186,7 @@ static void dag_svb_flush(int free_workbuf)
     npy_intp dtypesize=0;
 
     #ifdef DNDY_TIME
-        ++t_nflush; 
+        ++dndt.nflush;
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
@@ -3236,7 +3300,7 @@ static void dag_svb_flush(int free_workbuf)
         ready_queue_size = 0;
 
         #ifdef DNDY_TIME
-            DNDTIME_SUM(tdelta2, t_comm_init)
+            DNDTIME_SUM(tdelta2, dndt.comm_init)
         #endif
 
         //Apply one non-communication node and move new non-depend
@@ -3273,9 +3337,9 @@ static void dag_svb_flush(int free_workbuf)
             }
             workbuf_nextfree -= nops;//Unreserve memory.
 
-            ++t_napply;
-            t_nconnect += commsize;
-            t_nconnect_max = MAX(t_nconnect_max, commsize);
+            ++dndt.napply;
+            dndt.nconnect += commsize;
+            dndt.nconnect_max = MAX(dndt.nconnect_max, commsize);
         }
         //Test for ready communication and possibly move new non-depend
         //nodes to the ready queue. Furthermore, if there is nothing
@@ -3303,7 +3367,7 @@ static void dag_svb_flush(int free_workbuf)
                 fcommsize = 0;
 
             #ifdef DNDY_TIME
-                DNDTIME_SUM(tdelta2, t_ufunc_comm)
+                DNDTIME_SUM(tdelta2, dndt.ufunc_comm)
             #endif
 
             for(f=0; f<fcommsize; f++)
@@ -3331,7 +3395,7 @@ static void dag_svb_flush(int free_workbuf)
     laziness = 0;
     assert(ready_queue_size == 0);
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_dag_svb_flush)
+        DNDTIME_SUM(tdelta, dndt.dag_svb_flush)
     #endif
     if(free_workbuf)
     {
@@ -3440,7 +3504,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
     assert(ready_queue_size > 0);
 
     #ifdef DNDY_TIME
-        DNDTIME_SUM(tdelta, t_dag_svb_add)
+        DNDTIME_SUM(tdelta, dndt.dag_svb_add)
     #endif
 
     if(++laziness >= DNPY_MAX_LAZYINESS && !force_laziness)
@@ -3713,18 +3777,39 @@ dnumpy_evalflush(PyObject *NPY_UNUSED(ignored), PyObject *args,
  * Reset the timing.
  */
 static PyObject *
-dnumpy_reset_time(void)
+dnumpy_time_reset(void)
 {
 #ifndef DNPY_SPMD
     //Tell slaves
-    msg[0] = RESET_TIME;
+    msg[0] = DNPY_TIME_RESET;
     msg[1] = DNPY_MSG_END;
     msg2slaves(msg, 2 * sizeof(npy_intp));
 #endif
     //The master should also do the operation.
-    do_RESET_TIME();
+    do_TIME_RESET();
     Py_RETURN_NONE;
 } /* dnumpy_reset_time */
+
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returns timing in a Python Dictionary
+ */
+static PyObject *
+dnumpy_time_getdict(void)
+{
+#ifndef DNPY_SPMD
+    //Tell slaves
+    msg[0] = DNPY_TIME_GETDICT;
+    msg[1] = DNPY_MSG_END;
+    msg2slaves(msg, 2 * sizeof(npy_intp));
+#endif
+    //The master should also do the operation.
+    return do_TIME_GETDICT();
+} /* dnumpy_time_getdict */
+
+
 
 /*NUMPY_API
  *===================================================================
@@ -4381,38 +4466,6 @@ dnumpy_exit(void)
     //Make sure that the sub-view-block DAG is flushed.
     dag_svb_flush(1);
 
-    #ifdef DNDY_TIME
-        #ifdef DNDY_TIME_NODE
-        if(DNDY_TIME_NODE == myrank)
-        #endif
-        {
-        unsigned long long total=0;
-        DNDTIME_SUM(t_app_total, total);
-        printf("app_total:       %6.llu ms\n", total/1000);
-        printf("  dag_svb_flush: %6.llu ms\n", t_dag_svb_flush/1000);
-        printf("    dag_svb_rm:  %6.llu ms\n", t_dag_svb_remove/1000);
-        printf("    apply_ufunc: %6.llu ms\n", t_apply_ufunc/1000);
-        printf("    ufunc_comm:  %6.llu ms\n", t_ufunc_comm/1000);
-        printf("    comm_init:   %6.llu ms\n", t_comm_init/1000);
-        printf("    data free:   %6.llu ms\n", t_arydata_free/1000);
-        printf("  reduce (1-d):  %6.llu ms\n", t_reduce_1d/1000);
-        printf("  reduce (n-d):  %6.llu ms\n", t_reduce_nd/1000);
-        printf("    pre_apply:   %6.llu ms\n", t_reduce_nd_apply/1000);
-        printf("  zerofill:      %6.llu ms\n", t_zerofill/1000);
-        printf("  ufunc_svb:     %6.llu ms\n", t_ufunc_svb/1000);
-        printf("    dag_svb_add: %6.llu ms\n", t_dag_svb_add/1000);
-        printf("    calc_vblock: %6.llu ms\n", t_calc_vblock/1000);
-        printf("  data malloc:   %6.llu ms\n", t_arydata_malloc/1000);
-        printf("  msg2slaves:    %6.llu ms\n", t_msg2slaves/1000);
-        printf("**************************\n");
-        printf("mem reused:      %6.ld\n", t_mem_reused);
-        printf("nconnect:        %6.ld\n", t_nconnect);
-        printf("nconnect max:    %6.ld\n", t_nconnect_max);
-        printf("napply:          %6.ld\n", t_napply);
-        printf("nflush:          %6.ld\n", t_nflush);
-        }
-    #endif
-
     //Free buffers.
     free(workbuf);
     //Free Cartesian Information.
@@ -4446,9 +4499,9 @@ dnumpy_exit(void)
 static PyObject *
 dnumpy_master_slave_split(void)
 {
-    #ifdef DNDY_TIME
-        DNDTIME(t_app_total)
-    #endif
+    //Initiate timers to zero.
+    memset(&dndt, 0, sizeof(dndtime));
+    DNDTIME(totaldelta)
 
 #ifdef DNPY_SPMD
     return Py_True;
@@ -4556,8 +4609,11 @@ dnumpy_master_slave_split(void)
                 ary3 = get_dndview(((npy_intp*)msg_data)[2]);
                 do_MATMUL(ary, ary2, ary3);
                 break;
-            case RESET_TIME:
-                do_RESET_TIME();
+            case DNPY_TIME_RESET:
+                do_TIME_RESET();
+                break;
+            case DNPY_TIME_GETDICT:
+                do_TIME_GETDICT();
                 break;
             default:
                 fprintf(stderr, "Unknown msg: %ld\n", (long)msg[0]);

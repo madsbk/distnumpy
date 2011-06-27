@@ -30,7 +30,6 @@ typedef struct {
 //#define DISTNUMPY_DEBUG
 //#define DNPY_STATISTICS
 //#define DNDY_TIME
-//#define DNDY_TIME_NODE 0
 //#define DNPY_SPMD
 
 
@@ -73,7 +72,7 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_RECV, DNPY_SEND, DNPY_BUF_RECV, DNPY_BUF_SEND, DNPY_APPLY,
           DNPY_EVALFLUSH, DNPY_READ, DNPY_WRITE, DNPY_COMM, DNPY_NONCOMM,
           DNPY_REDUCE_SEND, DNPY_REDUCE_RECV,
-          RESET_TIME};
+          DNPY_TIME_RESET, DNPY_TIME_GETDICT};
 
 //Type describing the initial message.
 typedef struct
@@ -292,5 +291,31 @@ struct dndnode_struct
         npy_intp uid;
     #endif
 };
+
+//Type describing the timing data.
+typedef struct
+{
+    unsigned long long total;
+    unsigned long long dag_svb_flush;
+    unsigned long long dag_svb_rm;
+    unsigned long long apply_ufunc;
+    unsigned long long ufunc_comm;
+    unsigned long long comm_init;
+    unsigned long long arydata_free;
+    unsigned long long reduce_1d;
+    unsigned long long reduce_nd;
+    unsigned long long reduce_nd_apply;
+    unsigned long long zerofill;
+    unsigned long long ufunc_svb;
+    unsigned long long dag_svb_add;
+    unsigned long long calc_vblock;
+    unsigned long long arydata_malloc;
+    unsigned long long msg2slaves;
+    npy_intp mem_reused;
+    npy_intp nconnect;
+    npy_intp nconnect_max;
+    npy_intp napply;
+    npy_intp nflush;
+} dndtime;
 
 #endif

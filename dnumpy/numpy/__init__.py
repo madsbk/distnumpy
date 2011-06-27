@@ -159,12 +159,13 @@ else:
     __all__.extend(['linalg', 'fft', 'random', 'ctypeslib', 'ma'])
 
     #DISTNUMPY
-    evalflush   = core.multiarray.evalflush
-    timer_reset = core.multiarray.timer_reset
-    RANK        = core.multiarray.myrank()
-    BLOCKSIZE   = core.multiarray.blocksize()
-    SPMD_MODE   = core.multiarray.SPMD_MODE()
-    __all__.extend(['SPMD_MODE','BLOCKSIZE','RANK','evalflush','timer_reset'])
+    evalflush     = core.multiarray.evalflush
+    timer_reset   = core.multiarray.timer_reset
+    timer_getdict = core.multiarray.timer_getdict
+    RANK          = core.multiarray.myrank()
+    BLOCKSIZE     = core.multiarray.blocksize()
+    SPMD_MODE     = core.multiarray.SPMD_MODE()
+    __all__.extend(['SPMD_MODE','BLOCKSIZE','RANK','evalflush','timer_reset', 'timer_getdict'])
     if not core.multiarray.dnumpy_init():
         import sys
         sys.exit(0)
