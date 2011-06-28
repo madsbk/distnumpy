@@ -3,6 +3,7 @@
 
 import numpy as np
 import getopt
+import datetime
 
 class Parsing:
     """This class should handle the presentation of benchmark results.
@@ -10,15 +11,14 @@ class Parsing:
        A list of non-optional arguments is exposed through self.argv.
     """
     def __init__(self, args):
-        self.runinfo = {}
-        self.dist = False
+        self.runinfo = {'dist':False, 'date': datetime.datetime.now()}
         self.filename = "benchmark_dump.pkl"
         self.notes = ""
         options, self.argv = getopt.gnu_getopt(args, 'd:n:c:f:', ['dist=','nnodes=','ncores=','filename=','notes='])
 
         for opt, arg in options:
             if opt in ('-d', '--dist'):
-                self.dist = bool(eval(arg))
+                self.runinfo['dist'] = bool(eval(arg))
             if opt in ('-n', '--nnodes'):
                 self.runinfo['nnodes'] = int(arg)
             if opt in ('-c', '--ncores'):
@@ -27,6 +27,8 @@ class Parsing:
                 self.filename = arg
             if opt in ('--notes'):
                 self.notes = arg
+
+        self.dist = self.runinfo['dist']
 
     def pprint(self, timing, sysinfo=True, rank=0):
         """Pretty-print the timing profile.
@@ -37,10 +39,9 @@ class Parsing:
             timing = timing[rank] #Default: printing rank zero.
 
         print "*******RUNTIME INFO*******"
-        print "dist: %d"%(self.dist)
         l = self.runinfo.items();l.reverse()
         for k, v in l:
-            print "%s: %d"%(k, v)
+            print "%s: %s"%(k, v)
 
         if sysinfo:
             print "*********SYS INFO*********"
