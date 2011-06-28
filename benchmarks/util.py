@@ -80,7 +80,7 @@ class Parsing:
         print "nconnect_avg:      %8.2f"%(nconnect_avg)
         print "**************************"
 
-    def write_dict(self, timing, filename=None, sysinfo=True, rank=0):
+    def write_dict(self, timing, filename=None, rank=0):
         """Writes the timing profile as a pickled Python dictionary.
            If filename is None the application option
            System info, such as worldsize and process rank, can be included.
@@ -93,11 +93,10 @@ class Parsing:
 
         ret = dict(timing.items() + self.runinfo.items())
 
-        if sysinfo:
-            ret['SPMD_MODE'] = np.SPMD_MODE
-            ret['RANK'] = np.RANK
-            ret['WORLDSIZE'] = np.WORLDSIZE
-            ret['BLOCKSIZE'] = np.BLOCKSIZE
+        ret['SPMD_MODE'] = np.SPMD_MODE
+        ret['RANK'] = np.RANK
+        ret['WORLDSIZE'] = np.WORLDSIZE
+        ret['BLOCKSIZE'] = np.BLOCKSIZE
 
         import pickle
         output = open(filename, 'wb')
