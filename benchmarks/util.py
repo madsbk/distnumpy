@@ -13,7 +13,8 @@ class Parsing:
         self.runinfo = {}
         self.dist = False
         self.filename = "benchmark_dump.pkl"
-        options, self.argv = getopt.gnu_getopt(args, 'd:n:c:f:', ['dist=','nnodes=','ncores=','filename='])
+        self.notes = ""
+        options, self.argv = getopt.gnu_getopt(args, 'd:n:c:f:', ['dist=','nnodes=','ncores=','filename=','notes='])
 
         for opt, arg in options:
             if opt in ('-d', '--dist'):
@@ -24,6 +25,8 @@ class Parsing:
                 self.runinfo['ncores'] = int(arg)
             if opt in ('-f', '--filename'):
                 self.filename = arg
+            if opt in ('--notes'):
+                self.notes = arg
 
     def pprint(self, timing, sysinfo=True, rank=0):
         """Pretty-print the timing profile.
@@ -41,7 +44,9 @@ class Parsing:
 
         if sysinfo:
             print "*********SYS INFO*********"
+            print "Notes:     \"%s\""%self.notes
             print "SPMD_MODE: %d"%np.SPMD_MODE
+            print "WORLDSIZE: %d"%np.WORLDSIZE
             print "RANK:      %d"%np.RANK
             print "BLOCKSIZE: %d"%np.BLOCKSIZE
 
@@ -90,6 +95,7 @@ class Parsing:
         if sysinfo:
             ret['SPMD_MODE'] = np.SPMD_MODE
             ret['RANK'] = np.RANK
+            ret['WORLDSIZE'] = np.WORLDSIZE
             ret['BLOCKSIZE'] = np.BLOCKSIZE
 
         import pickle

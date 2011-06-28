@@ -3820,6 +3820,16 @@ dnumpy_myrank(void)
     return PyLong_FromLong((long) myrank);
 } /* dnumpy_myrank */
 
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returning the number of MPI-processes in MPI_COMM_WORLD.
+ */
+static PyObject *
+dnumpy_worldsize(void)
+{
+    return PyLong_FromLong((long) worldsize);
+} /* dnumpy_worldsize */
 
 /*NUMPY_API
  *===================================================================

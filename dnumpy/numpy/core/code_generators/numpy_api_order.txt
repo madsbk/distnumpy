@@ -195,6 +195,7 @@ dnumpy_data_overlap
 dnumpy_time_reset
 dnumpy_time_getdict
 dnumpy_myrank
+dnumpy_worldsize
 dnumpy_local_data
 dnumpy_blocksize
 dnumpy_SPMD_mode
