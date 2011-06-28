@@ -1,13 +1,15 @@
 import numpy as np
 import sys
-import time
+import util
 
-DIST=int(sys.argv[1])
+parser = util.Parsing(sys.argv[1:])
 
-W = int(sys.argv[2])
-H = int(sys.argv[2])
+DIST=parser.dist
 
-forcedIter = int(sys.argv[3])
+W = int(parser.argv[0])
+H = int(parser.argv[0])
+
+forcedIter = int(parser.argv[1])
 
 full = np.zeros((W+2,H+2), dtype=np.double, dist=DIST)
 work = np.zeros((W,H), dtype=np.double, dist=DIST)
@@ -26,8 +28,6 @@ full[0,:]  +=  40.0
 full[-1,:] += -273.13
 
 np.timer_reset()
-np.evalflush()
-t1 = time.time()
 
 epsilon=W*H*0.010
 delta=epsilon+1
@@ -47,11 +47,7 @@ while (forcedIter and forcedIter > i) or \
   delta = np.add.reduce(tmpdelta)
   cells[:] = work
 
-np.evalflush()
-t2 = time.time()
-print 'Iter: ', i, ' size: ', H,' time: ', t2-t1,
-if DIST:
-    print "(Dist) notes: %s"%sys.argv[4]
-else:
-    print "(Non-Dist) notes: %s"%sys.argv[4]
-
+timing = np.timer_getdict()
+print 'jacobi_stencil - Iter: ', i, ' size:', np.shape(work)
+parser.pprint(timing)
+parser.write_dict(timing)

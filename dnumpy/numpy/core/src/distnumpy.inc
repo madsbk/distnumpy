@@ -1142,48 +1142,46 @@ do_TIME_GETDICT(void)
 
             PyDict_SetItemString(dict, "total",
                    PyLong_FromUnsignedLongLong(tmp.total));
-            #ifdef DNDY_TIME
-                PyDict_SetItemString(dict, "dag_svb_flush",
-                       PyLong_FromUnsignedLongLong(tmp.dag_svb_flush));
-                PyDict_SetItemString(dict, "dag_svb_rm",
-                       PyLong_FromUnsignedLongLong(tmp.dag_svb_rm));
-                PyDict_SetItemString(dict, "apply_ufunc",
-                       PyLong_FromUnsignedLongLong(tmp.apply_ufunc));
-                PyDict_SetItemString(dict, "ufunc_comm",
-                       PyLong_FromUnsignedLongLong(tmp.ufunc_comm));
-                PyDict_SetItemString(dict, "comm_init",
-                       PyLong_FromUnsignedLongLong(tmp.comm_init));
-                PyDict_SetItemString(dict, "arydata_free",
-                       PyLong_FromUnsignedLongLong(tmp.arydata_free));
-                PyDict_SetItemString(dict, "reduce_1d",
-                       PyLong_FromUnsignedLongLong(tmp.reduce_1d));
-                PyDict_SetItemString(dict, "reduce_nd",
-                       PyLong_FromUnsignedLongLong(tmp.reduce_nd));
-                PyDict_SetItemString(dict, "reduce_nd_apply",
-                       PyLong_FromUnsignedLongLong(tmp.reduce_nd_apply));
-                PyDict_SetItemString(dict, "zerofill",
-                       PyLong_FromUnsignedLongLong(tmp.zerofill));
-                PyDict_SetItemString(dict, "ufunc_svb",
-                       PyLong_FromUnsignedLongLong(tmp.ufunc_svb));
-                PyDict_SetItemString(dict, "dag_svb_add",
-                       PyLong_FromUnsignedLongLong(tmp.dag_svb_add));
-                PyDict_SetItemString(dict, "calc_vblock",
-                       PyLong_FromUnsignedLongLong(tmp.calc_vblock));
-                PyDict_SetItemString(dict, "arydata_malloc",
-                       PyLong_FromUnsignedLongLong(tmp.arydata_malloc));
-                PyDict_SetItemString(dict, "msg2slaves",
-                       PyLong_FromUnsignedLongLong(tmp.msg2slaves));
-                PyDict_SetItemString(dict, "mem_reused",
-                       PyLong_FromLong(tmp.mem_reused));
-                PyDict_SetItemString(dict, "nconnect",
-                       PyLong_FromLong(tmp.nconnect));
-                PyDict_SetItemString(dict, "nconnect_max",
-                       PyLong_FromLong(tmp.nconnect_max));
-                PyDict_SetItemString(dict, "napply",
-                       PyLong_FromLong(tmp.napply));
-                PyDict_SetItemString(dict, "nflush",
-                       PyLong_FromLong(tmp.nflush));
-            #endif
+            PyDict_SetItemString(dict, "dag_svb_flush",
+                   PyLong_FromUnsignedLongLong(tmp.dag_svb_flush));
+            PyDict_SetItemString(dict, "dag_svb_rm",
+                   PyLong_FromUnsignedLongLong(tmp.dag_svb_rm));
+            PyDict_SetItemString(dict, "apply_ufunc",
+                   PyLong_FromUnsignedLongLong(tmp.apply_ufunc));
+            PyDict_SetItemString(dict, "ufunc_comm",
+                   PyLong_FromUnsignedLongLong(tmp.ufunc_comm));
+            PyDict_SetItemString(dict, "comm_init",
+                   PyLong_FromUnsignedLongLong(tmp.comm_init));
+            PyDict_SetItemString(dict, "arydata_free",
+                   PyLong_FromUnsignedLongLong(tmp.arydata_free));
+            PyDict_SetItemString(dict, "reduce_1d",
+                   PyLong_FromUnsignedLongLong(tmp.reduce_1d));
+            PyDict_SetItemString(dict, "reduce_nd",
+                   PyLong_FromUnsignedLongLong(tmp.reduce_nd));
+            PyDict_SetItemString(dict, "reduce_nd_apply",
+                   PyLong_FromUnsignedLongLong(tmp.reduce_nd_apply));
+            PyDict_SetItemString(dict, "zerofill",
+                   PyLong_FromUnsignedLongLong(tmp.zerofill));
+            PyDict_SetItemString(dict, "ufunc_svb",
+                   PyLong_FromUnsignedLongLong(tmp.ufunc_svb));
+            PyDict_SetItemString(dict, "dag_svb_add",
+                   PyLong_FromUnsignedLongLong(tmp.dag_svb_add));
+            PyDict_SetItemString(dict, "calc_vblock",
+                   PyLong_FromUnsignedLongLong(tmp.calc_vblock));
+            PyDict_SetItemString(dict, "arydata_malloc",
+                   PyLong_FromUnsignedLongLong(tmp.arydata_malloc));
+            PyDict_SetItemString(dict, "msg2slaves",
+                   PyLong_FromUnsignedLongLong(tmp.msg2slaves));
+            PyDict_SetItemString(dict, "mem_reused",
+                   PyLong_FromLong(tmp.mem_reused));
+            PyDict_SetItemString(dict, "nconnect",
+                   PyLong_FromLong(tmp.nconnect));
+            PyDict_SetItemString(dict, "nconnect_max",
+                   PyLong_FromLong(tmp.nconnect_max));
+            PyDict_SetItemString(dict, "napply",
+                   PyLong_FromLong(tmp.napply));
+            PyDict_SetItemString(dict, "nflush",
+                   PyLong_FromLong(tmp.nflush));
             PyTuple_SetItem(ret, i, dict);
         }
         return ret;
