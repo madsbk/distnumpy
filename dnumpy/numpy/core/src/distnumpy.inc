@@ -1125,7 +1125,18 @@ do_TIME_GETDICT(void)
     #endif
 
     dag_svb_flush(1);
+
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
+
     MPI_Barrier(MPI_COMM_WORLD);
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, dndt.final_barrier)
+    #endif
+
     DNDTIME_SUM(totaldelta, dndt.total);
 
     if(myrank == 0)
@@ -1172,6 +1183,8 @@ do_TIME_GETDICT(void)
                    PyLong_FromUnsignedLongLong(tmp.arydata_malloc));
             PyDict_SetItemString(dict, "msg2slaves",
                    PyLong_FromUnsignedLongLong(tmp.msg2slaves));
+            PyDict_SetItemString(dict, "final_barrier",
+                   PyLong_FromUnsignedLongLong(tmp.final_barrier));
             PyDict_SetItemString(dict, "mem_reused",
                    PyLong_FromLong(tmp.mem_reused));
             PyDict_SetItemString(dict, "nconnect",

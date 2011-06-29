@@ -311,6 +311,7 @@ typedef struct
     unsigned long long calc_vblock;
     unsigned long long arydata_malloc;
     unsigned long long msg2slaves;
+    unsigned long long final_barrier;
     npy_intp mem_reused;
     npy_intp nconnect;
     npy_intp nconnect_max;

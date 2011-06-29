@@ -70,6 +70,7 @@ class Parsing:
         print "    calc_vblock: %7.d ms"%(timing['calc_vblock'] / 1000)
         print "  data_malloc:   %7.d ms"%(timing['arydata_malloc'] / 1000)
         print "  msg2slaves:    %7.d ms"%(timing['msg2slaves'] / 1000)
+        print "  final barrier: %7.d ms"%(timing['final_barrier'] / 1000)
         print "*********COUNTERS*********"
         print "nflush:         %8.d"%(timing['nflush'])
         print "mem_reused:     %8.d"%(timing['mem_reused'])
