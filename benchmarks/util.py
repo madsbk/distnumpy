@@ -3,18 +3,20 @@
 
 import numpy as np
 import getopt
+import sys
 import datetime
 
 class Parsing:
     """This class should handle the presentation of benchmark results.
-       It is initiated with the benchmark arguments 'args'.
        A list of non-optional arguments is exposed through self.argv.
     """
-    def __init__(self, args):
+    def __init__(self):
         self.runinfo = {'dist':False, 'date': datetime.datetime.now()}
-        self.filename = "benchmark_dump.pkl"
+        self.filename = None
         self.notes = ""
-        options, self.argv = getopt.gnu_getopt(args, 'd:n:c:f:', ['dist=','nnodes=','ncores=','filename=','notes='])
+        options, self.argv = getopt.gnu_getopt(sys.argv[1:], \
+                'd:n:c:f:',\
+                ['dist=','nnodes=','ncores=','filename=','notes='])
 
         for opt, arg in options:
             if opt in ('-d', '--dist'):
@@ -90,6 +92,8 @@ class Parsing:
             timing = timing[rank] #Default: printing rank zero.
         if filename is None:
             filename = self.filename
+        if filename is None:
+            return #With no filename we just cancel.
 
         ret = dict(timing.items() + self.runinfo.items())
 

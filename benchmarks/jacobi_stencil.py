@@ -1,8 +1,7 @@
 import numpy as np
-import sys
 import util
 
-parser = util.Parsing(sys.argv[1:])
+parser = util.Parsing()
 
 DIST=parser.dist
 
