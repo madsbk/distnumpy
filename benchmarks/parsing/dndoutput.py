@@ -46,13 +46,16 @@ if __name__ == "__main__":
         std=numpy.std(totals)
         min=avg-2*std
         max=avg+2*std
+        rm = []
         for i in xrange(len(value)):
             if value[i]['total'] < min or value[i]['total'] > max:
                 print "# Warning - the result (worldsize: %d, runtime:"\
                       " %d ms) is removed because of the standard "\
                       "deviation rule."%(value[i]['WORLDSIZE'], \
                                          value[i]['total'] / 1000)
-                value.pop(i)
+                rm.append(i)
+        for i in rm:
+            value.pop(i)
 
     #Check for low sample count
     for v in inputs.values():
@@ -78,21 +81,19 @@ if __name__ == "__main__":
     keys=result.keys()
     keys.sort()
     if 0 in result:#Sequential runtime
-        SEQ = "#  Seq;%8d;\n"%(result[0][0]/1000)
+        SEQ = "#\n  Seq;%8d;"%(result[0][0]/1000)
         keys.pop(0)#Remote the zero key.
     else:
         SEQ = ""
     if FIND_SPEEDUP > -1: #Show speedup instead of runtime.
         speedup = result[FIND_SPEEDUP][0]#The speedup baseline
-        print 'CPUs;Speedup;Commtime'
-        print SEQ,
+        print '  CPUs; Speedup;Commtime',SEQ
         for k in keys:
             runtime  = speedup / result[k][0]
             waittime = int(result[k][1] / 1000)# convert to in ms
             print "%6d;%8.3f;%8d"%(k, runtime, waittime)
     else:
-        print 'CPUs;Runtime;Commtime'
-        print SEQ,
+        print '  CPUs; Runtime;Commtime',SEQ
         for k in keys:
             runtime  = int(result[k][0] / 1000)# convert to in ms
             waittime = int(result[k][1] / 1000)# convert to in ms
