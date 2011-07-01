@@ -39,6 +39,7 @@ static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
 //Unique MPI tag.
 npy_intp mpi_tag=0;
+npy_intp mpi_tag_svb=0;
 //Memory pool.
 static dndmem *mem_pool = NULL;
 //Pointers to the cblas functions.
@@ -1697,12 +1698,24 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     //Iterate over all output vblocks.
     //NB: coord consist of only visible coordinates.
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
-    for(; notfinished; mpi_tag++)
+    for(; notfinished; mpi_tag += 1000)
     {
         #ifdef DNDY_TIME
             unsigned long long tdelta;
             DNDTIME(tdelta);
         #endif
+
+        //This is a hack to make sure that mpi_tag is sync between
+        //MPI-processes even when skipping iterations.
+        //For each view-block calculation the following must be true:
+        //narys * number of sub-view-blocks * 4 < 1000.
+        mpi_tag_svb = mpi_tag;
+
+        //Compute the owner of the current coord.
+        int coord_owner;
+        for(i=0; i<lastary->ndims; i++)
+            pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
+        coord_owner = cart2rank(lastary->ndims, pcoord);
 
         //Get one vblock from all arrays.
         for(v=0; v<narys; v++)
@@ -1751,18 +1764,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             #endif
         }
 
-        //Compute the owner of the current coord.
-        int coord_owner;
-        for(i=0; i<lastary->ndims; i++)
-            pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
-        coord_owner = cart2rank(lastary->ndims, pcoord);
-
         //Do computation for view-block.
         memset(scoord, 0, lastary->ndims * sizeof(npy_intp));
         memset(svboffset, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
         memset(csvb, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
         int svb_notfinished = 1;
-        for(; svb_notfinished; mpi_tag++)
+        for(; svb_notfinished; mpi_tag_svb++)
         {
             //Find current sub-view-block for all arrays.
             dndsvb *svbs[NPY_MAXARGS];
@@ -1811,7 +1818,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             if(coord_owner == myrank)
             {
                 //Add receive request to the svb-DAG.
-                for(v=0; v<nin; v++, mpi_tag++)
+                for(v=0; v<nin; v++, mpi_tag_svb++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
@@ -1837,7 +1844,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     op->views[0] = views[v];
                     op->svbs[0] = svbs[v];
                     op->accesstypes[0] = DNPY_WRITE;
-                    op->mpi_tag = mpi_tag;
+                    op->mpi_tag = mpi_tag_svb;
                     op->remote_rank = svbs[v]->rank;
                     dndnode *node = workbuf_nextfree;
                     workbuf_nextfree += sizeof(dndnode);
@@ -1947,7 +1954,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             }
             else
             {   //Add send request to the svb-DAG.
-                for(v=0; v<nin; v++, mpi_tag++)
+                for(v=0; v<nin; v++, mpi_tag_svb++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
@@ -1970,7 +1977,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     op->views[0] = views[v];
                     op->svbs[0] = svbs[v];
                     op->accesstypes[0] = DNPY_READ;
-                    op->mpi_tag = mpi_tag;
+                    op->mpi_tag = mpi_tag_svb;
                     op->remote_rank = coord_owner;
                     dndnode *node = workbuf_nextfree;
                     workbuf_nextfree += sizeof(dndnode);
@@ -2033,7 +2040,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
 
         //Write vblocks to output arrays.
         for(v=nin; v<narys; v++)
-            for(j=0; j<vblocks[v].nsub; j++, mpi_tag++)
+            for(j=0; j<vblocks[v].nsub; j++, mpi_tag_svb++)
             {
                 dndsvb *svb = &vblocks[v].sub[j];
 
@@ -2047,7 +2054,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     op->views[0] = views[v];
                     op->svbs[0] = svb;
                     op->accesstypes[0] = DNPY_READ;
-                    op->mpi_tag = mpi_tag;
+                    op->mpi_tag = mpi_tag_svb;
                     op->op = DNPY_BUF_SEND;
                     op->optype = DNPY_COMM;
                     op->remote_rank = svb->rank;
@@ -2066,7 +2073,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     op->views[0] = views[v];
                     op->svbs[0] = svb;
                     op->accesstypes[0] = DNPY_WRITE;
-                    op->mpi_tag = mpi_tag;
+                    op->mpi_tag = mpi_tag_svb;
                     op->op = DNPY_RECV;
                     op->optype = DNPY_COMM;
                     op->remote_rank = coord_owner;
@@ -3413,6 +3420,7 @@ static void dag_svb_flush(int free_workbuf)
         nvb_in_svb_dag = 0;
         workbuf_nextfree = workbuf;
         mpi_tag = 0;
+        mpi_tag_svb = 0;
     }
 }/* dag_svb_flush */
 
