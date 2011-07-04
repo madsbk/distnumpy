@@ -1717,373 +1717,424 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
         coord_owner = cart2rank(lastary->ndims, pcoord);
 
-        //Get one vblock from all arrays.
-        for(v=0; v<narys; v++)
+        //Lets check if the MPI-process can skip this iteration.
+        int skip_coord=0;
+        if(coord_owner != myrank)
         {
-            //Scalars are already located locally
-            if(views[v]->base->ndims == 0)
-                continue;
-
-            //Compute broadcasted coordinate 'bcoord' and the
-            //dimensions of vdims.
-            //NB: bcoord consist of only visible coordinates.
-            assert(lastary->ndims >= views[v]->ndims);
-            n = lastary->ndims-1;
-            for(j=views[v]->ndims-1; j>=0; j--,n--)
-            {
-                s = views[v]->slice[idx_v2s(views[v],j)].nsteps;
-                if(s == PseudoIndex)
-                    s = 1;
-                if(s == 1)
-                    bcoord[j] = 0;// 1-dim broadcast.
-                else
-                    bcoord[j] = coord[n];
-                vdims[v][j] = MIN(blocksize, s - bcoord[j]*blocksize);
-            }
-            #ifdef DNDY_TIME
-                unsigned long long tdelta2;
-                DNDTIME(tdelta2);
-            #endif
-
-            //Calculate the current coord's uid.
-            npy_intp uid = 0;s=1;
-            for(i=views[v]->ndims-1; i>=0; i--)
-            {
-                uid += bcoord[i] * s;
-                s *= views[v]->blockdims[i];
-            }
-            //Check of we need to calulate a new view-block.
-            if(vblocks[v].uid != uid)
-            {
-                vblocks[v].uid = uid;
-                calc_vblock(views[v], bcoord, &vblocks[v]);
-            }
-
-            #ifdef DNDY_TIME
-                DNDTIME_SUM(tdelta2, dndt.calc_vblock)
-            #endif
-        }
-
-        //Do computation for view-block.
-        memset(scoord, 0, lastary->ndims * sizeof(npy_intp));
-        memset(svboffset, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
-        memset(csvb, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
-        int svb_notfinished = 1;
-        for(; svb_notfinished; mpi_tag_svb++)
-        {
-            //Find current sub-view-block for all arrays.
-            dndsvb *svbs[NPY_MAXARGS];
+            skip_coord=1;
             for(v=0; v<narys; v++)
             {
+                dndview *view = views[v];
+                //Scalars are ignored
+                if(view->base->ndims == 0)
+                    continue;
+
+                rank2cart(view->base->ndims, myrank, pcoord);
+                int conflict = 1;
+                for(i=0; i<view->ndims; i++)
+                {
+                    dndslice *t = &view->slice[idx_v2s(view, i)];
+                    if(t->nsteps == PseudoIndex)
+                        continue;
+                    int bdim = idx_v2b(view,i);
+                    int nproc = cart_dim_sizes[view->base->ndims-1][bdim];
+
+                    //Base index
+                    npy_intp s_base_idx = coord[i]*blocksize*t->step + t->start;
+                    //Process index
+                    npy_intp s_proc_idx = (s_base_idx/blocksize) % nproc;
+
+                    //Base index
+                    npy_intp e_base_idx = s_base_idx + (blocksize-1)*t->step;
+                    //Process index
+                    npy_intp e_proc_idx = (e_base_idx/blocksize) % nproc;
+
+                    if(!(e_proc_idx < s_proc_idx ||
+                        (s_proc_idx <= pcoord[bdim] &&
+                         pcoord[bdim] <= e_proc_idx)))
+                    {
+                        conflict = 0;
+                        break;
+                    }
+                }
+                if(conflict)
+                {
+                    skip_coord = 0;
+                    break;
+                }
+            }
+        }
+        if(!skip_coord)
+        {
+            //Get one vblock from all arrays.
+            for(v=0; v<narys; v++)
+            {
+                //Scalars are already located locally
                 if(views[v]->base->ndims == 0)
                     continue;
 
-                s=1;j=0;
+                //Compute broadcasted coordinate 'bcoord' and the
+                //dimensions of vdims.
+                //NB: bcoord consist of only visible coordinates.
+                assert(lastary->ndims >= views[v]->ndims);
+                n = lastary->ndims-1;
+                for(j=views[v]->ndims-1; j>=0; j--,n--)
+                {
+                    s = views[v]->slice[idx_v2s(views[v],j)].nsteps;
+                    if(s == PseudoIndex)
+                        s = 1;
+                    if(s == 1)
+                        bcoord[j] = 0;// 1-dim broadcast.
+                    else
+                        bcoord[j] = coord[n];
+                    vdims[v][j] = MIN(blocksize, s - bcoord[j]*blocksize);
+                }
+                #ifdef DNDY_TIME
+                    unsigned long long tdelta2;
+                    DNDTIME(tdelta2);
+                #endif
+
+                //Calculate the current coord's uid.
+                npy_intp uid = 0;s=1;
                 for(i=views[v]->ndims-1; i>=0; i--)
                 {
-                    j += csvb[v][i] * s;
-                    s *= vblocks[v].svbdims[idx_v2b(views[v],i)];
+                    uid += bcoord[i] * s;
+                    s *= views[v]->blockdims[i];
                 }
-                assert(j < vblocks[v].nsub);
-                svbs[v] = &vblocks[v].sub[j];
+                //Check of we need to calulate a new view-block.
+                if(vblocks[v].uid != uid)
+                {
+                    vblocks[v].uid = uid;
+                    calc_vblock(views[v], bcoord, &vblocks[v]);
+                }
+
+                #ifdef DNDY_TIME
+                    DNDTIME_SUM(tdelta2, dndt.calc_vblock)
+                #endif
             }
 
-            //Find biggest overlapping chunk of sub-view-blocks.
-            for(i=0; i<lastary->ndims; i++)
-                sdims[i] = blocksize;
-            for(i=lastary->ndims-1; i>=0; i--)
+            //Do computation for view-block.
+            memset(scoord, 0, lastary->ndims * sizeof(npy_intp));
+            memset(svboffset, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
+            memset(csvb, 0, NPY_MAXARGS * NPY_MAXDIMS * sizeof(npy_intp));
+            int svb_notfinished = 1;
+            for(; svb_notfinished; mpi_tag_svb++)
             {
+                //Find current sub-view-block for all arrays.
+                dndsvb *svbs[NPY_MAXARGS];
                 for(v=0; v<narys; v++)
                 {
                     if(views[v]->base->ndims == 0)
                         continue;
-                    j = i - (lastary->ndims - views[v]->ndims);
 
-                    //Check for broadcast dimension.
-                    if(j<0)//Fewer ndims than lastary.
-                        continue;
-                    //1-dimensions.
-                    s = views[v]->slice[idx_v2s(views[v],j)].nsteps;
-                    if(s == 1 || s == PseudoIndex)
-                        continue;
-                    //Save the smallest sdims.
-                    s = svbs[v]->nsteps[idx_v2b(views[v],j)] -
-                        svboffset[v][j];
-                    sdims[i] = MIN(sdims[i], s);
+                    s=1;j=0;
+                    for(i=views[v]->ndims-1; i>=0; i--)
+                    {
+                        j += csvb[v][i] * s;
+                        s *= vblocks[v].svbdims[idx_v2b(views[v],i)];
+                    }
+                    assert(j < vblocks[v].nsub);
+                    svbs[v] = &vblocks[v].sub[j];
                 }
-                assert(sdims[i] >= 0 &&
-                       sdims[i] <= blocksize);
-            }
 
-            if(coord_owner == myrank)
-            {
-                //Add receive request to the svb-DAG.
-                for(v=0; v<nin; v++, mpi_tag_svb++)
+                //Find biggest overlapping chunk of sub-view-blocks.
+                for(i=0; i<lastary->ndims; i++)
+                    sdims[i] = blocksize;
+                for(i=lastary->ndims-1; i>=0; i--)
                 {
-                    if(views[v]->base->ndims == 0)
-                        continue;
-                    //We did the comm already.
-                    if(svbs[v]->comm_received_by == myrank)
-                        continue;
-                    //The data is located locally.
-                    if(svbs[v]->rank == myrank)
-                        continue;
+                    for(v=0; v<narys; v++)
+                    {
+                        if(views[v]->base->ndims == 0)
+                            continue;
+                        j = i - (lastary->ndims - views[v]->ndims);
 
-                    assert(svbs[v]->data == NULL);
+                        //Check for broadcast dimension.
+                        if(j<0)//Fewer ndims than lastary.
+                            continue;
+                        //1-dimensions.
+                        s = views[v]->slice[idx_v2s(views[v],j)].nsteps;
+                        if(s == 1 || s == PseudoIndex)
+                            continue;
+                        //Save the smallest sdims.
+                        s = svbs[v]->nsteps[idx_v2b(views[v],j)] -
+                            svboffset[v][j];
+                        sdims[i] = MIN(sdims[i], s);
+                    }
+                    assert(sdims[i] >= 0 &&
+                           sdims[i] <= blocksize);
+                }
 
-                    //Communication has now been handled.
-                    svbs[v]->comm_received_by = myrank;
+                if(coord_owner == myrank)
+                {
+                    //Add receive request to the svb-DAG.
+                    for(v=0; v<nin; v++, mpi_tag_svb++)
+                    {
+                        if(views[v]->base->ndims == 0)
+                            continue;
+                        //We did the comm already.
+                        if(svbs[v]->comm_received_by == myrank)
+                            continue;
+                        //The data is located locally.
+                        if(svbs[v]->rank == myrank)
+                            continue;
+
+                        assert(svbs[v]->data == NULL);
+
+                        //Communication has now been handled.
+                        svbs[v]->comm_received_by = myrank;
+
+                        //Add a new sub-view block DAG node.
+                        dndop_comm *op = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndop_comm);
+                        op->op = DNPY_BUF_RECV;
+                        op->optype = DNPY_COMM;
+                        op->narys = 1;
+                        op->refcount = 0;
+                        op->views[0] = views[v];
+                        op->svbs[0] = svbs[v];
+                        op->accesstypes[0] = DNPY_WRITE;
+                        op->mpi_tag = mpi_tag_svb;
+                        op->remote_rank = svbs[v]->rank;
+                        dndnode *node = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndnode);
+                        node->op = (dndop *) op;
+                        node->op_ary_idx = 0;
+                        dag_svb_add(node, 1, 0);
+                    }
+                    for(v=nin; v<narys; v++)//Allocate memory for output
+                    {
+                        if(views[v]->base->ndims == 0)
+                            continue;
+                        //The data is located locally.
+                        if(svbs[v]->rank == myrank)
+                            continue;
+                        if(svbs[v]->data != NULL)
+                            continue;
+
+                        svbs[v]->data = workbuf_nextfree;
+                        workbuf_nextfree += svbs[v]->nelem * views[v]->base->elsize;
+                    }
+                    //Add the apply request to the svb-DAG.
+                    dndop_ufunc *op = workbuf_nextfree;
+                    workbuf_nextfree += sizeof(dndop_ufunc);
+                    op->op = DNPY_UFUNC;
+                    op->optype = DNPY_NONCOMM;
+                    op->narys = narys;
+                    op->refcount = 0;
+                    op->nout = nout_arys;
+                    memcpy(op->views, views, narys * sizeof(dndview*));
+                    for(v=0; v<nin; v++)
+                        op->accesstypes[v] = DNPY_READ;
+                    for(v=nin; v<narys; v++)
+                        op->accesstypes[v] = DNPY_WRITE;
+                    op->func = func;
+                    op->funcdata = funcdata;
+                    Py_INCREF(PyOp);
+                    op->PyOp = PyOp;
+
+                    //Update the PyArray Objects to match the current
+                    //sub-view-block.
+                    for(v=0; v<narys; v++)
+                    {
+                        //Scalars is already updated.
+                        if(views[v]->base->ndims == 0)
+                        {
+                            op->svbs[v] = NULL;
+                            continue;
+                        }
+
+                        //Convert sdims to match current view ndims.
+                        for(i=0; i<views[v]->ndims; i++)
+                            csdims[views[v]->ndims-1-i] =
+                                            MIN(vdims[v][views[v]->ndims-1-i],
+                                                sdims[lastary->ndims-1-i]);
+
+                        //Compute offset & stride for the Object.
+                        //When the data is local it may be non-contiguous
+                        //and when the data is from a remote source it is
+                        //contiguous.
+                        offset=0; s=views[v]->base->elsize;
+                        if(svbs[v]->rank == myrank)
+                            for(i=views[v]->ndims-1; i>=0; i--)
+                            {
+                                //PseudoIndex should have 0 in stride.
+                                if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
+                                   PseudoIndex)
+                                {
+                                    sstride[i] = 0;
+                                    continue;
+                                }
+                                sstride[i] = svbs[v]->stride[idx_v2b(views[v],i)] *
+                                             views[v]->slice[idx_v2s(views[v],i)].step *
+                                             views[v]->base->elsize;
+                                offset += svboffset[v][i] * sstride[i];
+                            }
+                        else
+                            for(i=views[v]->ndims-1; i>=0; i--)
+                            {
+                                //PseudoIndex should have 0 in stride.
+                                if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
+                                   PseudoIndex)
+                                {
+                                    sstride[i] = 0;
+                                    continue;
+                                }
+                                sstride[i] = s;
+                                offset += svboffset[v][i] * s;
+                                s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
+                            }
+                        //Apply update to apply-sub-view-block.
+                        s = views[v]->ndims * sizeof(npy_intp);
+                        memcpy(op->asvb[v].dims, csdims, s);
+                        memcpy(op->asvb[v].stride, sstride, s);
+                        op->asvb[v].offset = offset;
+                        op->svbs[v] = svbs[v];
+                    }
 
                     //Add a new sub-view block DAG node.
-                    dndop_comm *op = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndop_comm);
-                    op->op = DNPY_BUF_RECV;
-                    op->optype = DNPY_COMM;
-                    op->narys = 1;
-                    op->refcount = 0;
-                    op->views[0] = views[v];
-                    op->svbs[0] = svbs[v];
-                    op->accesstypes[0] = DNPY_WRITE;
-                    op->mpi_tag = mpi_tag_svb;
-                    op->remote_rank = svbs[v]->rank;
-                    dndnode *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode);
-                    node->op = (dndop *) op;
-                    node->op_ary_idx = 0;
-                    dag_svb_add(node, 1, 0);
-                }
-                for(v=nin; v<narys; v++)//Allocate memory for output
-                {
-                    if(views[v]->base->ndims == 0)
-                        continue;
-                    //The data is located locally.
-                    if(svbs[v]->rank == myrank)
-                        continue;
-                    if(svbs[v]->data != NULL)
-                        continue;
-
-                    svbs[v]->data = workbuf_nextfree;
-                    workbuf_nextfree += svbs[v]->nelem * views[v]->base->elsize;
-                }
-                //Add the apply request to the svb-DAG.
-                dndop_ufunc *op = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndop_ufunc);
-                op->op = DNPY_UFUNC;
-                op->optype = DNPY_NONCOMM;
-                op->narys = narys;
-                op->refcount = 0;
-                op->nout = nout_arys;
-                memcpy(op->views, views, narys * sizeof(dndview*));
-                for(v=0; v<nin; v++)
-                    op->accesstypes[v] = DNPY_READ;
-                for(v=nin; v<narys; v++)
-                    op->accesstypes[v] = DNPY_WRITE;
-                op->func = func;
-                op->funcdata = funcdata;
-                Py_INCREF(PyOp);
-                op->PyOp = PyOp;
-
-                //Update the PyArray Objects to match the current
-                //sub-view-block.
-                for(v=0; v<narys; v++)
-                {
-                    //Scalars is already updated.
-                    if(views[v]->base->ndims == 0)
+                    dndnode *nodes = workbuf_nextfree;
+                    workbuf_nextfree += narys * sizeof(dndnode);
+                    for(v=0; v<narys; v++)
                     {
-                        op->svbs[v] = NULL;
-                        continue;
+                        nodes[v].op_ary_idx = v;
+                        nodes[v].op = (dndop *)op;
                     }
-
-                    //Convert sdims to match current view ndims.
-                    for(i=0; i<views[v]->ndims; i++)
-                        csdims[views[v]->ndims-1-i] =
-                                        MIN(vdims[v][views[v]->ndims-1-i],
-                                            sdims[lastary->ndims-1-i]);
-
-                    //Compute offset & stride for the Object.
-                    //When the data is local it may be non-contiguous
-                    //and when the data is from a remote source it is
-                    //contiguous.
-                    offset=0; s=views[v]->base->elsize;
-                    if(svbs[v]->rank == myrank)
-                        for(i=views[v]->ndims-1; i>=0; i--)
-                        {
-                            //PseudoIndex should have 0 in stride.
-                            if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
-                               PseudoIndex)
-                            {
-                                sstride[i] = 0;
-                                continue;
-                            }
-                            sstride[i] = svbs[v]->stride[idx_v2b(views[v],i)] *
-                                         views[v]->slice[idx_v2s(views[v],i)].step *
-                                         views[v]->base->elsize;
-                            offset += svboffset[v][i] * sstride[i];
-                        }
-                    else
-                        for(i=views[v]->ndims-1; i>=0; i--)
-                        {
-                            //PseudoIndex should have 0 in stride.
-                            if(views[v]->slice[idx_v2s(views[v],i)].nsteps ==
-                               PseudoIndex)
-                            {
-                                sstride[i] = 0;
-                                continue;
-                            }
-                            sstride[i] = s;
-                            offset += svboffset[v][i] * s;
-                            s *= svbs[v]->nsteps[idx_v2b(views[v],i)];
-                        }
-                    //Apply update to apply-sub-view-block.
-                    s = views[v]->ndims * sizeof(npy_intp);
-                    memcpy(op->asvb[v].dims, csdims, s);
-                    memcpy(op->asvb[v].stride, sstride, s);
-                    op->asvb[v].offset = offset;
-                    op->svbs[v] = svbs[v];
-                }
-
-                //Add a new sub-view block DAG node.
-                dndnode *nodes = workbuf_nextfree;
-                workbuf_nextfree += narys * sizeof(dndnode);
-                for(v=0; v<narys; v++)
-                {
-                    nodes[v].op_ary_idx = v;
-                    nodes[v].op = (dndop *)op;
-                }
-                dag_svb_add(nodes, v, 0);
-            }
-            else
-            {   //Add send request to the svb-DAG.
-                for(v=0; v<nin; v++, mpi_tag_svb++)
-                {
-                    if(views[v]->base->ndims == 0)
-                        continue;
-                    //The data is not located on this proc.
-                    if(svbs[v]->rank != myrank)
-                        continue;
-                    if(svbs[v]->comm_received_by == coord_owner)
-                        continue;
-
-                    //Communication has now been handled.
-                    svbs[v]->comm_received_by = coord_owner;
-
-                    //Add a new sub-view block DAG node.
-                    dndop_comm *op = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndop_comm);
-                    op->op = DNPY_SEND;
-                    op->optype = DNPY_COMM;
-                    op->narys = 1;
-                    op->refcount = 0;
-                    op->views[0] = views[v];
-                    op->svbs[0] = svbs[v];
-                    op->accesstypes[0] = DNPY_READ;
-                    op->mpi_tag = mpi_tag_svb;
-                    op->remote_rank = coord_owner;
-                    dndnode *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode);
-                    node->op_ary_idx = 0;
-                    node->op = (dndop *)op;
-                    dag_svb_add(node, 1, 0);
-                }
-            }
-
-            //Iterate coord one chunk.
-            for(i=lastary->ndims-1; i>=0; i--)
-            {
-                //Update svboffset and csvb.
-                for(v=0; v<narys; v++)
-                {
-                    j = i - (lastary->ndims - views[v]->ndims);
-                    if(j<0)
-                        continue;
-                    svboffset[v][j] += sdims[j];
-                    if(svboffset[v][j] >=
-                       svbs[v]->nsteps[idx_v2b(views[v],j)])
-                    {
-                        svboffset[v][j] = 0;
-                    }
-                }
-
-                scoord[i] += sdims[i];
-                n = lastary->slice[idx_v2s(lastary,i)].nsteps;
-                if(n == PseudoIndex)
-                    n = 0;
-                if(scoord[i] >= MIN(blocksize, n - coord[i] * blocksize))
-                {
-                    //We a finished, if wrapping around.
-                    if(i == 0)
-                    {
-                        svb_notfinished = 0;
-                        break;
-                    }
-                    scoord[i] = 0;
+                    dag_svb_add(nodes, v, 0);
                 }
                 else
-                    break;
-            }
-            //Iterate csvb one sub-view-block.
-            for(v=0; v<narys; v++)
-            {
-                for(i=views[v]->ndims-1; i >= 0; i--)
-                {
-                    if(svboffset[v][i] == 0)
-                        csvb[v][i]++;
+                {   //Add send request to the svb-DAG.
+                    for(v=0; v<nin; v++, mpi_tag_svb++)
+                    {
+                        if(views[v]->base->ndims == 0)
+                            continue;
+                        //The data is not located on this proc.
+                        if(svbs[v]->rank != myrank)
+                            continue;
+                        if(svbs[v]->comm_received_by == coord_owner)
+                            continue;
 
-                    if(csvb[v][i] >=
-                       vblocks[v].svbdims[idx_v2b(views[v],i)])
-                        csvb[v][i] = 0;
+                        //Communication has now been handled.
+                        svbs[v]->comm_received_by = coord_owner;
+
+                        //Add a new sub-view block DAG node.
+                        dndop_comm *op = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndop_comm);
+                        op->op = DNPY_SEND;
+                        op->optype = DNPY_COMM;
+                        op->narys = 1;
+                        op->refcount = 0;
+                        op->views[0] = views[v];
+                        op->svbs[0] = svbs[v];
+                        op->accesstypes[0] = DNPY_READ;
+                        op->mpi_tag = mpi_tag_svb;
+                        op->remote_rank = coord_owner;
+                        dndnode *node = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndnode);
+                        node->op_ary_idx = 0;
+                        node->op = (dndop *)op;
+                        dag_svb_add(node, 1, 0);
+                    }
+                }
+
+                //Iterate coord one chunk.
+                for(i=lastary->ndims-1; i>=0; i--)
+                {
+                    //Update svboffset and csvb.
+                    for(v=0; v<narys; v++)
+                    {
+                        j = i - (lastary->ndims - views[v]->ndims);
+                        if(j<0)
+                            continue;
+                        svboffset[v][j] += sdims[j];
+                        if(svboffset[v][j] >=
+                           svbs[v]->nsteps[idx_v2b(views[v],j)])
+                        {
+                            svboffset[v][j] = 0;
+                        }
+                    }
+
+                    scoord[i] += sdims[i];
+                    n = lastary->slice[idx_v2s(lastary,i)].nsteps;
+                    if(n == PseudoIndex)
+                        n = 0;
+                    if(scoord[i] >= MIN(blocksize, n - coord[i] * blocksize))
+                    {
+                        //We a finished, if wrapping around.
+                        if(i == 0)
+                        {
+                            svb_notfinished = 0;
+                            break;
+                        }
+                        scoord[i] = 0;
+                    }
                     else
                         break;
                 }
+                //Iterate csvb one sub-view-block.
+                for(v=0; v<narys; v++)
+                {
+                    for(i=views[v]->ndims-1; i >= 0; i--)
+                    {
+                        if(svboffset[v][i] == 0)
+                            csvb[v][i]++;
+
+                        if(csvb[v][i] >=
+                           vblocks[v].svbdims[idx_v2b(views[v],i)])
+                            csvb[v][i] = 0;
+                        else
+                            break;
+                    }
+                }
             }
+
+            //Write vblocks to output arrays.
+            for(v=nin; v<narys; v++)
+                for(j=0; j<vblocks[v].nsub; j++, mpi_tag_svb++)
+                {
+                    dndsvb *svb = &vblocks[v].sub[j];
+
+                    //Add a new sub-view block DAG node.
+                    if(coord_owner == myrank && svb->rank != myrank)
+                    {
+                        dndop_comm *op = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndop_comm);
+                        op->narys = 1;
+                        op->refcount = 0;
+                        op->views[0] = views[v];
+                        op->svbs[0] = svb;
+                        op->accesstypes[0] = DNPY_READ;
+                        op->mpi_tag = mpi_tag_svb;
+                        op->op = DNPY_BUF_SEND;
+                        op->optype = DNPY_COMM;
+                        op->remote_rank = svb->rank;
+                        dndnode *node = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndnode);
+                        node->op_ary_idx = 0;
+                        node->op = (dndop *)op;
+                        dag_svb_add(node, 1, 0);
+                    }
+                    else if(coord_owner != myrank && svb->rank == myrank)
+                    {
+                        dndop_comm *op = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndop_comm);
+                        op->narys = 1;
+                        op->refcount = 0;
+                        op->views[0] = views[v];
+                        op->svbs[0] = svb;
+                        op->accesstypes[0] = DNPY_WRITE;
+                        op->mpi_tag = mpi_tag_svb;
+                        op->op = DNPY_RECV;
+                        op->optype = DNPY_COMM;
+                        op->remote_rank = coord_owner;
+                        dndnode *node = workbuf_nextfree;
+                        workbuf_nextfree += sizeof(dndnode);
+                        node->op_ary_idx = 0;
+                        node->op = (dndop *)op;
+                        dag_svb_add(node, 1, 0);
+                    }
+                }
         }
 
-        //Write vblocks to output arrays.
-        for(v=nin; v<narys; v++)
-            for(j=0; j<vblocks[v].nsub; j++, mpi_tag_svb++)
-            {
-                dndsvb *svb = &vblocks[v].sub[j];
-
-                //Add a new sub-view block DAG node.
-                if(coord_owner == myrank && svb->rank != myrank)
-                {
-                    dndop_comm *op = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndop_comm);
-                    op->narys = 1;
-                    op->refcount = 0;
-                    op->views[0] = views[v];
-                    op->svbs[0] = svb;
-                    op->accesstypes[0] = DNPY_READ;
-                    op->mpi_tag = mpi_tag_svb;
-                    op->op = DNPY_BUF_SEND;
-                    op->optype = DNPY_COMM;
-                    op->remote_rank = svb->rank;
-                    dndnode *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode);
-                    node->op_ary_idx = 0;
-                    node->op = (dndop *)op;
-                    dag_svb_add(node, 1, 0);
-                }
-                else if(coord_owner != myrank && svb->rank == myrank)
-                {
-                    dndop_comm *op = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndop_comm);
-                    op->narys = 1;
-                    op->refcount = 0;
-                    op->views[0] = views[v];
-                    op->svbs[0] = svb;
-                    op->accesstypes[0] = DNPY_WRITE;
-                    op->mpi_tag = mpi_tag_svb;
-                    op->op = DNPY_RECV;
-                    op->optype = DNPY_COMM;
-                    op->remote_rank = coord_owner;
-                    dndnode *node = workbuf_nextfree;
-                    workbuf_nextfree += sizeof(dndnode);
-                    node->op_ary_idx = 0;
-                    node->op = (dndop *)op;
-                    dag_svb_add(node, 1, 0);
-                }
-            }
         #ifdef DNDY_TIME
             DNDTIME_SUM(tdelta, dndt.ufunc_svb)
         #endif
