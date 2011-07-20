@@ -2,6 +2,10 @@
 #define DISTNUMPY_H
 #include "mpi.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 //ufunc definitions from numpy/ufuncobject.h.
 //They are included here instead.
 typedef void (*PyUFuncGenericFunction)
@@ -318,5 +322,9 @@ typedef struct
     npy_intp napply;
     npy_intp nflush;
 } dndtime;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
