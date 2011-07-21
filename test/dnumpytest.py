@@ -6,6 +6,21 @@ import subprocess
 import os
 import getopt
 
+#If not available some test may be ignored.
+try:
+    import scipy
+    from scipy import linalg
+except:
+    pass
+try:
+    import zlib
+except:
+    pass
+try:
+    import pyHPC
+except:
+    pass
+
 DataSetDir = os.path.join(os.path.join(\
              os.path.dirname(sys.argv[0]), "datasets"), "")
 
