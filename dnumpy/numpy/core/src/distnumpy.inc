@@ -1744,14 +1744,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                     //Process index
                     npy_intp s_proc_idx = (s_base_idx/blocksize) % nproc;
 
-                    //Base index
-                    npy_intp e_base_idx = s_base_idx + (blocksize-1)*t->step;
-                    //Process index
-                    npy_intp e_proc_idx = (e_base_idx/blocksize) % nproc;
+                    if(!((s_proc_idx <= pcoord[bdim] && pcoord[bdim] <= s_proc_idx+t->step) ||
 
-                    if(!(e_proc_idx < s_proc_idx ||
-                        (s_proc_idx <= pcoord[bdim] &&
-                         pcoord[bdim] <= e_proc_idx)))
+                         (s_proc_idx > pcoord[bdim] && t->step >= nproc-(s_proc_idx-pcoord[bdim]))))
                     {
                         conflict = 0;
                         break;
@@ -1764,6 +1759,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 }
             }
         }
+
         if(!skip_coord)
         {
             //Get one vblock from all arrays.
@@ -2033,6 +2029,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                         node->op_ary_idx = 0;
                         node->op = (dndop *)op;
                         dag_svb_add(node, 1, 0);
+                        assert(!skip_coord);
                     }
                 }
 
@@ -2131,9 +2128,13 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                         node->op_ary_idx = 0;
                         node->op = (dndop *)op;
                         dag_svb_add(node, 1, 0);
+                        assert(!skip_coord);
                     }
                 }
         }
+
+        //Check for mpi tag overflow.
+        assert(mpi_tag_svb < mpi_tag + 1000);
 
         #ifdef DNDY_TIME
             DNDTIME_SUM(tdelta, dndt.ufunc_svb)
