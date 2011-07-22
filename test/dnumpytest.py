@@ -26,7 +26,7 @@ DataSetDir = os.path.join(os.path.join(\
 
 TmpSetDir = os.path.join("/",os.path.join("tmp", ""))
 
-def array_equal(A,B):
+def array_equal(A,B,maxerror=0.0):
     if type(A) is not type(B):
         return False
     elif (not type(A) == type(np.array([]))) and (not type(A) == type([])):
@@ -40,7 +40,9 @@ def array_equal(A,B):
         return False
 
     for i in range(len(A)):
-        if not A[i] == B[i]:
+        delta = abs(A[i] - B[i])
+        if delta > maxerror:
+            print "[rank %d] Delta error:"%(np.RANK),delta
             return False
     return True
 
