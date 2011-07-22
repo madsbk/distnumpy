@@ -8,7 +8,12 @@ def run():
         print "[rank %d] Warning - ignored in SPMD mode\n"%(np.RANK),
         return
 
-    import zlib#Make sure that it fails here if zlib is not available
+    try:#This test requires zlib
+        import zlib
+    except:
+        print "[rank %d] Warning - ignored zlib not found\n"%(np.RANK),
+        return
+
     max_ndim = 6
     for i in xrange(1,max_ndim+1):
         src = dnumpytest.random_list(random.sample(xrange(1, 10),i))
