@@ -35,6 +35,7 @@ def lu(A):
         if not (np.diag(p) == 1).all():#We do not support pivoting
             raise Exception("Pivoting was needed!")
 
+        #There seems to be a transpose bug in SciPy's LU
         diagL = diagL.T
         diagU = diagU.T
 
