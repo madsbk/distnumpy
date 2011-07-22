@@ -7,17 +7,16 @@ def lu(A):
 
     Parameters
     ----------
-    a : array, shape (M, N)
+    a : array, shape (M, M)
         Array to decompose
 
     Returns
     -------
     p : array, shape (M, M)
         Permutation matrix
-    l : array, shape (M, K)
+    l : array, shape (M, M)
         Lower triangular or trapezoidal matrix with unit diagonal.
-        K = min(M, N)
-    u : array, shape (K, N)
+    u : array, shape (M, M)
         Upper triangular or trapezoidal matrix
     """
 
@@ -36,6 +35,9 @@ def lu(A):
         if not (np.diag(p) == 1).all():#We do not support pivoting
             raise Exception("Pivoting was needed!")
 
+        diagL = diagL.T
+        diagU = diagU.T
+
         L[k:k+bs,k:k+bs] = diagL
         U[k:k+bs,k:k+bs] = diagU
 
@@ -43,9 +45,8 @@ def lu(A):
             #Compute multipliers
             for i in xrange(k+bs,SIZE,BS):
                 tbs = min(BS,SIZE - i) #Block size of the i'th block
-                L[i:i+tbs,k:k+bs] = linalg.solve(diagU.T, A[i:i+tbs,k:k+bs].T).T
-                U[k:k+bs,i:i+tbs] = linalg.solve(diagL , A[k:k+bs,i:i+tbs])
-
+                L[i:i+tbs,k:k+bs] = np.linalg.solve(diagU.T, A[i:i+tbs,k:k+bs].T).T
+                U[k:k+bs,i:i+tbs] = np.linalg.solve(diagL , A[k:k+bs,i:i+tbs])
             #Apply to remaining submatrix
             A[k+bs:, k+bs:] -= np.dot(L[k+bs:,k:k+bs], U[k:k+bs,k+bs:])
 
