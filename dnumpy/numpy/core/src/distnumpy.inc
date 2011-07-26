@@ -4842,3 +4842,62 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
                                      ary->base->dtype,
                                      ary->base->data);
 }/* local_data*/
+
+
+/*NUMPY_API
+ *===================================================================
+ * Public
+ * Returns True if the Process is in the process coordinate pattern.
+ * incoord is a list of coordinate. None is a wildcard e.g. [1,None]
+ * means all coordinates in the second row.
+ * If 'blocks' is true the coordinate is in
+ */
+static PyObject *
+dnumpy_proc_grid_incoord(PyArrayObject *self, PyObject *args)
+{
+    int i;
+    PyObject *incoord = NULL;
+    if (!PyArg_ParseTuple(args, "O", &incoord))
+        return NULL;
+
+    /*
+    int blocks = 0;
+    static char *kwd[] = {"blocks", NULL};
+    if(!PyArg_ParseTupleAndKeywords(args, kwds, "O|O&", kwd, &incoord,
+                                    PyArray_BoolConverter, blocks))
+        return NULL;
+    */
+
+    #ifndef DNPY_SPMD
+        PyErr_Format(PyExc_ValueError,
+                     "this makes only sense in SPMD mode.");
+        return NULL;
+    #endif
+
+    if(!PyArray_ISDISTRIBUTED(self))
+    {
+        PyErr_Format(PyExc_ValueError, "The array is not distributed.");
+        return NULL;
+    }
+
+    dndview *view = get_dndview(PyArray_DNDUID(self));
+    int pcoords[NPY_MAXDIMS];
+    rank2cart(view->base->ndims, myrank, pcoords);
+
+    if(PySequence_Size(incoord) != view->base->ndims)
+    {
+        PyErr_Format(PyExc_ValueError, "The incoord argument must have "
+                     "an element for each dimension in the base array");
+        return NULL;
+    }
+
+    for(i=0; i<view->base->ndims; ++i)
+    {
+        PyObject *item = PySequence_ITEM(incoord, i);
+        if(PyInt_Check(item))
+            if(PyInt_AsLong(item) != pcoords[i])
+                Py_RETURN_FALSE;
+    }
+
+    Py_RETURN_TRUE;
+} /* dnumpy_proc_grid_incoord */
