@@ -1684,6 +1684,13 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
         ary->nblocks *= ary->blockdims[i];
     }
     ary->localsize = localsize;
+    if(ary->localsize == 0)
+    {
+        memset(ary->localdims, 0, ary->ndims * sizeof(npy_intp));
+        memset(ary->localblockdims, 0, ary->ndims * sizeof(npy_intp));
+    }
+    if(ary->nblocks == 0)
+        memset(ary->blockdims, 0, ary->ndims * sizeof(npy_intp));
 
     //Allocate the root nodes array.
     ary->rootnodes = malloc(ary->nblocks * sizeof(dndnode*));
@@ -1704,6 +1711,8 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
         view->blockdims[i] = ceil(ary->dims[i] / (double) blocksize);
         view->nblocks *= view->blockdims[i];
     }
+    if(view->nblocks == 0)
+        memset(view->blockdims, 0, ndims * sizeof(npy_intp));
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -1794,19 +1803,26 @@ static void do_CREATE_VIEW(npy_intp org_view_uid, dndview *newview)
     newview = put_dndview(newview);
 
     //Compute size of view-blocks.
-    newview->nblocks = 1;
-    n=0;
-    for(i=0; i < newview->nslice; i++)
+    if(newview->nblocks == 0)//The view is empty
     {
-        if(newview->slice[i].nsteps != SingleIndex)
+        memset(newview->blockdims, 0, newview->ndims * sizeof(npy_intp));
+    }
+    else
+    {
+        newview->nblocks = 1;
+        n=0;
+        for(i=0; i < newview->nslice; i++)
         {
-            j = 1;//SingleIndex has length one.
-            if(newview->slice[i].nsteps != PseudoIndex)
-                j = newview->slice[i].nsteps;
+            if(newview->slice[i].nsteps != SingleIndex)
+            {
+                j = 1;//SingleIndex has length one.
+                if(newview->slice[i].nsteps != PseudoIndex)
+                    j = newview->slice[i].nsteps;
 
-            newview->blockdims[n] = ceil(j / (double) blocksize);
-            newview->nblocks *= newview->blockdims[n];
-            n++;
+                newview->blockdims[n] = ceil(j / (double) blocksize);
+                newview->nblocks *= newview->blockdims[n];
+                n++;
+            }
         }
     }
 } /* do_CREATE_VIEW */
@@ -2043,15 +2059,14 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     dndview *lastary = views[narys-1];
 
     //Need to make sure that the output view is not empty.
-    for(i=0; i<lastary->nslice; i++)
-        if(lastary->slice[i].nsteps == 0)
-        {
-            //Clean up Scalar dummy.
-            for(i=0; i<narys; i++)
-                if(views[i]->base->ndims == 0)//Scalar dummy.
-                    do_DESTROY_ARRAY(views[i]->uid);
-            return;
-        }
+    if(lastary->nblocks == 0)
+    {
+        //Clean up Scalar dummy.
+        for(i=0; i<narys; i++)
+            if(views[i]->base->ndims == 0)//Scalar dummy.
+                do_DESTROY_ARRAY(views[i]->uid);
+        return;
+    }
 
     //Print debug info.
     #ifdef DISTNUMPY_DEBUG
@@ -2997,12 +3012,21 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     int mycoord[2], tcoord[2];
     rank2cart(2, myrank, mycoord);
     int *cart_dim = cart_dim_sizes[1];
+    npy_intp localdims[2];
+
+    //We need to compute our own local dimensions since a MPI-process
+    //may be involved in the computation even though it has no elements
+    //of a particular array.
+    localdims[0] = dnumroc(C->base->dims[0], blocksize, mycoord[0],
+                           cart_dim[0]);
+    localdims[1] = dnumroc(C->base->dims[1], blocksize, mycoord[1],
+                           cart_dim[1]);
 
     //malloc temp space
     double *temp  = malloc(C->base->elsize);
-    double *work0 = malloc(C->base->localdims[0] * iwrk *
+    double *work0 = malloc(localdims[0] * iwrk *
                            C->base->elsize);
-    double *work1 = malloc(iwrk * C->base->localdims[1] *
+    double *work1 = malloc(iwrk * localdims[1] *
                            C->base->elsize);
 
     //Leading dimensions.
@@ -3018,7 +3042,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
         if(mycoord[1] == icur[1])
         {
             double *Adata = ((double *)A->base->data)+jj;
-            for(i=0; i<C->base->localdims[0]; i++)
+            for(i=0; i<localdims[0]; i++)
                 for(j=0; j<iwrk; j++)
                     work0[i*iwrk+j] = Adata[i*lda+j];
         }
@@ -3027,8 +3051,8 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
         {
             double *Bdata = ((double *)B->base->data)+ldb*ii;
             for(i=0; i<iwrk; i++)
-                for(j=0; j<C->base->localdims[1]; j++)
-                    work1[i*C->base->localdims[1]+j] = Bdata[i*ldb+j];
+                for(j=0; j<localdims[1]; j++)
+                    work1[i*localdims[1]+j] = Bdata[i*ldb+j];
         }
         if(cart_dim[1] > 1)
         {
@@ -3038,7 +3062,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 //We have to recv since we are not icur.
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]-1+cart_dim[1])%cart_dim[1];
-                MPI_Recv(work0, C->base->localdims[0] * iwrk,
+                MPI_Recv(work0, localdims[0] * iwrk,
                          A->base->mpi_dtype, cart2rank(2,tcoord),
                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
@@ -3048,7 +3072,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
             {
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]+1)%cart_dim[1];
-                MPI_Send(work0, C->base->localdims[0] * iwrk,
+                MPI_Send(work0, localdims[0] * iwrk,
                          A->base->mpi_dtype, cart2rank(2,tcoord), 0,
                          MPI_COMM_WORLD);
             }
@@ -3061,7 +3085,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 //We have to recv, since we a not icur.
                 tcoord[0] = (mycoord[0]-1+cart_dim[0])%cart_dim[0];
                 tcoord[1] = mycoord[1];
-                MPI_Recv(work1, iwrk * C->base->localdims[1],
+                MPI_Recv(work1, iwrk * localdims[1],
                          A->base->mpi_dtype, cart2rank(2,tcoord),
                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
@@ -3071,7 +3095,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
             {
                 tcoord[0] = (mycoord[0]+1)%cart_dim[0];
                 tcoord[1] = mycoord[1];
-                MPI_Send(work1, iwrk * C->base->localdims[1],
+                MPI_Send(work1, iwrk * localdims[1],
                          A->base->mpi_dtype, cart2rank(2,tcoord), 0,
                          MPI_COMM_WORLD);
             }
@@ -3749,6 +3773,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
     newview.uid = ++uid_count;
     newview.ndims = 0;
     newview.alterations = 0;
+    newview.nblocks = 1;
 
     //Merging the two views.
     int si = 0; //slice index.
@@ -3795,8 +3820,7 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
         //slice to 'newview'.
         else if(vs && slice[si].nsteps == PseudoIndex)
         {
-            memcpy(&newview.slice[ni], &slice[si],
-                   sizeof(dndslice));
+            memcpy(&newview.slice[ni], &slice[si], sizeof(dndslice));
             ni++; si++;
             newview.ndims++;
             newview.alterations |= DNPY_NDIMS;
@@ -3805,6 +3829,14 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
         {
             memcpy(&newview.slice[ni], &orgview->slice[oi],
                    sizeof(dndslice));
+
+            if(slice[si].start > 0)
+            {
+                //This is a special case where the user indexes the
+                //PseudoIndex, which is legal and will return [].
+                newview.nblocks = 0;
+            }
+
             ni++; oi++; si++;
             newview.ndims++;
             newview.alterations |= DNPY_NDIMS;
