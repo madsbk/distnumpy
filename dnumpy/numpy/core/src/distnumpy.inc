@@ -3002,11 +3002,11 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     int *cart_dim = cart_dim_sizes[1];
 
     //malloc temp space
-    double *temp  = malloc(A->base->elsize);
-    double *work0 = malloc(A->base->localdims[0] * iwrk *
-                           A->base->elsize);
-    double *work1 = malloc(iwrk * B->base->localdims[1] *
-                           A->base->elsize);
+    double *temp  = malloc(C->base->elsize);
+    double *work0 = malloc(C->base->localdims[0] * iwrk *
+                           C->base->elsize);
+    double *work1 = malloc(iwrk * C->base->localdims[1] *
+                           C->base->elsize);
 
     //Leading dimensions.
     int lda = MAX(A->base->localdims[1], 1);
@@ -3021,7 +3021,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
         if(mycoord[1] == icur[1])
         {
             double *Adata = ((double *)A->base->data)+jj;
-            for(i=0; i<A->base->localdims[0]; i++)
+            for(i=0; i<C->base->localdims[0]; i++)
                 for(j=0; j<iwrk; j++)
                     work0[i*iwrk+j] = Adata[i*lda+j];
         }
@@ -3030,8 +3030,8 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
         {
             double *Bdata = ((double *)B->base->data)+ldb*ii;
             for(i=0; i<iwrk; i++)
-                for(j=0; j<B->base->localdims[1]; j++)
-                    work1[i*B->base->localdims[1]+j] = Bdata[i*ldb+j];
+                for(j=0; j<C->base->localdims[1]; j++)
+                    work1[i*C->base->localdims[1]+j] = Bdata[i*ldb+j];
         }
         if(cart_dim[1] > 1)
         {
@@ -3041,7 +3041,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 //We have to recv since we are not icur.
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]-1+cart_dim[1])%cart_dim[1];
-                MPI_Recv(work0, A->base->localdims[0] * iwrk,
+                MPI_Recv(work0, C->base->localdims[0] * iwrk,
                          A->base->mpi_dtype, cart2rank(2,tcoord),
                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
@@ -3051,7 +3051,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
             {
                 tcoord[0] = mycoord[0];
                 tcoord[1] = (mycoord[1]+1)%cart_dim[1];
-                MPI_Send(work0, A->base->localdims[0] * iwrk,
+                MPI_Send(work0, C->base->localdims[0] * iwrk,
                          A->base->mpi_dtype, cart2rank(2,tcoord), 0,
                          MPI_COMM_WORLD);
             }
@@ -3064,7 +3064,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 //We have to recv, since we a not icur.
                 tcoord[0] = (mycoord[0]-1+cart_dim[0])%cart_dim[0];
                 tcoord[1] = mycoord[1];
-                MPI_Recv(work1, iwrk * B->base->localdims[1],
+                MPI_Recv(work1, iwrk * C->base->localdims[1],
                          A->base->mpi_dtype, cart2rank(2,tcoord),
                          MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
@@ -3074,7 +3074,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
             {
                 tcoord[0] = (mycoord[0]+1)%cart_dim[0];
                 tcoord[1] = mycoord[1];
-                MPI_Send(work1, iwrk * B->base->localdims[1],
+                MPI_Send(work1, iwrk * C->base->localdims[1],
                          A->base->mpi_dtype, cart2rank(2,tcoord), 0,
                          MPI_COMM_WORLD);
             }
