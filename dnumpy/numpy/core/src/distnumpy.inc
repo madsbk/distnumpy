@@ -568,7 +568,7 @@ delayed_array_allocation(dndarray *ary)
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
-    npy_intp size = ary->nelements * ary->elsize;
+    npy_intp size = ary->localsize * ary->elsize;
     npy_intp count = 0;
     dndmem *free = NULL;
 
@@ -1005,7 +1005,6 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     int nin = narys - nout_arys;
     int coord_owner;
     int pcoord[NPY_MAXDIMS];
-    int skip_coord=0;
     npy_intp mpi_tag_svb=0, csdims[NPY_MAXDIMS];
     npy_intp sstride[NPY_MAXDIMS], svboffset[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp csvb[NPY_MAXARGS][NPY_MAXDIMS];
@@ -1297,7 +1296,6 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 node->op_ary_idx = 0;
                 node->op = (dndop *)op;
                 dag_svb_add(node, 1, 0);
-                assert(!skip_coord);
             }
         }
 
@@ -1396,9 +1394,22 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 node->op_ary_idx = 0;
                 node->op = (dndop *)op;
                 dag_svb_add(node, 1, 0);
-                assert(!skip_coord);
             }
         }
+
+    //We have added a whole view-block operation to the svb-DAG
+    //and we may therefore have to flush and free memory before
+    //calculating a new view-block.
+    if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
+    {
+        //Sync mpi tags
+        mpi_tag += lastary->nblocks * 100;
+        //Flush
+        dag_svb_flush(1);
+        //Resetting.
+        for(i=0; i<narys; i++)
+            vblocks[i].uid = -1;
+    }
 }
 
 /*===================================================================
@@ -1660,19 +1671,19 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
     rank2cart(ndims, myrank, cartcoord);
 
     //Accumulate the total number of local sizes and save it.
-    npy_intp nelements = 1;
+    npy_intp localsize = 1;
     ary->nblocks = 1;
     for(i=0; i < ary->ndims; i++)
     {
         ary->localdims[i] = dnumroc(ary->dims[i],
                             blocksize, cartcoord[i], cdims[i]);
-        nelements *= ary->localdims[i];
+        localsize *= ary->localdims[i];
         ary->localblockdims[i] = ceil(ary->localdims[i] /
                                       (double) blocksize);
         ary->blockdims[i] = ceil(ary->dims[i] / (double) blocksize);
         ary->nblocks *= ary->blockdims[i];
     }
-    ary->nelements = nelements;
+    ary->localsize = localsize;
 
     //Allocate the root nodes array.
     ary->rootnodes = malloc(ary->nblocks * sizeof(dndnode*));
@@ -1700,7 +1711,7 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
                " nelem: %ld, ndims: %d, dims: {",
                (long) view->uid,
                types_numpy2str(ary->dtype), ary->elsize,
-               (long)nelements, ndims);
+               (long)localsize, ndims);
         for(i=0; i<ndims-1; i++)
             printf("%ld ", (long)ary->dims[i]);
         printf("%ld}, localdims: {", (long)ary->dims[ndims-1]);
@@ -2008,7 +2019,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             dummy.ndims = 0;
             dummy.base->dtype = scalar_dtype;
             dummy.base->refcount = 1;
-            dummy.base->nelements = 1;
+            dummy.base->localsize = 1;
             dummy.base->nblocks = 1;
             dummy.base->rootnodes = malloc(sizeof(dndnode *));
             dummy.base->rootnodes[0] = NULL;
@@ -2191,20 +2202,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             DNDTIME_SUM(tdelta, dndt.ufunc_svb)
         #endif
 
-        //We have added a whole view-block operation to the svb-DAG
-        //and we may therefore have to flush and free memory before
-        //calculating a new view-block.
-        if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
-        {
-            //Sync mpi tags
-            mpi_tag += lastary->nblocks * 100;
-            //Flush
-            dag_svb_flush(1);
-            //Resetting.
-            for(i=0; i<narys; i++)
-                vblocks[i].uid = -1;
-        }
-
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
         {
@@ -2299,7 +2296,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
         if(in_ary->localdims[0] > 0)
         {
-            tmpobj = PyArray_SimpleNewFromData(1, &in_ary->nelements,
+            tmpobj = PyArray_SimpleNewFromData(1, &in_ary->localsize,
                                                in_ary->dtype,
                                                in_ary->data);
             //Compute local reduce.
@@ -2395,7 +2392,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         DNDTIME(tdelta2);
     #endif
 
-    if(in_ary->nelements > 0)
+    if(in_ary->localsize > 0)
     {
         PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
                                                   in_ary->localdims,
@@ -2481,7 +2478,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
     //Iterate over input blocks local to the MPI process.
     //Only receivers have input blocks.
-    if(receiver && in_view->base->nelements > 0)
+    if(receiver && in_view->base->localsize > 0)
     {
         npy_intp coord[NPY_MAXDIMS], gcoord[NPY_MAXDIMS];
         char notfinished = 1;
@@ -2608,7 +2605,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         }
     }
 
-    if(out_view->base->nelements > 0)
+    if(out_view->base->localsize > 0)
     {
         rank2cart(out_view->ndims, myrank, cart_coords);
 
@@ -2771,7 +2768,7 @@ static void do_ZEROFILL(dndview *view)
     #endif
 
     delayed_array_allocation(view->base);
-    memset(view->base->data, 0, view->base->nelements *
+    memset(view->base->data, 0, view->base->localsize *
                                 view->base->elsize);
 
     #ifdef DNDY_TIME
@@ -2834,11 +2831,11 @@ static void do_FILEIO(dndview *view, const char *filename, long filepos,
     MPI_Status status;
     switch(op) {
         case DNPY_DATAFILL:
-            MPI_File_read_all(fh, view->base->data, view->base->nelements,
+            MPI_File_read_all(fh, view->base->data, view->base->localsize,
                               view->base->mpi_dtype, &status);
             break;
         case DNPY_DATADUMP:
-            MPI_File_write_all(fh, view->base->data, view->base->nelements,
+            MPI_File_write_all(fh, view->base->data, view->base->localsize,
                                view->base->mpi_dtype, &status);
             break;
         default:
@@ -2879,7 +2876,7 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
 
     //Create the window for one-sided communication.
     MPI_Win comm_win;
-    MPI_Win_create(in->base->data, in->base->nelements *
+    MPI_Win_create(in->base->data, in->base->localsize *
                    in->base->elsize, 1, MPI_INFO_NULL, MPI_COMM_WORLD,
                    &comm_win);
 

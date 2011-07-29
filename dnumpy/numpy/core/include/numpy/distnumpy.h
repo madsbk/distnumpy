@@ -123,7 +123,7 @@ struct dndarray_struct
     //Pointer to local data.
     char *data;
     //Number of local elements (local to the MPI-process).
-    npy_intp nelements;
+    npy_intp localsize;
     //Size of local dimensions (local to the MPI-process).
     npy_intp localdims[NPY_MAXDIMS];
     //Size of local block-dimensions (local to the MPI-process).
