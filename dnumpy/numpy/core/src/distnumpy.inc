@@ -1396,20 +1396,6 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 dag_svb_add(node, 1, 0);
             }
         }
-
-    //We have added a whole view-block operation to the svb-DAG
-    //and we may therefore have to flush and free memory before
-    //calculating a new view-block.
-    if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
-    {
-        //Sync mpi tags
-        mpi_tag += lastary->nblocks * 100;
-        //Flush
-        dag_svb_flush(1);
-        //Resetting.
-        for(i=0; i<narys; i++)
-            vblocks[i].uid = -1;
-    }
 }
 
 /*===================================================================
@@ -2216,6 +2202,20 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         #ifdef DNDY_TIME
             DNDTIME_SUM(tdelta, dndt.ufunc_svb)
         #endif
+
+        //We have added a whole view-block operation to the svb-DAG
+        //and we may therefore have to flush and free memory before
+        //calculating a new view-block.
+        if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
+        {
+            //Sync mpi tags
+            mpi_tag += lastary->nblocks * 100;
+            //Flush
+            dag_svb_flush(1);
+            //Resetting.
+            for(i=0; i<narys; i++)
+                vblocks[i].uid = -1;
+        }
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
