@@ -3009,6 +3009,14 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     localdims[1] = dnumroc(C->base->dims[1], blocksize, mycoord[1],
                            cart_dim[1]);
 
+    //Leading dimensions.
+    int lda = MAX(dnumroc(A->base->dims[1], blocksize, mycoord[1],
+                  cart_dim[1]), 1);
+    int ldb = MAX(dnumroc(B->base->dims[1], blocksize, mycoord[1],
+                  cart_dim[1]), 1);
+    int ldc = MAX(dnumroc(C->base->dims[1], blocksize, mycoord[1],
+                  cart_dim[1]), 1);
+
     //malloc temp space
     double *temp  = malloc(C->base->elsize);
     double *work0 = malloc(localdims[0] * iwrk *
@@ -3016,10 +3024,6 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     double *work1 = malloc(iwrk * localdims[1] *
                            C->base->elsize);
 
-    //Leading dimensions.
-    int lda = MAX(A->base->localdims[1], 1);
-    int ldb = MAX(B->base->localdims[1], 1);
-    int ldc = MAX(C->base->localdims[1], 1);
 
     for (kk=0; kk<A->base->dims[1]; kk+=iwrk)
     {
@@ -3095,7 +3099,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                              C->base->localdims[0],C->base->localdims[1],
                              iwrk, 1.0,
                              work0, iwrk,
-                             work1, MAX(B->base->localdims[1],1),
+                             work1, ldb,
                              1.0, (double *)C->base->data, ldc);
         }
         else
@@ -3108,7 +3112,7 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
                 {
                     double tmp;
                     dot(work0 + n * iwrk, sizeof(double), work1 + m,
-                        MAX(B->base->localdims[1],1) * sizeof(double),
+                        ldb * sizeof(double),
                         &tmp, iwrk, NULL);
                     ((double *)C->base->data)[m+n*C->base->localdims[1]] += tmp;
                 }
