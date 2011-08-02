@@ -997,7 +997,8 @@ static void
 ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                    dndview *views[NPY_MAXARGS], dndvb vblocks[NPY_MAXARGS],
                    PyObject *PyOp,
-                   PyUFuncGenericFunction func, void *funcdata)
+                   PyUFuncGenericFunction func, void *funcdata,
+                   npy_intp *first_mpi_tag)
 {
     npy_intp i,j,v,s,n;
     dndview *lastary = views[narys-1];
@@ -1022,6 +1023,18 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
         j *= lastary->blockdims[i];
     }
     mpi_tag_svb = mpi_tag_svb * 100 + mpi_tag;
+
+    //We are adding a whole view-block operation to the svb-DAG
+    //and we may therefore have to flush and free memory.
+    if(mpi_tag_svb > *first_mpi_tag + DNPY_MAX_VB_IN_SVB_DAG * 100)
+    {
+        //Flush
+        dag_svb_flush(1);
+        //Resetting.
+        for(i=0; i<narys; i++)
+            vblocks[i].uid = -1;
+        *first_mpi_tag = mpi_tag;
+    }
 
     //Compute the owner of the current coord.
     for(i=0; i<lastary->ndims; i++)
@@ -2120,6 +2133,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     //Make sure that we are clear of previously used mpi tags.
     ++mpi_tag;
 
+    //The first MPI tag after a flush.
+    npy_intp first_mpi_tag = mpi_tag;
+
     //Iterate over all output vblocks.
     //NB: coord consist of only visible block coordinates.
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
@@ -2183,26 +2199,12 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
         {
             //Handle the coordinate.
             ufunc_handle_coord(coord, narys, nout_arys, views, vblocks,
-                               PyOp, func, funcdata);
+                               PyOp, func, funcdata, &first_mpi_tag);
         }
 
         #ifdef DNDY_TIME
             DNDTIME_SUM(tdelta, dndt.ufunc_svb)
         #endif
-
-        //We have added a whole view-block operation to the svb-DAG
-        //and we may therefore have to flush and free memory before
-        //calculating a new view-block.
-        if(++nvb_in_svb_dag >= DNPY_MAX_VB_IN_SVB_DAG)
-        {
-            //Sync mpi tags
-            mpi_tag += lastary->nblocks * 100;
-            //Flush
-            dag_svb_flush(1);
-            //Resetting.
-            for(i=0; i<narys; i++)
-                vblocks[i].uid = -1;
-        }
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
