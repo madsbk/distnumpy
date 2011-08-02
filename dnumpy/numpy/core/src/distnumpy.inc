@@ -39,7 +39,6 @@ static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
 //Unique MPI tag.
 npy_intp mpi_tag=0;
-npy_intp mpi_tag_svb=0;
 //Memory pool.
 static dndmem *mem_pool = NULL;
 //Pointers to the cblas functions.
@@ -2131,18 +2130,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             DNDTIME(tdelta);
         #endif
 
-        //This is a hack to make sure that mpi_tag is sync between
-        //MPI-processes even when skipping iterations.
-        //For each view-block calculation the following must be true:
-        //narys * number of sub-view-blocks * 4 < 100.
-        npy_intp mpi_tag_svb=0;j=1;
-        for(i=lastary->ndims-1; i>=0; --i)
-        {
-            mpi_tag_svb += coord[i] * j;
-            j *= lastary->blockdims[i];
-        }
-        mpi_tag_svb = mpi_tag_svb * 100 + mpi_tag;
-
         //Compute the owner of the current coord.
         int coord_owner;
         for(i=0; i<lastary->ndims; i++)
@@ -3550,7 +3537,6 @@ static void dag_svb_flush(int free_workbuf)
         nvb_in_svb_dag = 0;
         workbuf_nextfree = workbuf;
         mpi_tag = 0;
-        mpi_tag_svb = 0;
     }
 }/* dag_svb_flush */
 
