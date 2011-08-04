@@ -51,7 +51,7 @@ typedef struct {
 
 //Maximum number of nodes in the dependency system.
 //NB: must be greater than DNPY_MAX_VB_IN_SVB_DAG or 1.
-#define DNPY_MAX_LAZYINESS 10000
+#define DNPY_LAZYINESS 1000000000
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024
@@ -64,6 +64,9 @@ typedef struct {
 
 //Maximum number of nodes in the ready queue.
 #define DNPY_RDY_QUEUE_MAXSIZE 1024*10
+
+//Maximum MPI tag.
+#define DNPY_MAX_MPI_TAG 10000000
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB

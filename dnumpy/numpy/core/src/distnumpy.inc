@@ -38,7 +38,7 @@ static npy_intp laziness=0;
 static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
 //Unique MPI tag.
-npy_intp mpi_tag=0;
+int mpi_tag=0;
 //Memory pool.
 static dndmem *mem_pool = NULL;
 //Pointers to the cblas functions.
@@ -987,6 +987,70 @@ apply_ufunc(dndop_ufunc *apply)
 
 
 
+/*===================================================================
+ *
+ * Return True if the coordinate can be skiped.
+ * Private.
+ */
+static int
+ufunc_skip_coord(npy_intp coord[NPY_MAXDIMS], int narys,
+                 dndview *views[NPY_MAXARGS], dndview *lastary)
+{
+    npy_intp i, v;
+    int pcoord[NPY_MAXDIMS];
+    int skip_coord=0;
+    int coord_owner;
+
+    //Compute the owner of the current coord.
+    for(i=0; i<lastary->ndims; i++)
+        pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
+    coord_owner = cart2rank(lastary->ndims, pcoord);
+
+    //Lets check if the MPI-process can skip this iteration.
+    if(coord_owner != myrank)
+    {
+        skip_coord=1;
+        for(v=0; v<narys; v++)
+        {
+            dndview *view = views[v];
+            //Scalars are ignored
+            if(view->base->ndims == 0)
+                continue;
+
+            rank2cart(view->base->ndims, myrank, pcoord);
+            int conflict = 1;
+            for(i=0; i<view->ndims; i++)
+            {
+                dndslice *t = &view->slice[idx_v2s(view, i)];
+                if(t->nsteps == PseudoIndex)
+                    continue;
+                int bdim = idx_v2b(view,i);
+                int nproc = cart_dim_sizes[view->base->ndims-1][bdim];
+
+                //Base index
+                npy_intp s_base_idx = coord[i]*blocksize*t->step + t->start;
+                //Process index
+                npy_intp s_proc_idx = (s_base_idx/blocksize) % nproc;
+
+                if(!((s_proc_idx <= pcoord[bdim] && pcoord[bdim] <= s_proc_idx+t->step) ||
+
+                     (s_proc_idx > pcoord[bdim] && t->step >= nproc-(s_proc_idx-pcoord[bdim]))  ))
+                {
+                    conflict = 0;
+                    break;
+                }
+            }
+            if(conflict)
+            {
+                skip_coord = 0;
+                break;
+            }
+        }
+    }
+    return skip_coord;
+
+}/* ufunc_skip_coord */
+
 
 /*===================================================================
  *
@@ -996,9 +1060,8 @@ apply_ufunc(dndop_ufunc *apply)
 static void
 ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                    dndview *views[NPY_MAXARGS], dndvb vblocks[NPY_MAXARGS],
-                   PyObject *PyOp,
-                   PyUFuncGenericFunction func, void *funcdata,
-                   npy_intp *first_mpi_tag)
+                   PyObject *PyOp, PyUFuncGenericFunction func, void *funcdata,
+                   int *first_mpi_tag, int dim_iter_order[NPY_MAXDIMS])
 {
     npy_intp i,j,v,s,n;
     dndview *lastary = views[narys-1];
@@ -1012,6 +1075,10 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     npy_intp offset, scoord[NPY_MAXDIMS], sdims[NPY_MAXDIMS];
     npy_intp bcoord[NPY_MAXDIMS];
 
+    //Lets check if the MPI-process can skip this iteration.
+    if(ufunc_skip_coord(coord, narys, views, lastary))
+        return;
+
     //This is a hack to make sure that mpi_tag is sync between
     //MPI-processes even when skipping iterations.
     //For each view-block calculation the following must be true:
@@ -1019,22 +1086,30 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     j=1;
     for(i=lastary->ndims-1; i>=0; --i)
     {
-        mpi_tag_svb += coord[i] * j;
-        j *= lastary->blockdims[i];
+        int o = dim_iter_order[i];
+        mpi_tag_svb += coord[o] * j;
+        j *= lastary->blockdims[o];
     }
     mpi_tag_svb = mpi_tag_svb * 100 + mpi_tag;
 
     //We are adding a whole view-block operation to the svb-DAG
     //and we may therefore have to flush and free memory.
-    if(mpi_tag_svb > *first_mpi_tag + DNPY_MAX_VB_IN_SVB_DAG * 100)
+    npy_intp end_tag = *first_mpi_tag + DNPY_MAX_VB_IN_SVB_DAG * 100;
+
+    if(mpi_tag_svb >= end_tag)
     {
         //Flush
         dag_svb_flush(1);
         //Resetting.
         for(i=0; i<narys; i++)
             vblocks[i].uid = -1;
-        *first_mpi_tag = mpi_tag;
+        *first_mpi_tag = end_tag * DNPY_MAX_VB_IN_SVB_DAG * 100;
     }
+
+    #ifdef DNDY_TIME
+        unsigned long long tdelta;
+        DNDTIME(tdelta);
+    #endif
 
     //Compute the owner of the current coord.
     for(i=0; i<lastary->ndims; i++)
@@ -1408,6 +1483,10 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 dag_svb_add(node, 1, 0);
             }
         }
+
+    #ifdef DNDY_TIME
+        DNDTIME_SUM(tdelta, dndt.ufunc_svb)
+    #endif
 }
 
 /*===================================================================
@@ -1996,10 +2075,9 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                       int scalar_dtype, int scalar_size,
                       char* scalar, char* op)
 {
-    npy_intp i, j, s, v;
+    npy_intp i, j, s;
     npy_intp coord[NPY_MAXDIMS];
     int dim_iter_order[NPY_MAXDIMS];
-    int pcoord[NPY_MAXDIMS];
     int notfinished=1;
     dndvb vblocks[NPY_MAXARGS];
     int nin = narys - nout_arys;
@@ -2053,7 +2131,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 }
             #endif
         }
-
     dndview *lastary = views[narys-1];
 
     //Need to make sure that the output view is not empty.
@@ -2130,81 +2207,20 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     for(i=0; i<narys; i++)
         vblocks[i].uid = -1;
 
-    //Make sure that we are clear of previously used mpi tags.
-    ++mpi_tag;
-
     //The first MPI tag after a flush.
-    npy_intp first_mpi_tag = mpi_tag;
+    mpi_tag = (1+mpi_tag) % DNPY_MAX_MPI_TAG;
+    int first_mpi_tag = mpi_tag;
 
     //Iterate over all output vblocks.
     //NB: coord consist of only visible block coordinates.
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
-    for(; notfinished; )
+    while(notfinished)
     {
-        #ifdef DNDY_TIME
-            unsigned long long tdelta;
-            DNDTIME(tdelta);
-        #endif
 
-        //Compute the owner of the current coord.
-        int coord_owner;
-        for(i=0; i<lastary->ndims; i++)
-            pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
-        coord_owner = cart2rank(lastary->ndims, pcoord);
-
-        //Lets check if the MPI-process can skip this iteration.
-        int skip_coord=0;
-        if(coord_owner != myrank)
-        {
-            skip_coord=1;
-            for(v=0; v<narys; v++)
-            {
-                dndview *view = views[v];
-                //Scalars are ignored
-                if(view->base->ndims == 0)
-                    continue;
-
-                rank2cart(view->base->ndims, myrank, pcoord);
-                int conflict = 1;
-                for(i=0; i<view->ndims; i++)
-                {
-                    dndslice *t = &view->slice[idx_v2s(view, i)];
-                    if(t->nsteps == PseudoIndex)
-                        continue;
-                    int bdim = idx_v2b(view,i);
-                    int nproc = cart_dim_sizes[view->base->ndims-1][bdim];
-
-                    //Base index
-                    npy_intp s_base_idx = coord[i]*blocksize*t->step + t->start;
-                    //Process index
-                    npy_intp s_proc_idx = (s_base_idx/blocksize) % nproc;
-
-                    if(!((s_proc_idx <= pcoord[bdim] && pcoord[bdim] <= s_proc_idx+t->step) ||
-
-                         (s_proc_idx > pcoord[bdim] && t->step >= nproc-(s_proc_idx-pcoord[bdim]))))
-                    {
-                        conflict = 0;
-                        break;
-                    }
-                }
-                if(conflict)
-                {
-                    skip_coord = 0;
-                    break;
-                }
-            }
-        }
-
-        if(!skip_coord)
-        {
-            //Handle the coordinate.
-            ufunc_handle_coord(coord, narys, nout_arys, views, vblocks,
-                               PyOp, func, funcdata, &first_mpi_tag);
-        }
-
-        #ifdef DNDY_TIME
-            DNDTIME_SUM(tdelta, dndt.ufunc_svb)
-        #endif
+        //Handle the coordinate.
+        ufunc_handle_coord(coord, narys, nout_arys, views, vblocks,
+                           PyOp, func, funcdata, &first_mpi_tag,
+                           dim_iter_order);
 
         //Iterate coord one vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
@@ -2227,7 +2243,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     }
 
     //Sync mpi tags
-    mpi_tag += lastary->nblocks * 100;
+    mpi_tag = (mpi_tag + lastary->nblocks * 100) % DNPY_MAX_MPI_TAG;
     Py_DECREF(PyOp);
     //Clean up Scalar dummy.
     for(i=0; i<narys; i++)
@@ -2478,7 +2494,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     }
 
     //Make sure that we are clear of previously used mpi tags.
-    mpi_tag++;
+    mpi_tag = (1+mpi_tag) % DNPY_MAX_MPI_TAG;
 
     //Iterate over input blocks local to the MPI process.
     //Only receivers have input blocks.
@@ -2730,7 +2746,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
     }
 
     //Sync mpi_tag.
-    mpi_tag += out_view->nblocks;
+    mpi_tag = (mpi_tag+out_view->nblocks) % DNPY_MAX_MPI_TAG;
 
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, dndt.reduce_nd)
@@ -3542,7 +3558,6 @@ static void dag_svb_flush(int free_workbuf)
     {
         nvb_in_svb_dag = 0;
         workbuf_nextfree = workbuf;
-        mpi_tag = 0;
     }
 }/* dag_svb_flush */
 
