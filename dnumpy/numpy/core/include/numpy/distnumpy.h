@@ -49,9 +49,8 @@ typedef struct {
 //Maximum number of view block operations in the sub-view-block DAG.
 #define DNPY_MAX_VB_IN_SVB_DAG 1000
 
-//Maximum number of nodes in the dependency system.
-//NB: must be greater than DNPY_MAX_VB_IN_SVB_DAG or 1.
-#define DNPY_LAZYINESS 1000000000
+//Disable Lazy Evaluation by definding this macro.
+#undef DNPY_NO_LAZY_EVAL
 
 //Maximum number of allocated arrays
 #define DNPY_MAX_NARRAYS 1024

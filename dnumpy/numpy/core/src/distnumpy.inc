@@ -30,15 +30,11 @@ static int *cart_dim_strides[NPY_MAXDIMS];
 static int *cart_dim_sizes[NPY_MAXDIMS];
 //Pointer to the python module who has the ufunc operators.
 static PyObject *ufunc_module;
-//Number of view block operations in the sub-view-block DAG.
-static npy_intp nvb_in_svb_dag=0;
-//Number of nodes in the dependency system.
-static npy_intp laziness=0;
 //The ready queue for operations and its current size.
 static dndop *ready_queue[DNPY_RDY_QUEUE_MAXSIZE];
 static npy_intp ready_queue_size=0;
 //Unique MPI tag.
-int mpi_tag=0;
+static int mpi_tag=0;
 //Memory pool.
 static dndmem *mem_pool = NULL;
 //Pointers to the cblas functions.
@@ -1066,9 +1062,9 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     npy_intp i,j,v,s,n;
     dndview *lastary = views[narys-1];
     int nin = narys - nout_arys;
-    int coord_owner;
+    int coord_owner, mpi_tag_svb=0;
     int pcoord[NPY_MAXDIMS];
-    npy_intp mpi_tag_svb=0, csdims[NPY_MAXDIMS];
+    npy_intp csdims[NPY_MAXDIMS];
     npy_intp sstride[NPY_MAXDIMS], svboffset[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp csvb[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp vdims[NPY_MAXARGS][NPY_MAXDIMS];
@@ -1094,8 +1090,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
 
     //We are adding a whole view-block operation to the svb-DAG
     //and we may therefore have to flush and free memory.
-    npy_intp end_tag = *first_mpi_tag + DNPY_MAX_VB_IN_SVB_DAG * 100;
-
+    int end_tag = *first_mpi_tag + DNPY_MAX_VB_IN_SVB_DAG * 100;
     if(mpi_tag_svb >= end_tag)
     {
         //Flush
@@ -1103,7 +1098,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
         //Resetting.
         for(i=0; i<narys; i++)
             vblocks[i].uid = -1;
-        *first_mpi_tag = end_tag * DNPY_MAX_VB_IN_SVB_DAG * 100;
+        *first_mpi_tag = end_tag + DNPY_MAX_VB_IN_SVB_DAG * 100;
     }
 
     #ifdef DNDY_TIME
@@ -2216,7 +2211,6 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     memset(coord, 0, lastary->ndims * sizeof(npy_intp));
     while(notfinished)
     {
-
         //Handle the coordinate.
         ufunc_handle_coord(coord, narys, nout_arys, views, vblocks,
                            PyOp, func, funcdata, &first_mpi_tag,
@@ -3549,14 +3543,12 @@ static void dag_svb_flush(int free_workbuf)
     for(i=0; i<dtypesize; i++)
         MPI_Type_free(&dtype[i]);
 
-    laziness = 0;
     assert(ready_queue_size == 0);
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, dndt.dag_svb_flush)
     #endif
     if(free_workbuf)
     {
-        nvb_in_svb_dag = 0;
         workbuf_nextfree = workbuf;
     }
 }/* dag_svb_flush */
@@ -3655,7 +3647,10 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
     //Place the operation in the ready queue when no dependency was
     //found.
     if(nodes[0].op->refcount == 0)
+    {
+        assert(ready_queue_size+1 <= DNPY_RDY_QUEUE_MAXSIZE);
         ready_queue[ready_queue_size++] = nodes[0].op;
+    }
 
     assert(ready_queue_size > 0);
 
@@ -3663,9 +3658,10 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
         DNDTIME_SUM(tdelta, dndt.dag_svb_add)
     #endif
 
-    if(++laziness >= DNPY_MAX_LAZYINESS && !force_laziness)
+    #ifdef DNPY_NO_LAZY_EVAL
+    if(!force_laziness)
         dag_svb_flush(0);//Note that we do not free the work buffer
-
+    #endif
 } /* dag_svb_add */
 
 
