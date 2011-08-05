@@ -2217,6 +2217,15 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                 continue;
             npy_intp span = ceil(t->start /(double) blocksize) + t->step-1;
             max_span = MAX(max_span,span);
+
+            //Number of steps must be divisible to the number of the
+            //MPI processes.
+            if(cart_dim_sizes[view->base->ndims-1][idx_v2b(view,i)]
+               % t->step != 0)
+            {
+                max_span = worldsize + 1000;
+                break;
+            }
         }
     }
 
@@ -2286,7 +2295,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             int o = dim_iter_order[j];//Using the computed order.
 
             //We simply iterates one vblock when all are involved.
-            if(all_involved[o] || 1)
+            if(all_involved[o])
             {
                 coord[o] += 1;
                 if(coord[o] >= lastary->blockdims[o])
