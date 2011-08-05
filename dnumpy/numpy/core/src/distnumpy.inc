@@ -2218,8 +2218,8 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             npy_intp span = ceil(t->start /(double) blocksize) + t->step-1;
             max_span = MAX(max_span,span);
 
-            //Number of steps must be divisible to the number of the
-            //MPI processes.
+            //Number of steps must be divisible by the number of
+            //MPI processes in that dimension.
             if(cart_dim_sizes[view->base->ndims-1][idx_v2b(view,i)]
                % t->step != 0)
             {
