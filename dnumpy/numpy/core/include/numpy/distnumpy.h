@@ -47,7 +47,7 @@ typedef struct {
 #define DNPY_MAX_MEM_POOL 10
 
 //Maximum number of view block operations in the sub-view-block DAG.
-#define DNPY_MAX_VB_IN_SVB_DAG 1000
+#define DNPY_MAX_VB_IN_SVB_DAG 100
 
 //Disable Lazy Evaluation by definding this macro.
 #undef DNPY_NO_LAZY_EVAL
