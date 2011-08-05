@@ -1024,13 +1024,15 @@ ufunc_skip_coord(npy_intp coord[NPY_MAXDIMS], int narys,
                 int nproc = cart_dim_sizes[view->base->ndims-1][bdim];
 
                 //Base index
-                npy_intp s_base_idx = coord[i]*blocksize*t->step + t->start;
+                npy_intp s_base_idx = coord[i]*blocksize*t->step
+                                      + t->start;
                 //Process index
                 npy_intp s_proc_idx = (s_base_idx/blocksize) % nproc;
 
-                if(!((s_proc_idx <= pcoord[bdim] && pcoord[bdim] <= s_proc_idx+t->step) ||
-
-                     (s_proc_idx > pcoord[bdim] && t->step >= nproc-(s_proc_idx-pcoord[bdim]))  ))
+                if(!((s_proc_idx <= pcoord[bdim] &&
+                      pcoord[bdim] <= s_proc_idx+t->step) ||
+                     (s_proc_idx > pcoord[bdim] &&
+                     t->step >= nproc-(s_proc_idx-pcoord[bdim]))))
                 {
                     conflict = 0;
                     break;
@@ -1070,10 +1072,6 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     npy_intp vdims[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp offset, scoord[NPY_MAXDIMS], sdims[NPY_MAXDIMS];
     npy_intp bcoord[NPY_MAXDIMS];
-
-    //Lets check if the MPI-process can skip this iteration.
-    if(ufunc_skip_coord(coord, narys, views, lastary))
-        return;
 
     //This is a hack to make sure that mpi_tag is sync between
     //MPI-processes even when skipping iterations.
@@ -2070,7 +2068,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
                       int scalar_dtype, int scalar_size,
                       char* scalar, char* op)
 {
-    npy_intp i, j, s;
+    npy_intp i, j, s, v;
     npy_intp coord[NPY_MAXDIMS];
     int dim_iter_order[NPY_MAXDIMS];
     int notfinished=1;
@@ -2206,33 +2204,138 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
     mpi_tag = (1+mpi_tag) % DNPY_MAX_MPI_TAG;
     int first_mpi_tag = mpi_tag;
 
-    //Iterate over all output vblocks.
+
+    //Find max span
+    npy_intp max_span = 0;
+    for(v=0; v<narys; v++)
+    {
+        dndview *view = views[v];
+        for(i=0; i<view->ndims; i++)
+        {
+            dndslice *t = &view->slice[idx_v2s(view, i)];
+            if(t->nsteps == PseudoIndex)
+                continue;
+            npy_intp span = ceil(t->start /(double) blocksize) + t->step-1;
+            max_span = MAX(max_span,span);
+        }
+    }
+
+    //If the process distribution is not identical for each dimension
+    //we have to force a max_span that 'spans' all coordinates,
+    for(i=0; i<lastary->ndims; i++)
+    {
+        int nproc = cart_dim_sizes[lastary->ndims-1][i];
+        for(v=0; v<narys; v++)
+        {
+
+            dndview *view = views[v];
+            if(i >= view->ndims ||
+               cart_dim_sizes[view->base->ndims-1][idx_v2b(view,i)] != nproc)
+            {
+                max_span = worldsize + 1000;
+                break;
+            }
+        }
+    }
+
+    //Check if some dimensions involves all MPI processes.
+    int all_involved[NPY_MAXDIMS];
+    npy_intp involvement_coord[NPY_MAXDIMS];
+    for(i=0; i<lastary->ndims; i++)
+    {
+        if(max_span*2 >= cart_dim_sizes[lastary->ndims-1][i] - 2)
+            all_involved[i] = 1; //True.
+        else
+            all_involved[i] = 0; //False.
+
+        involvement_coord[i] = 0;
+    }
+
+    //Compute start coord.
+    int coord_start[NPY_MAXDIMS];
+    int pcoord[NPY_MAXDIMS];
+    rank2cart(lastary->ndims, myrank, pcoord);
+    for(i=0; i<lastary->ndims; i++)
+    {
+        if(all_involved[i])
+        {
+            coord[i] = 0;
+        }
+        else
+        {
+            coord_start[i] = MAX(pcoord[i] - max_span, 0);
+            coord_start[i] = MIN(coord_start[i],lastary->blockdims[i]-1);
+            coord[i] = coord_start[i];
+        }
+    }
+
+    //Loop over coordinates that may involve the MPI-process
     //NB: coord consist of only visible block coordinates.
-    memset(coord, 0, lastary->ndims * sizeof(npy_intp));
     while(notfinished)
     {
-        //Handle the coordinate.
-        ufunc_handle_coord(coord, narys, nout_arys, views, vblocks,
-                           PyOp, func, funcdata, &first_mpi_tag,
-                           dim_iter_order);
+        //Lets check if the MPI-process can skip this iteration.
+        if(!ufunc_skip_coord(coord, narys, views, lastary))
+            //Handle the coordinate.
+            ufunc_handle_coord(coord, narys, nout_arys, views, vblocks,
+                               PyOp, func, funcdata, &first_mpi_tag,
+                               dim_iter_order);
 
-        //Iterate coord one vblock.
+        //Iterate coord to the next vblock.
         for(j=lastary->ndims-1; j >= 0; j--)
         {
             int o = dim_iter_order[j];//Using the computed order.
-            coord[o]++;
-            if(coord[o] >= lastary->blockdims[o])
+
+            //We simply iterates one vblock when all are involved.
+            if(all_involved[o] || 1)
             {
-                //We are finished, if wrapping around.
-                if(j == 0)
+                coord[o] += 1;
+                if(coord[o] >= lastary->blockdims[o])
                 {
-                    notfinished = 0;
-                    break;
+                    //We are finished, if wrapping around.
+                    if(j == 0)
+                    {
+                        notfinished = 0;
+                        break;
+                    }
+                    coord[o] = 0;//Start coord.
                 }
-                coord[o] = 0;//Start coord.
+                else
+                    break;
             }
             else
-                break;
+            {
+                //The involvement of the border coordinates may have to
+                //be shorten.
+                npy_intp length = max_span * 2 + 1;
+                if(coord[o] < max_span * 2 + 1 && pcoord[o] < max_span)
+                    length -= max_span - pcoord[o];
+
+                //First we calculate the coord increase.
+                involvement_coord[o] += 1;
+                if(involvement_coord[o] >= length)
+                {
+                    involvement_coord[o] = 0;
+                    coord[o] += (cart_dim_sizes[lastary->ndims-1][o])
+                                - max_span*2;
+                }
+                else
+                    coord[o] += 1;
+
+                //Then we check for overflow.
+                if(coord[o] >= lastary->blockdims[o])
+                {
+                    //We are finished, if wrapping around.
+                    if(j == 0)
+                    {
+                        notfinished = 0;
+                        break;
+                    }
+                    coord[o] = coord_start[o];
+                    involvement_coord[o] = 0;
+                }
+                else
+                    break;
+            }
         }
     }
 
