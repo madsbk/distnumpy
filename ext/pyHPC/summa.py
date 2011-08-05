@@ -49,6 +49,7 @@ def summa(a,b,out=None):
         l_a_work = a_work.local()[:,:bs]
         l_b_work = b_work.local()[:bs,:]
         l_c = c.local()
-        l_c += np.dot(l_a_work, l_b_work)
+        if l_c.size > 0:
+            l_c += np.dot(l_a_work, l_b_work)
 
     return c
