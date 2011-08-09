@@ -5026,22 +5026,131 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         return NULL;
     }
 
-    dndview *ary = get_dndview(PyArray_DNDUID(self));
-
-    if(ary->alterations != 0)
-    {
-        PyErr_SetString(PyExc_RuntimeError, "local of a distributed "
-                        "array must be a whole array and not a "
-                        "partial view of a underlying array.");
-        return NULL;
-    }
+    dndview *view = get_dndview(PyArray_DNDUID(self));
 
     dag_svb_flush(1);
-    delayed_array_allocation(ary->base);
-    return PyArray_SimpleNewFromData(ary->base->ndims,
-                                     ary->base->localdims,
-                                     ary->base->dtype,
-                                     ary->base->data);
+    delayed_array_allocation(view->base);
+
+    return PyArray_SimpleNewFromData(view->ndims,
+                                     view->base->localdims,
+                                     view->base->dtype,
+                                     view->base->data);
+
+    /*
+     *
+     * THIS is view-support work, I am not sure if this can be used by
+     * the user because it results into arrays that are distributed
+     * differently.
+
+    static npy_intp dnumroc2(npy_intp nelem_in_dim, npy_intp block_size,
+                            int proc_dim_rank, int nproc_in_dim, int first_process)
+    {
+        //Figure process's distance from source process.
+        int mydist = (nproc_in_dim + proc_dim_rank - first_process) %
+                      nproc_in_dim;
+
+        //Figure the total number of whole NB blocks N is split up into.
+        npy_intp nblocks = nelem_in_dim / block_size;
+
+        //Figure the minimum number of elements a process can have.
+        npy_intp numroc = nblocks / nproc_in_dim * block_size;
+
+        //See if there are any extra blocks
+        npy_intp extrablocks = nblocks % nproc_in_dim;
+
+        //If I have an extra block.
+        if(mydist < extrablocks)
+            numroc += block_size;
+
+        //If I have last block, it may be a partial block.
+        else if(mydist == extrablocks)
+            numroc += nelem_in_dim % block_size;
+
+        return numroc;
+    }
+
+    npy_intp s,i,b, offset[NPY_MAXDIMS], start, strides[NPY_MAXDIMS];
+    npy_intp dims[NPY_MAXDIMS];
+    int *cdims = cart_dim_sizes[view->base->ndims-1];
+
+    int pcoord[NPY_MAXDIMS];
+    rank2cart(view->base->ndims, myrank, pcoord);
+
+    i=0;b=0;
+    for(s=0; s < view->nslice; ++s)
+    {
+        if(view->slice[s].nsteps == PseudoIndex)
+        {
+            dims[i] = 1;
+            offset[b] = 0;
+        }
+        if(view->slice[s].nsteps == SingleIndex)
+        {
+
+        }
+        else
+        {
+            if(view->slice[s].step != 1)
+            {
+                PyErr_SetString(PyExc_RuntimeError, "local of array-"
+                                "views must have a step size of one");
+                return NULL;
+            }
+            if(view->slice[s].start % blocksize != 0)
+            {
+                PyErr_SetString(PyExc_RuntimeError, "local of array-"
+                                "views must have a start offset that "
+                                "are divisible with np.BLOCKSIZE");
+                return NULL;
+            }
+            if(view->slice[s].nsteps % blocksize != 0)
+            {
+                PyErr_SetString(PyExc_RuntimeError, "local of array-"
+                                "views must have a length that are "
+                                "divisible with np.BLOCKSIZE");
+                return NULL;
+            }
+            //Block offset
+            npy_intp boffset = view->slice[s].start / blocksize;
+            //Process offset
+            npy_intp poffset = boffset % cdims[b];
+
+            offset[b] = boffset / cdims[b];
+            if(poffset > pcoord[b])
+            {
+                offset[b] += 1;
+            }
+
+            dims[i] = dnumroc2(view->slice[s].nsteps, blocksize, pcoord[b], cdims[b], poffset);
+
+            //printf("i: %ld, s: %ld, b: %ld, slice.start: %ld, offset: %ld, dims: %ld\n", i,s,b,view->slice[s].start,offset[b],dims[i]);
+        }
+        ++i;
+        ++b;
+    }
+
+    //Compute the stride and the data start.
+    s = view->base->elsize;
+    start=0;
+    for(i=view->base->ndims-1; i >= 0; --i)
+    {
+        start += offset[i] * s;
+        strides[i] = s;
+        s *= view->base->localdims[i];
+    }
+    start *= blocksize;
+
+    //printf("start: %ld\n", start/view->base->elsize);
+
+    return PyArray_New(&PyArray_Type,
+                       view->ndims,
+                       dims,
+                       view->base->dtype,
+                       strides,
+                       view->base->data + start,
+                       view->base->elsize,
+                       NPY_BEHAVED, NULL);
+    */
 }/* local_data*/
 
 
