@@ -47,5 +47,17 @@ def run():
                 tCf = np.dot(tAf,tBf)
                 if not dnumpytest.array_equal(tCd,tCf):
                     raise Exception("Uncorrect result matrix\n")
+    for m in xrange(BS,niter+BS, BS):
+        for n in xrange(BS,niter+BS,BS):
+            for k in xrange(BS,niter+BS,BS):
+                tAd = Ad[:m,:k]
+                tAf = Af[:m,:k]
+                tBd = Bd[:k,:n]
+                tBf = Bf[:k,:n]
+                tCd = Cd[:m,:n]
+                tCd = pyHPC.matmul(tAd,tBd)
+                tCf = np.dot(tAf,tBf)
+                if not dnumpytest.array_equal(tCd,tCf):
+                    raise Exception("Uncorrect result matrix\n")
 if __name__ == "__main__":
     run()

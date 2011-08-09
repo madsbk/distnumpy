@@ -1,7 +1,7 @@
 #SUMMA: matrix multiplication algorithm
 import numpy as np
 
-def summa(a,b,out=None):
+def summa(a,b):
     """
     Matrix multiplication using the SUMMA algorithm.
     Views of arrays is allowed if there are aligned to the global
@@ -9,10 +9,7 @@ def summa(a,b,out=None):
     """
     ksize = a.shape[1] #Number of rows and columns in the match dimension
 
-    if out is None:
-        c = np.zeros((a.shape[0],b.shape[1]), dtype=a.dtype, dist=True)
-    else:
-        c = out
+    c = np.zeros((a.shape[0],b.shape[1]), dtype=a.dtype, dist=True)
 
     if a.ndim != 2 or b.ndim != 2 or c.ndim != 2:
         raise Exception("All arrays must have two dimensions")
