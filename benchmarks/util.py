@@ -93,6 +93,9 @@ class Parsing:
            System info, such as worldsize and process rank, can be included.
            If timing is a tuple the dictionary in position 'rank' is used.
         """
+        if np.RANK != rank:
+            return
+
         if isinstance(timing, tuple):
             timing = timing[rank] #Default: printing rank zero.
         if filename is None:
