@@ -40,7 +40,6 @@ def run():
         src = dnumpytest.random_list(range(np.BLOCKSIZE*2, SIZE, np.BLOCKSIZE))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
-        print Ad.shape
 
         slice = [((0,(Ad.shape[0]/np.BLOCKSIZE)-1))]
         for d in xrange(Ad.ndim-1):
