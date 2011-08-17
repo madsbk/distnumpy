@@ -2,6 +2,7 @@ import numpy as np
 import sys
 import time
 
+# Cumulative normal distribution
 def CND(X):
     (a1,a2,a3,a4,a5) = (0.31938153, -0.356563782, 1.781477937, \
                         -1.821255978, 1.330274429)
@@ -15,7 +16,7 @@ def CND(X):
     return w
 
 # Black Sholes Function
-def BlackSholes(CallPutFlag,S,X,T,r,v):
+def BlackScholes(CallPutFlag,S,X,T,r,v):
     d1 = (np.log(S/X)+(r+v*v/2.)*T)/(v*np.sqrt(T))
     d2 = d1-v*np.sqrt(T)
     if CallPutFlag=='c':
