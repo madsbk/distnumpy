@@ -325,6 +325,23 @@ typedef struct
     npy_intp nflush;
 } dndtime;
 
+//PyObject for the block iterator.
+typedef struct
+{
+    PyObject_HEAD
+    //The view that is iterated.
+    dndview *view;
+    //Current block coordinate.
+    npy_intp curblock[NPY_MAXDIMS];
+    //Slice of the blocks in the iterator.
+    dndslice slice[NPY_MAXDIMS];
+    //Strides for the Python array object.
+    npy_intp strides[NPY_MAXDIMS];
+    //Dimensions for the Python array object.
+    npy_intp dims[NPY_MAXDIMS];
+} dndblock_iter;
+
+
 #ifdef __cplusplus
 }
 #endif

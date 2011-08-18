@@ -2171,6 +2171,8 @@ static PyMethodDef array_methods[] = {
          METH_VARARGS, NULL},
     {"pgrid_incoord", (PyCFunction)dnumpy_proc_grid_incoord,
          METH_VARARGS, NULL},
+    {"blocks", (PyCFunction)dnumpy_blocks,
+         METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}           /* sentinel */
 };
 
