@@ -5,6 +5,7 @@ import numpy as np
 import getopt
 import sys
 import datetime
+from os import environ as env
 
 class Parsing:
     """This class should handle the presentation of benchmark results.
@@ -31,6 +32,11 @@ class Parsing:
                 self.notes = arg
 
         self.dist = self.runinfo['dist']
+        self.threads = 1
+        try:
+            self.threads = int(env['OMP_NUM_THREADS'])
+        except KeyError:
+            pass
 
     def pprint(self, timing, sysinfo=True, rank=0):
         """Pretty-print the timing profile.
@@ -54,6 +60,7 @@ class Parsing:
             print "Notes:     \"%s\""%self.notes
             print "SPMD_MODE: %d"%np.SPMD_MODE
             print "WORLDSIZE: %d"%np.WORLDSIZE
+            print "THREADS:   %d"%self.threads
             print "RANK:      %d"%np.RANK
             print "BLOCKSIZE: %d"%np.BLOCKSIZE
 
@@ -106,7 +113,8 @@ class Parsing:
         ret = dict(timing.items() + self.runinfo.items())
 
         ret['SPMD_MODE'] = np.SPMD_MODE
-        ret['RANK'] = np.RANK
+        ret['RANK']      = np.RANK
+        ret['THREADS']   = np.threads
         ret['WORLDSIZE'] = np.WORLDSIZE
         ret['BLOCKSIZE'] = np.BLOCKSIZE
 
