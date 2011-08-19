@@ -114,7 +114,7 @@ class Parsing:
 
         ret['SPMD_MODE'] = np.SPMD_MODE
         ret['RANK']      = np.RANK
-        ret['THREADS']   = np.threads
+        ret['THREADS']   = self.threads
         ret['WORLDSIZE'] = np.WORLDSIZE
         ret['BLOCKSIZE'] = np.BLOCKSIZE
 
