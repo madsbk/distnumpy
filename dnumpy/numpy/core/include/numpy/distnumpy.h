@@ -341,6 +341,21 @@ typedef struct
     npy_intp dims[NPY_MAXDIMS];
 } dndblock_iter;
 
+//Macro that increases the work buffer pointer.
+#define WORKBUF_INC(bytes_taken)                                       \
+{                                                                      \
+    workbuf_nextfree += bytes_taken;                                   \
+    if(workbuf_nextfree >= workbuf_max)                                \
+    {                                                                  \
+        fprintf(stderr, "Work buffer overflow - increase the maximum " \
+                "work buffer size or decrease the maximum DAG size. "  \
+                "The current values are %dMB and %d nodes,"            \
+                "respectively.\n", DNPY_WORK_BUFFER_MAXSIZE / 1048576, \
+                DNPY_MAX_VB_IN_SVB_DAG);                               \
+        MPI_Abort(MPI_COMM_WORLD, -1);                                 \
+    }                                                                  \
+}
+
 
 #ifdef __cplusplus
 }

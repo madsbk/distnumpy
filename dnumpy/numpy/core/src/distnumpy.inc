@@ -20,6 +20,7 @@ static npy_intp msg[DNPY_MAX_MSG_SIZE];
 //The work buffer and its next free slot.
 static void *workbuf;
 static void *workbuf_nextfree;
+static void *workbuf_max;
 //Unique identification counter
 static npy_intp uid_count=0;
 //Array-views belonging to local MPI process
@@ -810,7 +811,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
     vblock->nsub = s;
     assert(vblock->nsub > 0);
     //And the next free work buffer slot.
-    workbuf_nextfree += s * sizeof(dndsvb);
+    WORKBUF_INC(s * sizeof(dndsvb));
 } /* calc_vblock */
 
 /*===================================================================
@@ -1228,7 +1229,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
 
                 //Add a new sub-view block DAG node.
                 dndop_comm *op = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndop_comm);
+                WORKBUF_INC(sizeof(dndop_comm));
                 op->op = DNPY_BUF_RECV;
                 op->optype = DNPY_COMM;
                 op->narys = 1;
@@ -1239,7 +1240,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 op->mpi_tag = mpi_tag_svb;
                 op->remote_rank = svbs[v]->rank;
                 dndnode *node = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndnode);
+                WORKBUF_INC(sizeof(dndnode));
                 node->op = (dndop *) op;
                 node->op_ary_idx = 0;
                 dag_svb_add(node, 1, 0);
@@ -1255,11 +1256,11 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                     continue;
 
                 svbs[v]->data = workbuf_nextfree;
-                workbuf_nextfree += svbs[v]->nelem * views[v]->base->elsize;
+                WORKBUF_INC(svbs[v]->nelem * views[v]->base->elsize);
             }
             //Add the apply request to the svb-DAG.
             dndop_ufunc *op = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndop_ufunc);
+            WORKBUF_INC(sizeof(dndop_ufunc));
             op->op = DNPY_UFUNC;
             op->optype = DNPY_NONCOMM;
             op->narys = narys;
@@ -1336,7 +1337,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
 
             //Add a new sub-view block DAG node.
             dndnode *nodes = workbuf_nextfree;
-            workbuf_nextfree += narys * sizeof(dndnode);
+            WORKBUF_INC(narys * sizeof(dndnode));
             for(v=0; v<narys; v++)
             {
                 nodes[v].op_ary_idx = v;
@@ -1361,7 +1362,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
 
                 //Add a new sub-view block DAG node.
                 dndop_comm *op = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndop_comm);
+                WORKBUF_INC(sizeof(dndop_comm));
                 op->op = DNPY_SEND;
                 op->optype = DNPY_COMM;
                 op->narys = 1;
@@ -1372,7 +1373,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 op->mpi_tag = mpi_tag_svb;
                 op->remote_rank = coord_owner;
                 dndnode *node = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndnode);
+                WORKBUF_INC(sizeof(dndnode));
                 node->op_ary_idx = 0;
                 node->op = (dndop *)op;
                 dag_svb_add(node, 1, 0);
@@ -1440,7 +1441,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
             if(coord_owner == myrank && svb->rank != myrank)
             {
                 dndop_comm *op = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndop_comm);
+                WORKBUF_INC(sizeof(dndop_comm));
                 op->narys = 1;
                 op->refcount = 0;
                 op->views[0] = views[v];
@@ -1451,7 +1452,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 op->optype = DNPY_COMM;
                 op->remote_rank = svb->rank;
                 dndnode *node = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndnode);
+                WORKBUF_INC(sizeof(dndnode));
                 node->op_ary_idx = 0;
                 node->op = (dndop *)op;
                 dag_svb_add(node, 1, 0);
@@ -1459,7 +1460,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
             else if(coord_owner != myrank && svb->rank == myrank)
             {
                 dndop_comm *op = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndop_comm);
+                WORKBUF_INC(sizeof(dndop_comm));
                 op->narys = 1;
                 op->refcount = 0;
                 op->views[0] = views[v];
@@ -1470,7 +1471,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 op->optype = DNPY_COMM;
                 op->remote_rank = coord_owner;
                 dndnode *node = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndnode);
+                WORKBUF_INC(sizeof(dndnode));
                 node->op_ary_idx = 0;
                 node->op = (dndop *)op;
                 dag_svb_add(node, 1, 0);
@@ -1819,7 +1820,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     dndview *view = get_dndview(uid);
 
     dndop *op = workbuf_nextfree;
-    workbuf_nextfree += sizeof(dndop);
+    WORKBUF_INC(sizeof(dndop));
     op->op = DNPY_DESTROY_ARRAY;
     op->optype = DNPY_NONCOMM;
     op->narys = 1;
@@ -1829,7 +1830,7 @@ static void do_DESTROY_ARRAY(npy_intp uid)
     op->accesstypes[0] = DNPY_WRITE;
 
     dndnode *node = workbuf_nextfree;
-    workbuf_nextfree += sizeof(dndnode);
+    WORKBUF_INC(sizeof(dndnode));
     node->op = op;
     node->op_ary_idx = 0;
     dag_svb_add(node, 1, 0);
@@ -2613,7 +2614,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         while(notfinished)
         {
             dndsvb *svb = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndsvb);
+            WORKBUF_INC(sizeof(dndsvb));
             svb->rank = myrank;
             svb->data = PyArray_DATA(subres);
             svb->nelem = 1;
@@ -2646,7 +2647,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
             //Add a new sub-view block DAG node.
             dndop_comm *op = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndop_comm);
+            WORKBUF_INC(sizeof(dndop_comm));
             op->narys = 1;
             op->refcount = 0;
             op->views[0] = in_view;
@@ -2698,7 +2699,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             op->mpi_tag = tag + mpi_tag;
 
             dndnode *node = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndnode);
+            WORKBUF_INC(sizeof(dndnode));
             node->op_ary_idx = 0;
             node->op = (dndop *)op;
             dag_svb_add(node, 1, 1);
@@ -2742,7 +2743,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         while(notfinished)
         {
             dndsvb *svb = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndsvb);
+            WORKBUF_INC(sizeof(dndsvb));
             svb->rank = myrank;
             svb->data = NULL;
             svb->nelem = 1;
@@ -2764,7 +2765,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
             //Add a new sub-view block DAG node.
             dndop_comm *op = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndop_comm);
+            WORKBUF_INC(sizeof(dndop_comm));
             op->narys = 1;
             op->refcount = 0;
             op->views[0] = out_view;
@@ -2827,7 +2828,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             op->mpi_tag = tag + mpi_tag;
 
             dndnode *node = workbuf_nextfree;
-            workbuf_nextfree += sizeof(dndnode);
+            WORKBUF_INC(sizeof(dndnode));
             node->op_ary_idx = 0;
             node->op = (dndop *)op;
             dag_svb_add(node, 1, 1);
@@ -3496,8 +3497,8 @@ static void dag_svb_flush(int free_workbuf)
                         assert(C->narys == 1);
                         assert(C->svbs[0]->data == NULL);
                         C->svbs[0]->data = workbuf_nextfree;
-                        workbuf_nextfree += C->svbs[0]->nelem *
-                                            C->views[0]->base->elsize;
+                        WORKBUF_INC(C->svbs[0]->nelem *
+                                    C->views[0]->base->elsize);
                         assert(C->svbs[0]->data != NULL);
                         MPI_Irecv(C->svbs[0]->data, C->svbs[0]->nelem,
                                   C->views[0]->base->mpi_dtype,
@@ -3576,7 +3577,7 @@ static void dag_svb_flush(int free_workbuf)
             dndop **op2apply = workbuf_nextfree;
             npy_intp nops = dag_svg_remove(op, op2apply);
             npy_intp cur_op;
-            workbuf_nextfree += nops;//Reserve memory.
+            WORKBUF_INC(nops);//Reserve memory.
 
             for(cur_op=0; cur_op < nops; cur_op++)
             {
@@ -3725,7 +3726,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
                 //the whole array.
                 memcpy(workbuf_nextfree, node, sizeof(dndnode));
                 node = workbuf_nextfree;
-                workbuf_nextfree += sizeof(dndnode);
+                WORKBUF_INC(sizeof(dndnode));
 
                 #ifdef DNPY_STATISTICS
                     node->uid = ++node_uid_count;
@@ -5312,6 +5313,9 @@ dnumpy_init(void)
     workbuf_nextfree = workbuf;
     assert(workbuf != NULL);
 
+    //We subtract one MB to avoid segmentation faults when the workbuf
+    //is used before the call to WORKBUF_INC()
+    workbuf_max = ((char*)workbuf) + DNPY_WORK_BUFFER_MAXSIZE - 1048576;
 
     //Init the block iterator
     dndblock_iterType.tp_new = PyType_GenericNew;
