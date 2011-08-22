@@ -78,11 +78,11 @@ if __name__ == "__main__":
         reset
         set encoding iso_8859_1
         #set title "Strong scaling of Test."
-        set xlabel 'No. of cluster nodes (one CPU-core per node)'
+        set xlabel 'No. of CPU-cores'
         set ylabel 'Speedup of DistNumPy compared to NumPy'
         set y2label 'Relative waiting time in percentage of total time'
         #set xrange [1:128]
-        set yrange [2:32]
+        #set yrange [2:32]
         set y2range [0:100]
         set key left top
         set grid ytic
