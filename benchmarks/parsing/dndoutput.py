@@ -8,7 +8,7 @@ import pickle
 if __name__ == "__main__":
     #-1: no speedup, 0: speedup (NumPy), 1+: speedup (DistNumPy)
     FIND_SPEEDUP = -1
-    MAX_NP = 16 #-1 #Unlimited number of processors
+    MAX_NP = -1 #Unlimited number of processors
 
     options, remainders = getopt.gnu_getopt(sys.argv[1:], '', ['max_np=', 'speedup='])
 
@@ -30,10 +30,13 @@ if __name__ == "__main__":
     #are under the same key.
     inputs = {}
     for i in inputfiles:
+        ws = 0
         if i['dist']:
-            ws = i['WORLDSIZE']
-        else:
-            ws = 0 #Zero means sequential execution.
+            try:
+                ws = i['THREADS']
+            except:
+                pass
+            ws *= i['WORLDSIZE']
         if ws in inputs:
             inputs[ws].append(i)
         else:
@@ -49,10 +52,10 @@ if __name__ == "__main__":
         rm = []
         for i in xrange(len(value)):
             if value[i]['total'] < min or value[i]['total'] > max:
-                print "# Warning - the result (worldsize: %d, runtime:"\
-                      " %d ms) is removed because of the standard "\
-                      "deviation rule."%(value[i]['WORLDSIZE'], \
-                                         value[i]['total'] / 1000)
+                print "# Warning - the result (worldsize: %d, nthreads:"\
+                      "%d, runtime: %d ms) is removed because of the "\
+                      "standard deviation rule."%(value[i]['WORLDSIZE'],\
+                      value[i]['THREADS'], value[i]['total'] / 1000)
                 rm.append(i)
         for i in rm:
             value.pop(i)
@@ -61,21 +64,24 @@ if __name__ == "__main__":
     for v in inputs.values():
         if 0 < len(v) < 3:
             print "# Warning - there is only %d runs with a " \
-                  "worldsize of %d"%(len(v), v[0]['WORLDSIZE'])
+                  "worldsize of %d and nthreads of %d"%(len(v), \
+                  v[0]['WORLDSIZE'], v[0]['THREADS'])
 
     #Compute total wait time for each input.
     for value in inputs.values():
         for i in value:
             i['wait_time'] = i['ufunc_comm'] + i['comm_init'] + \
                              i['reduce_nd'] - i['reduce_nd_apply'] + \
-                             i['msg2slaves']
+                             i['msg2slaves'] + i['final_barrier']
 
     #Compute average values.
     result = {}
     for (k,v) in inputs.items():
         run  = numpy.array([i['total'] for i in v], dtype=float)
         wait = numpy.array([i['wait_time'] for i in v], dtype=float)
-        result[k] = (numpy.average(run),numpy.average(wait))
+        comp = numpy.array([i['apply_ufunc'] for i in v], dtype=float)
+        result[k] = (numpy.average(run),numpy.average(wait),\
+                     numpy.average(comp))
 
     #Print CSV file
     keys=result.keys()
@@ -87,15 +93,16 @@ if __name__ == "__main__":
         SEQ = ""
     if FIND_SPEEDUP > -1: #Show speedup instead of runtime.
         speedup = result[FIND_SPEEDUP][0]#The speedup baseline
-        print '  CPUs; Speedup;Commtime',SEQ
+        print '  CPUs; Speedup;Commtime;Comptime',SEQ
         for k in keys:
             runtime  = speedup / result[k][0]
             waittime = int(result[k][1] / 1000)# convert to in ms
             print "%6d;%8.3f;%8d"%(k, runtime, waittime)
     else:
-        print '  CPUs; Runtime;Commtime',SEQ
+        print '  CPUs; Runtime;Commtime;Comptime',SEQ
         for k in keys:
             runtime  = int(result[k][0] / 1000)# convert to in ms
             waittime = int(result[k][1] / 1000)# convert to in ms
-            print "%6d;%8d;%8d"%(k, runtime, waittime)
+            comptime = int(result[k][2] / 1000)# convert to in ms
+            print "%6d;%8d;%8d;%8d"%(k, runtime-comptime, waittime, comptime)
 
