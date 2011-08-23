@@ -1065,8 +1065,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     npy_intp i,j,v,s,n;
     dndview *lastary = views[narys-1];
     int nin = narys - nout_arys;
-    int coord_owner, mpi_tag_svb=0;
-    int pcoord[NPY_MAXDIMS];
+    int mpi_tag_svb=0;
     npy_intp csdims[NPY_MAXDIMS];
     npy_intp sstride[NPY_MAXDIMS], svboffset[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp csvb[NPY_MAXARGS][NPY_MAXDIMS];
@@ -1104,11 +1103,6 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
-
-    //Compute the owner of the current coord.
-    for(i=0; i<lastary->ndims; i++)
-        pcoord[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
-    coord_owner = cart2rank(lastary->ndims, pcoord);
 
     //Get one vblock from all arrays.
     for(v=0; v<narys; v++)
@@ -1207,8 +1201,9 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
             assert(sdims[i] >= 0 &&
                    sdims[i] <= blocksize);
         }
-
-        if(coord_owner == myrank)
+        //The owner is the MPI-process containing the output svb.
+        int owner = svbs[nin]->rank;
+        if(owner == myrank)
         {
             //Add receive request to the svb-DAG.
             for(v=0; v<nin; v++, mpi_tag_svb++)
@@ -1354,11 +1349,11 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 //The data is not located on this proc.
                 if(svbs[v]->rank != myrank)
                     continue;
-                if(svbs[v]->comm_received_by == coord_owner)
+                if(svbs[v]->comm_received_by == owner)
                     continue;
 
                 //Communication has now been handled.
-                svbs[v]->comm_received_by = coord_owner;
+                svbs[v]->comm_received_by = owner;
 
                 //Add a new sub-view block DAG node.
                 dndop_comm *op = workbuf_nextfree;
@@ -1371,7 +1366,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 op->svbs[0] = svbs[v];
                 op->accesstypes[0] = DNPY_READ;
                 op->mpi_tag = mpi_tag_svb;
-                op->remote_rank = coord_owner;
+                op->remote_rank = owner;
                 dndnode *node = workbuf_nextfree;
                 WORKBUF_INC(sizeof(dndnode));
                 node->op_ary_idx = 0;
@@ -1436,9 +1431,10 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
         for(j=0; j<vblocks[v].nsub; j++, mpi_tag_svb++)
         {
             dndsvb *svb = &vblocks[v].sub[j];
-
+            //The owner is the MPI-process containing the output svb.
+            int owner = vblocks[nin].sub[j].rank;
             //Add a new sub-view block DAG node.
-            if(coord_owner == myrank && svb->rank != myrank)
+            if(owner == myrank && svb->rank != myrank)
             {
                 dndop_comm *op = workbuf_nextfree;
                 WORKBUF_INC(sizeof(dndop_comm));
@@ -1457,7 +1453,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 node->op = (dndop *)op;
                 dag_svb_add(node, 1, 0);
             }
-            else if(coord_owner != myrank && svb->rank == myrank)
+            else if(owner != myrank && svb->rank == myrank)
             {
                 dndop_comm *op = workbuf_nextfree;
                 WORKBUF_INC(sizeof(dndop_comm));
@@ -1469,7 +1465,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
                 op->mpi_tag = mpi_tag_svb;
                 op->op = DNPY_RECV;
                 op->optype = DNPY_COMM;
-                op->remote_rank = coord_owner;
+                op->remote_rank = owner;
                 dndnode *node = workbuf_nextfree;
                 WORKBUF_INC(sizeof(dndnode));
                 node->op_ary_idx = 0;
