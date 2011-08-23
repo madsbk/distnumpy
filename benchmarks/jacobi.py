@@ -1,6 +1,8 @@
-import time
 import sys
 import numpy as np
+import util
+
+parser = util.Parsing(sys.argv[1:])
 
 def jacobi(A, B, tol=0.005, forcedIter=0):
     '''itteratively solving for matrix A with solution vector B
@@ -14,8 +16,6 @@ def jacobi(A, B, tol=0.005, forcedIter=0):
     tmp1 = np.empty(np.shape(B), float, dist=A.dist())
     AD = np.diagonal(A)
     np.timer_reset()
-    np.evalflush()
-    t1 = time.time()
     while (forcedIter and forcedIter > n) or \
           (forcedIter == 0 and dmax > tol):
         n += 1
@@ -31,30 +31,23 @@ def jacobi(A, B, tol=0.005, forcedIter=0):
         dmax = np.maximum.reduce(tmp1)
         h = hnew
 
-
-    np.evalflush()
-    t1 = time.time() - t1
-
-    print 'Iter: ', n, ' size: ', np.shape(B),' time: ', t1,
-    if A.dist():
-        print "(Dist) notes: %s"%sys.argv[4]
-    else:
-        print "(Non-Dist) notes: %s"%sys.argv[4]
-
+    timing = np.timer_getdict()
+    print timing
+    print 'Iter: ', n, ' size:', np.shape(A)
+    parser.pprint(timing)
 
     return h
 
-d = int(sys.argv[1])
-size = int(sys.argv[2])
-iter = int(sys.argv[3])
+size = int(parser.argv[0])
+iter = int(parser.argv[1])
 
 #A = array([[4, -1, -1, 0], [-1, 4, 0, -1], [-1, 0, 4, -1], [0, -1, -1, 4]], float, dist=d)
 #B = array([1,2,0,1], float, dist=d)
 
-A = np.zeros([size,size], dtype=float, dist=d)
+A = np.zeros([size,size], dtype=float, dist=parser.dist)
 np.ufunc_random(A,A)
 
-B = np.zeros([size], dtype=float, dist=d)
+B = np.zeros([size], dtype=float, dist=parser.dist)
 np.ufunc_random(B,B)
 
 C = jacobi(A, B, forcedIter=iter)

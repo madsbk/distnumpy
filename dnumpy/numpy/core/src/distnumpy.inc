@@ -295,10 +295,9 @@ static void dag_svb_dump(void)
  * Private
 */
 static npy_intp dnumroc(npy_intp nelem_in_dim, npy_intp block_size,
-                        int proc_dim_rank, int nproc_in_dim)
+                        int proc_dim_rank, int nproc_in_dim,
+                        int first_process)
 {
-    int first_process = 0; //Assume array begins at process 0.
-
     //Figure process's distance from source process.
     int mydist = (nproc_in_dim + proc_dim_rank - first_process) %
                   nproc_in_dim;
@@ -753,7 +752,7 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         {
             svb[s].stride[i] = stride;
             stride *= dnumroc(view->base->dims[i], blocksize,
-                              pcoord[i], cdims[i]);
+                              pcoord[i], cdims[i], 0);
             assert(svb[s].stride[i] > 0);
         }
 
@@ -1743,7 +1742,7 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
     for(i=0; i < ary->ndims; i++)
     {
         ary->localdims[i] = dnumroc(ary->dims[i],
-                            blocksize, cartcoord[i], cdims[i]);
+                            blocksize, cartcoord[i], cdims[i], 0);
         localsize *= ary->localdims[i];
         ary->localblockdims[i] = ceil(ary->localdims[i] /
                                       (double) blocksize);
@@ -2456,7 +2455,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             for(i=1; i < cart_dim_sizes[0][0]; i++)
             {
                 if(0 == dnumroc(in_ary->dims[0], blocksize,
-                                i, cart_dim_sizes[0][0]))
+                                i, cart_dim_sizes[0][0], 0))
                     continue;
 
                 MPI_Recv(PyArray_DATA(tmp_scalar), out_scalar_dtypesize,
@@ -2555,7 +2554,8 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             {
                 npy_intp d = dnumroc(in_ary->dims[i], blocksize,
                                      cart_coords[i],
-                                     cart_dim_sizes[in_ary->ndims-1][i]);
+                                     cart_dim_sizes[in_ary->ndims-1][i]
+                                     , 0);
                 if(d <= 0)//Its empty.
                 {
                     not_empty = 0;
@@ -3024,9 +3024,9 @@ static void do_DIAGONAL(dndview *in, dndview *out, int offset,
 
         //Find remote local size.
         ldims[0] = dnumroc(in->base->dims[0], blocksize, pcoord[0],
-                           cart_dim_sizes[1][0]);
+                           cart_dim_sizes[1][0], 0);
         ldims[1] = dnumroc(in->base->dims[1], blocksize, pcoord[1],
-                           cart_dim_sizes[1][1]);
+                           cart_dim_sizes[1][1], 0);
 
         //Find remote index (non-block index).
         index[0] = gcoord / cart_dim_sizes[1][0] * blocksize;
@@ -3126,17 +3126,17 @@ static void do_MATMUL(dndview *A, dndview *B, dndview *C)
     //may be involved in the computation even though it has no elements
     //of a particular array.
     localdims[0] = dnumroc(C->base->dims[0], blocksize, mycoord[0],
-                           cart_dim[0]);
+                           cart_dim[0], 0);
     localdims[1] = dnumroc(C->base->dims[1], blocksize, mycoord[1],
-                           cart_dim[1]);
+                           cart_dim[1], 0);
 
     //Leading dimensions.
     int lda = MAX(dnumroc(A->base->dims[1], blocksize, mycoord[1],
-                  cart_dim[1]), 1);
+                  cart_dim[1], 0), 1);
     int ldb = MAX(dnumroc(B->base->dims[1], blocksize, mycoord[1],
-                  cart_dim[1]), 1);
+                  cart_dim[1], 0), 1);
     int ldc = MAX(dnumroc(C->base->dims[1], blocksize, mycoord[1],
-                  cart_dim[1]), 1);
+                  cart_dim[1], 0), 1);
 
     //malloc temp space
     double *temp  = malloc(C->base->elsize);
