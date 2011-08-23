@@ -12,12 +12,12 @@ class Parsing:
        A list of non-optional arguments is exposed through self.argv.
     """
     def __init__(self):
-        self.runinfo = {'dist':False, 'date': datetime.datetime.now()}
+        self.runinfo = {'dist':False, 'date':datetime.datetime.now(), 'jobsize':0}
         self.filename = None
         self.notes = ""
         options, self.argv = getopt.gnu_getopt(sys.argv[1:], \
                 'd:n:c:f:',\
-                ['dist=','nnodes=','ncores=','filename=','notes='])
+                ['dist=','nnodes=','ncores=','filename=','notes=','jobsize='])
 
         for opt, arg in options:
             if opt in ('-d', '--dist'):
@@ -30,6 +30,8 @@ class Parsing:
                 self.filename = arg
             if opt in ('--notes'):
                 self.notes = arg
+            if opt in ('--jobsize'):
+                self.runinfo['jobsize'] = int(arg)
 
         self.dist = self.runinfo['dist']
         self.threads = 1
