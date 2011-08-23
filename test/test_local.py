@@ -26,7 +26,7 @@ def run():
         Cf = Bf
         Cd += 42.0
         Cf += 42.0
-        if not dnumpytest.array_equal(Cd,Cf):
+        if not dnumpytest.array_equal(Ad,Af):
             raise Exception("Uncorrect result array\n")
 
 if __name__ == "__main__":
