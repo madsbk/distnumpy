@@ -16,16 +16,41 @@ def run():
         return
 
     max_ndim = 4
+    BS = np.BLOCKSIZE
     for i in xrange(2, max_ndim+2):
-        src = dnumpytest.random_list(range(np.BLOCKSIZE, i*np.BLOCKSIZE, np.BLOCKSIZE))
+        src = dnumpytest.random_list(range(BS, i*BS, BS))
         Ad = np.array(src, dtype=float, dist=True)
         Af = np.array(src, dtype=float, dist=False)
-        Bd = Ad
-        Bf = Af
+        Bd = Ad[BS:,...]
+        Bf = Af[BS:,...]
         Cd = Bd.local()
         Cf = Bf
         Cd += 42.0
         Cf += 42.0
+        Bd = Ad[BS*2:,...]
+        Bf = Af[BS*2:,...]
+        Cd = Bd.local()
+        Cf = Bf
+        Cd += 4.0
+        Cf += 4.0
+        Bd = Ad[:BS,...]
+        Bf = Af[:BS,...]
+        Cd = Bd.local()
+        Cf = Bf
+        Cd += 142.0
+        Cf += 142.0
+        Bd = Ad[:BS*2,...]
+        Bf = Af[:BS*2,...]
+        Cd = Bd.local()
+        Cf = Bf
+        Cd += 143.0
+        Cf += 143.0
+        Bd = Ad[...,:BS]
+        Bf = Af[...,:BS]
+        Cd = Bd.local()
+        Cf = Bf
+        Cd += 1042.0
+        Cf += 1042.0
         if not dnumpytest.array_equal(Ad,Af):
             raise Exception("Uncorrect result array\n")
 

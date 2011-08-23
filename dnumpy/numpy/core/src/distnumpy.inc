@@ -4883,43 +4883,11 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
     dag_svb_flush(1);
     delayed_array_allocation(view->base);
 
-    return PyArray_SimpleNewFromData(view->ndims,
-                                     view->base->localdims,
-                                     view->base->dtype,
-                                     view->base->data);
-
-    /*
-     *
-     * THIS is view-support work, I am not sure if this can be used by
-     * the user because it results into arrays that are distributed
-     * differently.
-
-    static npy_intp dnumroc2(npy_intp nelem_in_dim, npy_intp block_size,
-                            int proc_dim_rank, int nproc_in_dim, int first_process)
-    {
-        //Figure process's distance from source process.
-        int mydist = (nproc_in_dim + proc_dim_rank - first_process) %
-                      nproc_in_dim;
-
-        //Figure the total number of whole NB blocks N is split up into.
-        npy_intp nblocks = nelem_in_dim / block_size;
-
-        //Figure the minimum number of elements a process can have.
-        npy_intp numroc = nblocks / nproc_in_dim * block_size;
-
-        //See if there are any extra blocks
-        npy_intp extrablocks = nblocks % nproc_in_dim;
-
-        //If I have an extra block.
-        if(mydist < extrablocks)
-            numroc += block_size;
-
-        //If I have last block, it may be a partial block.
-        else if(mydist == extrablocks)
-            numroc += nelem_in_dim % block_size;
-
-        return numroc;
-    }
+    if(view->alterations == 0)//No views.
+        return PyArray_SimpleNewFromData(view->ndims,
+                                         view->base->localdims,
+                                         view->base->dtype,
+                                         view->base->data);
 
     npy_intp s,i,b, offset[NPY_MAXDIMS], start, strides[NPY_MAXDIMS];
     npy_intp dims[NPY_MAXDIMS];
@@ -4938,7 +4906,9 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         }
         if(view->slice[s].nsteps == SingleIndex)
         {
-
+                PyErr_SetString(PyExc_RuntimeError, "local of array-"
+                            "views must have all dimension visible");
+                return NULL;
         }
         else
         {
@@ -4972,10 +4942,8 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
             {
                 offset[b] += 1;
             }
-
-            dims[i] = dnumroc2(view->slice[s].nsteps, blocksize, pcoord[b], cdims[b], poffset);
-
-            //printf("i: %ld, s: %ld, b: %ld, slice.start: %ld, offset: %ld, dims: %ld\n", i,s,b,view->slice[s].start,offset[b],dims[i]);
+            dims[i] = dnumroc(view->slice[s].nsteps, blocksize,
+                              pcoord[b], cdims[b], poffset);
         }
         ++i;
         ++b;
@@ -5002,7 +4970,7 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
                        view->base->data + start,
                        view->base->elsize,
                        NPY_BEHAVED, NULL);
-    */
+
 }/* local_data*/
 
 
