@@ -65,7 +65,7 @@ typedef struct {
 #define DNPY_RDY_QUEUE_MAXSIZE 1024*10
 
 //Maximum MPI tag.
-#define DNPY_MAX_MPI_TAG 10000000
+#define DNPY_MAX_MPI_TAG 1048576
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB
