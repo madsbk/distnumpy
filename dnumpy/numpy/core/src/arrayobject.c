@@ -6141,10 +6141,12 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
                 self->flags &= ~CONTIGUOUS;
             }
             /* DISTNUMPY */
-            flags = FORTRAN | (flags & DNPY_DISTRIBUTED);
+            flags = FORTRAN | (flags & DNPY_DISTRIBUTED) |
+							  (flags & DNPY_DIST_ONENODE);
         }
         /* DISTNUMPY */
         self->flags |= flags & DNPY_DISTRIBUTED;
+        self->flags |= flags & DNPY_DIST_ONENODE;
     }
     else {
         self->flags = (flags & ~UPDATEIFCOPY);
@@ -6184,12 +6186,18 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
         /* DISTNUMPY */
         if(PyArray_ISDISTRIBUTED(self))
         {
-            self->dnduid = dnumpy_create_dndarray(self);
+			npy_intp onedist = -1;
+			if(PyArray_ISDIST_ONENODE(self))
+			{
+				onedist = PyInt_AsLong(obj);
+				obj = NULL;
+			}
+            self->dnduid = dnumpy_create_dndarray(self, onedist);
             //Make sure that set-/getitem are used.
             self->descr->hasobject |= NPY_USE_GETITEM;
             self->descr->hasobject |= NPY_USE_SETITEM;
             //Need to get elsize allocated
-            sd = 0;
+            sd = 0;            
         }
 
         //dnumpy_create_dndarray() may have allocated memory.

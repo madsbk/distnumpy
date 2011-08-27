@@ -139,6 +139,9 @@ struct dndarray_struct
         dndarray *next;
         dndarray *prev;
     #endif
+    //When onerank is positiv this array is only distributed on that 
+    //MPI-process rank. 
+    npy_intp onerank;
 };
 
 //dndslice constants.

@@ -737,7 +737,11 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
             assert(svb[s].nsteps[i] > 0);
         }
         //Find rank.
-        svb[s].rank = cart2rank(view->base->ndims, pcoord);
+        if(view->base->onerank < 0)
+			svb[s].rank = cart2rank(view->base->ndims,pcoord);
+		else
+			svb[s].rank = view->base->onerank;
+	
         assert(svb[s].rank >= 0);
         //Data has not been fetched.
         svb[s].data = NULL;
@@ -748,13 +752,20 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
 
         //Compute the strides (we need the rank to do this).
         stride = 1;
-        for(i=view->base->ndims-1; i >= 0; i--)//Row-major.
-        {
-            svb[s].stride[i] = stride;
-            stride *= dnumroc(view->base->dims[i], blocksize,
-                              pcoord[i], cdims[i], 0);
-            assert(svb[s].stride[i] > 0);
-        }
+        if(view->base->onerank < 0)
+			for(i=view->base->ndims-1; i >= 0; i--)
+			{
+				svb[s].stride[i] = stride;
+				stride *= dnumroc(view->base->dims[i], blocksize,
+								  pcoord[i], cdims[i], 0);
+				assert(svb[s].stride[i] > 0);
+			}
+		else//All on one rank.
+			for(i=view->base->ndims-1; i >= 0; i--)
+			{
+				svb[s].stride[i] = stride;
+				stride = view->base->dims[i];
+			}		
 
         //Compute the MPI datatype for communication.
         comm_offset = 0;
@@ -1741,8 +1752,12 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
     ary->nblocks = 1;
     for(i=0; i < ary->ndims; i++)
     {
-        ary->localdims[i] = dnumroc(ary->dims[i],
-                            blocksize, cartcoord[i], cdims[i], 0);
+		if(ary->onerank < 0)
+			ary->localdims[i] = dnumroc(ary->dims[i], blocksize, 
+										cartcoord[i], cdims[i], 0);
+		else
+			ary->localdims[i] = (ary->onerank==myrank)?ary->dims[i]:0;
+
         localsize *= ary->localdims[i];
         ary->localblockdims[i] = ceil(ary->localdims[i] /
                                       (double) blocksize);
@@ -3780,7 +3795,7 @@ static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness)
  * Public
  */
 static intp
-dnumpy_create_dndarray(PyArrayObject *pyary)
+dnumpy_create_dndarray(PyArrayObject *pyary, intp onerank)
 {
     int i;
     dndview *retview;
@@ -3792,6 +3807,7 @@ dnumpy_create_dndarray(PyArrayObject *pyary)
     newarray->elsize = PyArray_ITEMSIZE(pyary);
     newarray->ndims = PyArray_NDIM(pyary);
     newarray->refcount = 1;
+    newarray->onerank = onerank;
     for(i=0; i<PyArray_NDIM(pyary); i++)
         newarray->dims[i] = PyArray_DIM(pyary, i);
 
@@ -4333,6 +4349,14 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
             return -1;
         }
     }
+
+    if(in->base->onerank >= 0)
+    {
+        PyErr_SetString(PyExc_RuntimeError, 
+                        "One rank array is not allowed.");
+        return -1;
+    } 
+    
     if(out_ary->dnduid > 0)
     {
         dndview *out = get_dndview(out_ary->dnduid);
@@ -4888,6 +4912,12 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
                                          view->base->localdims,
                                          view->base->dtype,
                                          view->base->data);
+    if(view->base->onerank >= 0)
+    {
+        PyErr_SetString(PyExc_RuntimeError,
+                  "One rank array is not allowed with local of views.");
+        return NULL;
+    }    
 
     npy_intp s,i,b, offset[NPY_MAXDIMS], start, strides[NPY_MAXDIMS];
     npy_intp dims[NPY_MAXDIMS];
@@ -4959,8 +4989,6 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         s *= view->base->localdims[i];
     }
     start *= blocksize;
-
-    //printf("start: %ld\n", start/view->base->elsize);
 
     return PyArray_New(&PyArray_Type,
                        view->ndims,
@@ -5212,21 +5240,27 @@ dnumpy_blocks(PyArrayObject *self, PyObject *args)
         }
     }
 
-    //Convert global block slice to local block slice.
-    rank2cart(view->base->ndims, myrank, pcoord);
-    for(i=0; i<view->ndims; ++i)
-    {
-        npy_intp tmp = iter->slice[i].start / cdims[i];
-        if(iter->slice[i].start % cdims[i] > pcoord[i])
-            ++tmp;
-        iter->slice[i].start = tmp;
+	if(view->base->onerank < 0)
+	{
+		//Convert global block slice to local block slice.
+		rank2cart(view->base->ndims, myrank, pcoord);
+		for(i=0; i<view->ndims; ++i)
+		{
+			npy_intp tmp = iter->slice[i].start / cdims[i];
+			if(iter->slice[i].start % cdims[i] > pcoord[i])
+				++tmp;
+			iter->slice[i].start = tmp;
 
-        tmp = iter->slice[i].nsteps / cdims[i];
-        if(iter->slice[i].nsteps % cdims[i] > pcoord[i])
-            ++tmp;
+			tmp = iter->slice[i].nsteps / cdims[i];
+			if(iter->slice[i].nsteps % cdims[i] > pcoord[i])
+				++tmp;
 
-        iter->slice[i].nsteps = tmp;
-    }
+			iter->slice[i].nsteps = tmp;
+		}
+	}
+	else if(view->base->onerank != myrank)//We have nothing
+		for(i=0; i<view->ndims; ++i)
+			iter->slice[i].nsteps = 0;
 
     //Set current block coordinate.
     for(i=0; i < view->ndims; ++i)

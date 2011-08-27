@@ -415,7 +415,9 @@ PyArray_Round(PyArrayObject *a, int decimals, PyArrayObject *out)
         }
         out = (PyArrayObject *)PyArray_Empty(a->nd, a->dimensions,
                                              my_descr,
-                                             PyArray_ISFORTRAN(a));
+                                             PyArray_ISFORTRAN(a),
+                                             /* DISTNUMPY */
+                                             NULL);
         if (out == NULL) {
             return NULL;
         }
@@ -6470,7 +6472,9 @@ clean_type:
  * steals referenct to type
  */
 static PyObject *
-PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags)
+PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags, 
+			  /* DISTNUMPY */
+			  PyObject *obj)
 {
     PyArrayObject *ret;
 
@@ -6478,7 +6482,9 @@ PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags)
     ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type,
                                                 type, nd, dims,
                                                 NULL, NULL,
-                                                flags, NULL);
+                                                flags, 
+                                                /* DISTNUMPY */
+                                                obj);
     if (ret == NULL) {
         return NULL;
     }
@@ -6496,22 +6502,24 @@ static PyObject *
 array_empty(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
 {
     /* DISTNUMPY */
-    static char *kwlist[] = {"shape","dtype","order","dist",NULL};
+    static char *kwlist[] = {"shape","dtype","order","dist","onerank",NULL};
     PyArray_Descr *typecode = NULL;
     PyArray_Dims shape = {NULL, 0};
     NPY_ORDER order = PyArray_CORDER;
     PyObject *ret = NULL;
     Bool dist = FALSE;
     int flags = 0;
+    PyObject *onedist = NULL;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|O&O&O&",
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O&|O&O&O&O",
                                      kwlist, PyArray_IntpConverter,
                                      &shape,
                                      PyArray_DescrConverter,
                                      &typecode,
                                      PyArray_OrderConverter, &order,
                                      /* DISTNUMPY */
-                                     PyArray_BoolConverter, &dist)) {
+                                     PyArray_BoolConverter, &dist,
+                                     &onedist)) {
         goto fail;
     }
     if (order == PyArray_FORTRANORDER) {
@@ -6519,9 +6527,15 @@ array_empty(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
     }
     /* DISTNUMPY */
     if(dist)
+    {
         flags |= DNPY_DISTRIBUTED;
+        if(onedist != NULL)
+			flags |= DNPY_DIST_ONENODE;
+	}
 
-    ret = PyArray_Empty(shape.len, shape.ptr, typecode, flags);
+    ret = PyArray_Empty(shape.len, shape.ptr, typecode, flags,
+                        /* DISTNUMPY */
+                        onedist);
     PyDimMem_FREE(shape.ptr);
     return ret;
 
