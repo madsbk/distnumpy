@@ -1033,7 +1033,9 @@ NA_OutputArray(PyObject *a, NumarrayType t, int requires)
                 dtype = PyArray_DescrFromType(t);
         }
         ret = (PyArrayObject *)PyArray_Empty(PyArray_NDIM(a), PyArray_DIMS(a),
-                                             dtype, 0);
+                                             dtype, 0, 
+                                             /* DISTNUMPY */
+                                             NULL);
         ret->flags |= NPY_UPDATEIFCOPY;
         ret->base = a;
         PyArray_FLAGS(a) &= ~NPY_WRITEABLE;
