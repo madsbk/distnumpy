@@ -5472,6 +5472,16 @@ static void
 dnumpy_init(void)
 {
     int provided;
+    int flag;
+
+    //Make sure we only initialize once.
+    MPI_Initialized(&flag);
+    if (flag)
+    {
+        fprintf(stderr, "DistNumPy Warning - multiple "
+                         "initialization attempts.\n");
+        return;
+    }
 
     //We make use of MPI_Init_thread even though we only ask for
     //a MPI_THREAD_SINGLE level thread-safety because MPICH2 only
