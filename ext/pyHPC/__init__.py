@@ -12,9 +12,10 @@ global block-size.
 
 from summa import summa
 from lu import lu
+from transpose import transpose
 
 #Default matrix multiplication
 matmul = summa
 
 
-__all__ = ['summa', 'matmul', 'lu']
+__all__ = ['summa', 'matmul', 'lu', 'transpose']

@@ -39,6 +39,9 @@ def run():
     except:
         print "[rank %d] Warning - ignored pyHPC not found\n"%(np.RANK),
         return
+    if np.BLOCKSIZE > 10:
+        print "[rank %d] Warning - ignored np.BLOCKSIZE too high\n"%(np.RANK),
+        return
 
     for SIZE in xrange(np.BLOCKSIZE,np.BLOCKSIZE*10,np.BLOCKSIZE):
         (Ld, Ud) = pyHPC.lu(gen_matrix(SIZE,True))
