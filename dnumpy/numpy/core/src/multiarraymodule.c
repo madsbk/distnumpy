@@ -415,9 +415,7 @@ PyArray_Round(PyArrayObject *a, int decimals, PyArrayObject *out)
         }
         out = (PyArrayObject *)PyArray_Empty(a->nd, a->dimensions,
                                              my_descr,
-                                             PyArray_ISFORTRAN(a),
-                                             /* DISTNUMPY */
-                                             NULL);
+                                             PyArray_ISFORTRAN(a));
         if (out == NULL) {
             return NULL;
         }
@@ -6472,9 +6470,7 @@ clean_type:
  * steals referenct to type
  */
 static PyObject *
-PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags,
-              /* DISTNUMPY */
-              PyObject *obj)
+PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags)
 {
     PyArrayObject *ret;
 
@@ -6482,9 +6478,7 @@ PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags,
     ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type,
                                                 type, nd, dims,
                                                 NULL, NULL,
-                                                flags,
-                                                /* DISTNUMPY */
-                                                obj);
+                                                flags, NULL);
     if (ret == NULL) {
         return NULL;
     }
@@ -6531,11 +6525,24 @@ array_empty(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
         flags |= DNPY_DISTRIBUTED;
         if(onedist != NULL)
             flags |= DNPY_DIST_ONENODE;
-    }
 
-    ret = PyArray_Empty(shape.len, shape.ptr, typecode, flags,
-                        /* DISTNUMPY */
-                        onedist);
+        if (!typecode) typecode = PyArray_DescrFromType(PyArray_DEFAULT);
+        ret = PyArray_NewFromDescr(&PyArray_Type, typecode, shape.len,
+                                   shape.ptr, NULL, NULL, flags, onedist);
+        if (ret == NULL) {
+            goto fail;
+        }
+        if (PyDataType_REFCHK(typecode)) {
+            PyArray_FillObjectArray((PyArrayObject *)ret, Py_None);
+            if (PyErr_Occurred()) {
+                Py_DECREF(ret);
+                goto fail;
+            }
+        }
+    }
+    else
+        ret = PyArray_Empty(shape.len, shape.ptr, typecode, flags);
+
     PyDimMem_FREE(shape.ptr);
     return ret;
 
