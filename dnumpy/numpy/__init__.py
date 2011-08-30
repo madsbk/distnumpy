@@ -159,6 +159,7 @@ else:
     __all__.extend(['linalg', 'fft', 'random', 'ctypeslib', 'ma'])
 
     #DISTNUMPY
+    datalayout    = core.multiarray.datalayout
     evalflush     = core.multiarray.evalflush
     timer_reset   = core.multiarray.timer_reset
     timer_getdict = core.multiarray.timer_getdict
@@ -167,7 +168,8 @@ else:
     BLOCKSIZE     = core.multiarray.blocksize()
     SPMD_MODE     = core.multiarray.SPMD_MODE()
     __all__.extend(['SPMD_MODE','BLOCKSIZE','RANK', 'WORLDSIZE',\
-                    'evalflush','timer_reset', 'timer_getdict'])
+                    'evalflush','timer_reset', 'timer_getdict', \
+                    'datalayout'])
     if not core.multiarray.dnumpy_init():
         import sys
         sys.exit(0)

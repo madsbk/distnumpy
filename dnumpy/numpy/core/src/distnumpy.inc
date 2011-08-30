@@ -17,6 +17,7 @@ static npy_intp blocksize;
 #ifndef DNPY_SPMD
 static npy_intp msg[DNPY_MAX_MSG_SIZE];
 #endif
+static npy_intp initmsg_not_handled=1;
 //The work buffer and its next free slot.
 static void *workbuf;
 static void *workbuf_nextfree;
@@ -738,10 +739,10 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         }
         //Find rank.
         if(view->base->onerank < 0)
-			svb[s].rank = cart2rank(view->base->ndims,pcoord);
-		else
-			svb[s].rank = view->base->onerank;
-	
+            svb[s].rank = cart2rank(view->base->ndims,pcoord);
+        else
+            svb[s].rank = view->base->onerank;
+
         assert(svb[s].rank >= 0);
         //Data has not been fetched.
         svb[s].data = NULL;
@@ -753,19 +754,19 @@ calc_vblock(const dndview *view, const npy_intp vcoord[NPY_MAXDIMS],
         //Compute the strides (we need the rank to do this).
         stride = 1;
         if(view->base->onerank < 0)
-			for(i=view->base->ndims-1; i >= 0; i--)
-			{
-				svb[s].stride[i] = stride;
-				stride *= dnumroc(view->base->dims[i], blocksize,
-								  pcoord[i], cdims[i], 0);
-				assert(svb[s].stride[i] > 0);
-			}
-		else//All on one rank.
-			for(i=view->base->ndims-1; i >= 0; i--)
-			{
-				svb[s].stride[i] = stride;
-				stride = view->base->dims[i];
-			}		
+            for(i=view->base->ndims-1; i >= 0; i--)
+            {
+                svb[s].stride[i] = stride;
+                stride *= dnumroc(view->base->dims[i], blocksize,
+                                  pcoord[i], cdims[i], 0);
+                assert(svb[s].stride[i] > 0);
+            }
+        else//All on one rank.
+            for(i=view->base->ndims-1; i >= 0; i--)
+            {
+                svb[s].stride[i] = stride;
+                stride = view->base->dims[i];
+            }
 
         //Compute the MPI datatype for communication.
         comm_offset = 0;
@@ -1711,6 +1712,56 @@ do_TIME_GETDICT(void)
     Py_RETURN_NONE;
 } /* do_TIME_GETDICT */
 
+/*===================================================================
+ *
+ * Message handler for DNPY_INIT_PGRID.
+ * Private.
+ */
+static void do_INIT_PGRID(int pgrid[NPY_MAXDIMS*NPY_MAXDIMS])
+{
+    int j,i;
+    initmsg_not_handled = 0;
+
+    //Save the cart_dim_sizes and compute the cart_dim_strides.
+    for(i=0; i<NPY_MAXDIMS; i++)
+    {
+        int ndims = i+1;
+        cart_dim_sizes[i] = malloc(ndims*sizeof(int));
+        for(j=0; j<ndims; j++)
+            cart_dim_sizes[i][j] = pgrid[i*NPY_MAXDIMS+j];
+
+        //Allocate cartesian information.
+        cart_dim_strides[i] = malloc(ndims*sizeof(int));
+        memset(cart_dim_strides[i], 0, ndims*sizeof(int));
+
+        //Compute strides for all dims. Using row-major like MPI.
+        //A 2x2 process grid looks like:
+        //    coord (0,0): rank 0.
+        //    coord (0,1): rank 1.
+        //    coord (1,0): rank 2.
+        //    coord (1,1): rank 3.
+        for(j=0; j<ndims; j++)
+        {
+            int stride = 1, s;
+            for(s=j+1; s<ndims; s++)
+                stride *= cart_dim_sizes[i][s];
+            cart_dim_strides[i][j] = stride;
+        }
+    }
+    //Print debug info.
+    #ifdef DISTNUMPY_DEBUG
+        printf("INIT_PROC_GRID - process grid (the first three): ");
+        for(i=0; i<3; i++)
+        {
+            printf("(%d)[", i+1);
+            for(j=0; j<i; j++)
+                printf("%d,", cart_dim_sizes[i][j]);
+            printf("%d] ", cart_dim_sizes[i][i]);
+        }
+        printf("\n");
+    #endif
+
+}/* do_DNPY_INITMSG */
 
 /*===================================================================
  *
@@ -1752,11 +1803,11 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
     ary->nblocks = 1;
     for(i=0; i < ary->ndims; i++)
     {
-		if(ary->onerank < 0)
-			ary->localdims[i] = dnumroc(ary->dims[i], blocksize, 
-										cartcoord[i], cdims[i], 0);
-		else
-			ary->localdims[i] = (ary->onerank==myrank)?ary->dims[i]:0;
+        if(ary->onerank < 0)
+            ary->localdims[i] = dnumroc(ary->dims[i], blocksize,
+                                        cartcoord[i], cdims[i], 0);
+        else
+            ary->localdims[i] = (ary->onerank==myrank)?ary->dims[i]:0;
 
         localsize *= ary->localdims[i];
         ary->localblockdims[i] = ceil(ary->localdims[i] /
@@ -3800,6 +3851,10 @@ dnumpy_create_dndarray(PyArrayObject *pyary, intp onerank)
     int i;
     dndview *retview;
 
+    //Make sure that the init message has been handled.
+    if(initmsg_not_handled)
+        dnumpy_init_data_layout(NULL,NULL);
+
     //Create dndarray.
     dndarray *newarray = malloc(sizeof(dndarray));
 
@@ -4352,11 +4407,11 @@ dnumpy_ufunc_reduce(PyArrayObject *in_ary, PyArrayObject *out_ary,
 
     if(in->base->onerank >= 0)
     {
-        PyErr_SetString(PyExc_RuntimeError, 
+        PyErr_SetString(PyExc_RuntimeError,
                         "One rank array is not allowed.");
         return -1;
-    } 
-    
+    }
+
     if(out_ary->dnduid > 0)
     {
         dndview *out = get_dndview(out_ary->dnduid);
@@ -4683,6 +4738,12 @@ dnumpy_master_slave_split(void)
         #endif
         switch(msg[0])
         {
+            case DNPY_INIT_PGRID:
+                do_INIT_PGRID((int*)msg_data);
+                break;
+            case DNPY_INIT_BLOCKSIZE:
+                blocksize = *((npy_intp*)msg_data);
+                break;
             case DNPY_CREATE_ARRAY:
                 t1 = msg_data + sizeof(dndarray);
                 do_CREATE_ARRAY((dndarray*) msg_data, (dndview*) t1);
@@ -4917,7 +4978,7 @@ dnumpy_local_data(PyArrayObject *self, PyObject *args)
         PyErr_SetString(PyExc_RuntimeError,
                   "One rank array is not allowed with local of views.");
         return NULL;
-    }    
+    }
 
     npy_intp s,i,b, offset[NPY_MAXDIMS], start, strides[NPY_MAXDIMS];
     npy_intp dims[NPY_MAXDIMS];
@@ -5240,27 +5301,27 @@ dnumpy_blocks(PyArrayObject *self, PyObject *args)
         }
     }
 
-	if(view->base->onerank < 0)
-	{
-		//Convert global block slice to local block slice.
-		rank2cart(view->base->ndims, myrank, pcoord);
-		for(i=0; i<view->ndims; ++i)
-		{
-			npy_intp tmp = iter->slice[i].start / cdims[i];
-			if(iter->slice[i].start % cdims[i] > pcoord[i])
-				++tmp;
-			iter->slice[i].start = tmp;
+    if(view->base->onerank < 0)
+    {
+        //Convert global block slice to local block slice.
+        rank2cart(view->base->ndims, myrank, pcoord);
+        for(i=0; i<view->ndims; ++i)
+        {
+            npy_intp tmp = iter->slice[i].start / cdims[i];
+            if(iter->slice[i].start % cdims[i] > pcoord[i])
+                ++tmp;
+            iter->slice[i].start = tmp;
 
-			tmp = iter->slice[i].nsteps / cdims[i];
-			if(iter->slice[i].nsteps % cdims[i] > pcoord[i])
-				++tmp;
+            tmp = iter->slice[i].nsteps / cdims[i];
+            if(iter->slice[i].nsteps % cdims[i] > pcoord[i])
+                ++tmp;
 
-			iter->slice[i].nsteps = tmp;
-		}
-	}
-	else if(view->base->onerank != myrank)//We have nothing
-		for(i=0; i<view->ndims; ++i)
-			iter->slice[i].nsteps = 0;
+            iter->slice[i].nsteps = tmp;
+        }
+    }
+    else if(view->base->onerank != myrank)//We have nothing
+        for(i=0; i<view->ndims; ++i)
+            iter->slice[i].nsteps = 0;
 
     //Set current block coordinate.
     for(i=0; i < view->ndims; ++i)
@@ -5287,14 +5348,130 @@ dnumpy_blocks(PyArrayObject *self, PyObject *args)
 /*NUMPY_API
  * ===================================================================
  * Public
+ * Initialization of the data layout.
+ */
+static PyObject *
+dnumpy_init_data_layout(PyArrayObject *self, PyObject *args)
+{
+    PyObject *pgrid = Py_None;
+    int i,j;
+    int tmpsizes[NPY_MAXDIMS*NPY_MAXDIMS];
+
+    if(args != NULL)//If not called from dnumpy_create_dndarray()
+        if (!PyArg_ParseTuple(args, "O", &pgrid))
+            return NULL;
+
+    if(!initmsg_not_handled)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "numpy.datalayout must be "
+                "called before any distributed array and only once. ");
+        return NULL;
+    }
+
+    //Check for user-defined process grid.
+    //The syntax used is: ndims:dim:size;
+    //E.g. DNPY_PROC_SIZE="2:2:4;3:3:2" which means that array
+    //with two dimensions should, at its second dimension, have
+    //a size of four etc.
+    memset(tmpsizes, 0, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
+    char *env = getenv("DNPY_PROC_GRID");
+    if(env != NULL)
+    {
+        char *res = strtok(env, ";");
+        while(res != NULL)
+        {
+            char *size_ptr;
+            int dsize = 0;
+            int dim = 0;
+            int ndims = strtol(res, &size_ptr, 10);
+            if(size_ptr != '\0')
+                dim = strtol(size_ptr+1, &size_ptr, 10);
+            if(size_ptr != '\0')
+                dsize = strtol(size_ptr+1, NULL, 10);
+            //Make sure the input is valid.
+            if(dsize <= 0 || dim <= 0 || dim > ndims ||
+               ndims <= 0 || ndims > NPY_MAXDIMS)
+            {
+                PyErr_Format(PyExc_ValueError, "DNPY_PROC_GRID, invalid"
+                             " syntax or value at \"%s\"\n", res);
+                return NULL;
+            }
+            tmpsizes[(ndims-1)*NPY_MAXDIMS+(dim-1)] = dsize;
+            //Go to next token.
+            res = strtok(NULL, ";");
+        }
+    }
+    else if(pgrid != Py_None)
+    {//The environment variable supersedes the function call.
+        for(i=0; i<PySequence_Size(pgrid); i++)
+        {
+            PyObject *tuple = PySequence_ITEM(pgrid, i);
+            if(!PySequence_Check(tuple) || PySequence_Size(tuple) != 3)
+            {
+                PyErr_Format(PyExc_ValueError, "The datalayout "
+                    "must use the following layout: [(#dimensions, "
+                    "dimension, size),...] where each tuple impose a "
+                    "dimension size.");
+                return NULL;
+            }
+            PyObject *item = PySequence_ITEM(tuple, 0);
+            int ndims = PyInt_AsLong(item);
+            item = PySequence_ITEM(tuple, 1);
+            int dim = PyInt_AsLong(item);
+            item = PySequence_ITEM(tuple, 2);
+            int dsize = PyInt_AsLong(item);
+
+            //Make sure the input is valid.
+            if(dsize <= 0 || dim <= 0 || dim > ndims ||
+               ndims <= 0 || ndims > NPY_MAXDIMS)
+            {
+                PyErr_Format(PyExc_ValueError, "invalid values");
+                return NULL;
+            }
+            tmpsizes[(ndims-1)*NPY_MAXDIMS+(dim-1)] = dsize;
+        }
+    }
+
+    //Find a balanced distributioin of processes per direction
+    //based on the restrictions specified by the user.
+    for(i=0; i<NPY_MAXDIMS; i++)
+    {
+        int ndims = i+1;
+        int t[NPY_MAXDIMS];
+        int d = 0;
+        //Need to reverse the order to match MPI_Dims_create
+        for(j=i; j>=0; j--)
+            t[d++] = tmpsizes[i*NPY_MAXDIMS+j];
+
+        MPI_Dims_create(worldsize, ndims, t);
+        d = ndims;
+        for(j=0; j<ndims; j++)
+            tmpsizes[i*NPY_MAXDIMS+j] = t[--d];
+    }
+
+    #ifndef DNPY_SPMD
+        //Tell slaves
+        msg[0] = DNPY_INIT_PGRID;
+        memcpy(&msg[1], tmpsizes, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
+        *(&msg[1]+NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int)) = DNPY_MSG_END;
+        msg2slaves(msg, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
+    #endif
+
+    do_INIT_PGRID(tmpsizes);
+
+    Py_RETURN_NONE;
+}/* dnumpy_init_data_layout */
+
+
+/*NUMPY_API
+ * ===================================================================
+ * Public
  * Initialization of distnumpy.
  */
 static void
 dnumpy_init(void)
 {
     int provided;
-    int j,i;
-    dndinitmsg initmsg;
 
     //We make use of MPI_Init_thread even though we only ask for
     //a MPI_THREAD_SINGLE level thread-safety because MPICH2 only
@@ -5320,121 +5497,24 @@ dnumpy_init(void)
     if(PyType_Ready(&dndblock_iterType) < 0)  return;
     Py_INCREF(&dndblock_iterType);
 
-
-
+    //Set blocksize
     if(myrank == 0)
     {
-        int tmpsizes[NPY_MAXDIMS*NPY_MAXDIMS];
         char *env;
-
         //Check for user-defined block size.
         env = getenv("DNPY_BLOCKSIZE");
         if(env == NULL)
-            initmsg.blocksize = DNPY_BLOCKSIZE;
+            blocksize = DNPY_BLOCKSIZE;
         else
-            initmsg.blocksize = atoi(env);
+            blocksize = atoi(env);
 
-        if(initmsg.blocksize <= 0)
+        if(blocksize <= 0)
         {
             fprintf(stderr, "User-defined blocksize must be greater "
                             "than zero\n");
             MPI_Abort(MPI_COMM_WORLD, -1);
         }
-
-        //Check for user-defined process grid.
-        //The syntax used is: ndims:dim:size;
-        //E.g. DNPY_PROC_SIZE="2:2:4;3:3:2" which means that array
-        //with two dimensions should, at its second dimension, have
-        //a size of four etc.
-        memset(tmpsizes, 0, NPY_MAXDIMS*NPY_MAXDIMS*sizeof(int));
-        env = getenv("DNPY_PROC_GRID");
-        if(env != NULL)
-        {
-            char *res = strtok(env, ";");
-            while(res != NULL)
-            {
-                char *size_ptr;
-                int dsize = 0;
-                int dim = 0;
-                int ndims = strtol(res, &size_ptr, 10);
-                if(size_ptr != '\0')
-                    dim = strtol(size_ptr+1, &size_ptr, 10);
-                if(size_ptr != '\0')
-                    dsize = strtol(size_ptr+1, NULL, 10);
-                //Make sure the input is valid.
-                if(dsize <= 0 || dim <= 0 || dim > ndims ||
-                   ndims <= 0 || ndims > NPY_MAXDIMS)
-                {
-                    fprintf(stderr, "DNPY_PROC_GRID, invalid syntax or"
-                                    " value at \"%s\"\n", res);
-                    MPI_Abort(MPI_COMM_WORLD, -1);
-                }
-                tmpsizes[(ndims-1)*NPY_MAXDIMS+(dim-1)] = dsize;
-                //Go to next token.
-                res = strtok(NULL, ";");
-            }
-        }
-        //Initilization of cart_dim_strides.
-        for(i=0; i<NPY_MAXDIMS; i++)
-        {
-            int ndims = i+1;
-            int t[NPY_MAXDIMS];
-            int d = 0;
-            //Need to reverse the order to match MPI_Dims_create
-            for(j=i; j>=0; j--)
-                t[d++] = tmpsizes[i*NPY_MAXDIMS+j];
-
-            //Find a balanced distributioin of processes per direction
-            //and use the restrictions specified by the user.
-            MPI_Dims_create(worldsize, ndims, t);
-            d = ndims;
-            for(j=0; j<ndims; j++)
-                initmsg.proc_grid[i*NPY_MAXDIMS+j] = t[--d];
-        }
     }
-    //Broadcast to all ranks.
-    MPI_Bcast(&initmsg, sizeof(dndinitmsg), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    //Save blocksize
-    blocksize = initmsg.blocksize;
-
-    //Save the cart_dim_sizes and compute the cart_dim_strides.
-    for(i=0; i<NPY_MAXDIMS; i++)
-    {
-        int ndims = i+1;
-        cart_dim_sizes[i] = malloc(ndims*sizeof(int));
-        for(j=0; j<ndims; j++)
-            cart_dim_sizes[i][j] = initmsg.proc_grid[i*NPY_MAXDIMS+j];
-
-        //Allocate cartesian information.
-        cart_dim_strides[i] = malloc(ndims*sizeof(int));
-        memset(cart_dim_strides[i], 0, ndims*sizeof(int));
-
-        //Compute strides for all dims. Using row-major like MPI.
-        //A 2x2 process grid looks like:
-        //    coord (0,0): rank 0.
-        //    coord (0,1): rank 1.
-        //    coord (1,0): rank 2.
-        //    coord (1,1): rank 3.
-        for(j=0; j<ndims; j++)
-        {
-            int stride = 1, s;
-            for(s=j+1; s<ndims; s++)
-                stride *= cart_dim_sizes[i][s];
-            cart_dim_strides[i][j] = stride;
-        }
-    }
-    //Print debug info.
-    #ifdef DISTNUMPY_DEBUG
-        printf("INIT_PROC_GRID - process grid (the first three): ");
-        for(i=0; i<3; i++)
-        {
-            printf("(%d)[", i+1);
-            for(j=0; j<i; j++)
-                printf("%d,", cart_dim_sizes[i][j]);
-            printf("%d] ", cart_dim_sizes[i][i]);
-        }
-        printf("\n");
-    #endif
+    MPI_Bcast(&blocksize, sizeof(npy_intp), MPI_BYTE, 0, MPI_COMM_WORLD);
 
 } /* dnumpy_init */

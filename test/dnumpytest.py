@@ -93,6 +93,7 @@ if __name__ == "__main__":
     if np.RANK == 0:
         print "*"*100
         print "*"*31, "Testing Distributed Numerical Python", "*"*31
+    np.datalayout(None)
     np.evalflush(barrier=True)
     for i in xrange(len(script_list)):
         f = script_list[i]

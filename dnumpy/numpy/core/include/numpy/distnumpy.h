@@ -77,17 +77,8 @@ enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,
           DNPY_DATADUMP, DNPY_DIAGONAL, DNPY_MATMUL,
           DNPY_RECV, DNPY_SEND, DNPY_BUF_RECV, DNPY_BUF_SEND, DNPY_APPLY,
           DNPY_EVALFLUSH, DNPY_READ, DNPY_WRITE, DNPY_COMM, DNPY_NONCOMM,
-          DNPY_REDUCE_SEND, DNPY_REDUCE_RECV,
-          DNPY_TIME_RESET, DNPY_TIME_GETDICT};
-
-//Type describing the initial message.
-typedef struct
-{
-    //Blocksize
-    npy_intp blocksize;
-    //User-defined process grid.
-    npy_intp proc_grid[NPY_MAXDIMS*NPY_MAXDIMS];
-} dndinitmsg;
+          DNPY_REDUCE_SEND, DNPY_REDUCE_RECV, DNPY_INIT_BLOCKSIZE,
+          DNPY_TIME_RESET, DNPY_TIME_GETDICT, DNPY_INIT_PGRID};
 
 //dndnode prototype.
 typedef struct dndnode_struct dndnode;
@@ -139,8 +130,8 @@ struct dndarray_struct
         dndarray *next;
         dndarray *prev;
     #endif
-    //When onerank is positiv this array is only distributed on that 
-    //MPI-process rank. 
+    //When onerank is positiv this array is only distributed on that
+    //MPI-process rank.
     npy_intp onerank;
 };
 

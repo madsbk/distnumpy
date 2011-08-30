@@ -6472,9 +6472,9 @@ clean_type:
  * steals referenct to type
  */
 static PyObject *
-PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags, 
-			  /* DISTNUMPY */
-			  PyObject *obj)
+PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags,
+              /* DISTNUMPY */
+              PyObject *obj)
 {
     PyArrayObject *ret;
 
@@ -6482,7 +6482,7 @@ PyArray_Empty(int nd, intp *dims, PyArray_Descr *type, int flags,
     ret = (PyArrayObject *)PyArray_NewFromDescr(&PyArray_Type,
                                                 type, nd, dims,
                                                 NULL, NULL,
-                                                flags, 
+                                                flags,
                                                 /* DISTNUMPY */
                                                 obj);
     if (ret == NULL) {
@@ -6530,8 +6530,8 @@ array_empty(PyObject *NPY_UNUSED(ignored), PyObject *args, PyObject *kwds)
     {
         flags |= DNPY_DISTRIBUTED;
         if(onedist != NULL)
-			flags |= DNPY_DIST_ONENODE;
-	}
+            flags |= DNPY_DIST_ONENODE;
+    }
 
     ret = PyArray_Empty(shape.len, shape.ptr, typecode, flags,
                         /* DISTNUMPY */
@@ -8453,6 +8453,9 @@ static struct PyMethodDef array_module_methods[] = {
         METH_VARARGS, NULL},
     {"SPMD_MODE",
         (PyCFunction)dnumpy_SPMD_mode,
+        METH_VARARGS, NULL},
+    {"datalayout",
+        (PyCFunction)dnumpy_init_data_layout,
         METH_VARARGS, NULL},
     {NULL, NULL, 0, NULL}                /* sentinel */
 };

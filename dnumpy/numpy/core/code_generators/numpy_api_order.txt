@@ -203,3 +203,4 @@ dnumpy_proc_grid
 dnumpy_proc_grid_mycoord
 dnumpy_proc_grid_incoord
 dnumpy_blocks
+dnumpy_init_data_layout
