@@ -9,10 +9,15 @@ views of arrays. In most cases, array views must be aligned with the
 global block-size.
 
 """
+import numpy
+
+if not numpy.SPMD_MODE:
+    raise Exception("DistNumPy must run in SPMD mode\n")
 
 from summa import summa
 from lu import lu
 from transpose import transpose
+from fft import *
 
 #Default matrix multiplication
 matmul = summa
