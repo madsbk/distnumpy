@@ -924,7 +924,6 @@ apply_ufunc(dndop_ufunc *apply)
 
     //Create broadcasted iterators.
     int axis = lastndims-1;
-    npy_intp coord[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp strides[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp backstrides[NPY_MAXARGS][NPY_MAXDIMS];
     for(j=0; j<narys; j++)
@@ -942,7 +941,6 @@ apply_ufunc(dndop_ufunc *apply)
             }
             backstrides[j][i] = strides[j][i] * (lastdims[i] - 1);
         }
-        memset(coord[j], 0, lastndims * sizeof(npy_intp));
     }
 
     //niters is the total array length without the axis-
@@ -956,6 +954,10 @@ apply_ufunc(dndop_ufunc *apply)
     for(j=0; j<narys; j++)
         steps[j] = strides[j][axis];
 
+    //Init coord.
+    npy_intp coord[NPY_MAXDIMS];
+    memset(coord, 0, lastndims * sizeof(npy_intp));
+
     #ifdef DNDY_TIME
         unsigned long long tdelta;
         DNDTIME(tdelta);
@@ -967,21 +969,20 @@ apply_ufunc(dndop_ufunc *apply)
         apply->func(tdata, &lastdims[axis], steps, apply->funcdata);
 
         //Go to next block. The last coordinate is skiped.
-        for(j=0; j<narys; j++)
+        for(i=lastndims-2; i >= 0; i--)
         {
-            for(i=lastndims-2; i >= 0; i--)
+            if(coord[i] < lastdims[i] - 1)
             {
-                if(coord[j][i] < lastdims[i] - 1)
-                {
-                    coord[j][i]++;
+                coord[i]++;
+                for(j=0; j<narys; j++)
                     tdata[j] += strides[j][i];
-                    break;
-                }
-                else
-                {
-                    coord[j][i] = 0;
+                break;
+            }
+            else
+            {
+                coord[i] = 0;
+                for(j=0; j<narys; j++)
                     tdata[j] -= backstrides[j][i];
-                }
             }
         }
     }
