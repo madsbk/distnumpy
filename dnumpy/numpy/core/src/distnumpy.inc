@@ -1726,12 +1726,10 @@ static void do_INIT_PGRID(int pgrid[NPY_MAXDIMS*NPY_MAXDIMS])
     for(i=0; i<NPY_MAXDIMS; i++)
     {
         int ndims = i+1;
-        cart_dim_sizes[i] = malloc(ndims*sizeof(int));
         for(j=0; j<ndims; j++)
             cart_dim_sizes[i][j] = pgrid[i*NPY_MAXDIMS+j];
 
         //Allocate cartesian information.
-        cart_dim_strides[i] = malloc(ndims*sizeof(int));
         memset(cart_dim_strides[i], 0, ndims*sizeof(int));
 
         //Compute strides for all dims. Using row-major like MPI.
@@ -5473,6 +5471,7 @@ dnumpy_init(void)
 {
     int provided;
     int flag;
+    int i;
 
     //Make sure we only initialize once.
     MPI_Initialized(&flag);
@@ -5506,6 +5505,13 @@ dnumpy_init(void)
     dndblock_iterType.tp_new = PyType_GenericNew;
     if(PyType_Ready(&dndblock_iterType) < 0)  return;
     Py_INCREF(&dndblock_iterType);
+
+    //Allocate cart_dim_sizes and cart_dim_strides.
+    for(i=0; i<NPY_MAXDIMS; i++)
+    {
+        cart_dim_sizes[i] = malloc((i+1)*sizeof(int));
+        cart_dim_strides[i] = malloc((i+1)*sizeof(int));
+    }
 
     //Set blocksize
     if(myrank == 0)
