@@ -26,6 +26,7 @@ static void *workbuf_max;
 static npy_intp uid_count=0;
 //Array-views belonging to local MPI process
 static dndview dndviews[DNPY_MAX_NARRAYS];
+static npy_intp ndndarrays=0;//Current number of dndviews allocated.
 static npy_intp dndviews_uid[DNPY_MAX_NARRAYS];
 //Cartesian dimension information - one for every dimension-order.
 static int *cart_dim_strides[NPY_MAXDIMS];
@@ -369,11 +370,6 @@ static dndview *get_dndview(npy_intp uid)
 static dndview *put_dndview(dndview *view)
 {
     npy_intp i;
-    npy_intp ones[NPY_MAXDIMS];
-
-    //Initiate the Python Array Object.
-    for(i=0; i<view->ndims; i++)
-        ones[i] = 1; //Just need ones for the dim.
 
     for(i=0; i < DNPY_MAX_NARRAYS; i++)
         if(dndviews_uid[i] == 0)
@@ -446,6 +442,8 @@ static void rm_dndview(npy_intp uid)
                     }
                     free(view->base->rootnodes);
                     free(view->base);
+                    --ndndarrays;
+                    assert(ndndarrays >= 0);
                 }
                 return;
             }
@@ -1721,6 +1719,7 @@ static void do_INIT_PGRID(int pgrid[NPY_MAXDIMS*NPY_MAXDIMS])
 {
     int j,i;
     initmsg_not_handled = 0;
+    assert(ndndarrays == 0);
 
     //Save the cart_dim_sizes and compute the cart_dim_strides.
     for(i=0; i<NPY_MAXDIMS; i++)
@@ -1729,7 +1728,7 @@ static void do_INIT_PGRID(int pgrid[NPY_MAXDIMS*NPY_MAXDIMS])
         for(j=0; j<ndims; j++)
             cart_dim_sizes[i][j] = pgrid[i*NPY_MAXDIMS+j];
 
-        //Allocate cartesian information.
+        //Set cartesian information.
         memset(cart_dim_strides[i], 0, ndims*sizeof(int));
 
         //Compute strides for all dims. Using row-major like MPI.
@@ -1772,6 +1771,8 @@ static dndview* do_CREATE_ARRAY(dndarray *ary, dndview *view)
     int *cdims = cart_dim_sizes[ndims-1];
     npy_intp i;
     int cartcoord[NPY_MAXDIMS];
+
+    ++ndndarrays;
 
     //Save array uid.
     ary->uid = view->uid;
@@ -5359,10 +5360,11 @@ dnumpy_init_data_layout(PyArrayObject *self, PyObject *args)
         if (!PyArg_ParseTuple(args, "O", &pgrid))
             return NULL;
 
-    if(!initmsg_not_handled)
+    if(!initmsg_not_handled && ndndarrays > 0)
     {
-        PyErr_SetString(PyExc_RuntimeError, "numpy.datalayout must be "
-                "called before any distributed array and only once. ");
+        PyErr_Format(PyExc_RuntimeError, "numpy.datalayout must be "
+                "called when no distributed array are allocated "
+                "(%ld arrays are currently allocated).", ndndarrays);
         return NULL;
     }
 

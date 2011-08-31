@@ -55,9 +55,13 @@ def run():
             raise Exception("Pivoting was needed!")
 
         if not dnumpytest.array_equal(Ld,Lf,maxerror=1e-1):
+            del Ld
+            del Ud
             raise Exception("Uncorrect L matrix\n")
 
         if not dnumpytest.array_equal(Ud,Uf,maxerror=1e-1):
+            del Ld
+            del Ud
             raise Exception("Uncorrect U matrix\n")
 
 
