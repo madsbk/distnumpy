@@ -46,7 +46,7 @@ def transpose(a, axis=None):
 
     BS = np.BLOCKSIZE
     BSf = float(BS)
-    out = np.zeros([a.shape[d] for d in axis], dtype=float, dist=True)
+    out = np.empty([a.shape[d] for d in axis], dtype=a.dtype, dist=True)
 
     #Transpose all distributed array blocks
     finish = False

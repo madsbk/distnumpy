@@ -34,11 +34,11 @@ def lu(matrix):
                         "with np.BLOCKSIZE(%d)"%np.BLOCKSIZE)
 
     (prow,pcol) = matrix.pgrid()
-    A = np.zeros((SIZE,SIZE), dtype=float, dist=True);A += matrix
-    L = np.zeros((SIZE,SIZE), dtype=float, dist=True)
-    U = np.zeros((SIZE,SIZE), dtype=float, dist=True)
-    tmpL = np.zeros((SIZE,SIZE), dtype=float, dist=True)
-    tmpU = np.zeros((SIZE,SIZE), dtype=float, dist=True)
+    A = np.zeros((SIZE,SIZE), dtype=matrix.dtype, dist=True);A += matrix
+    L = np.zeros((SIZE,SIZE), dtype=matrix.dtype, dist=True)
+    U = np.zeros((SIZE,SIZE), dtype=matrix.dtype, dist=True)
+    tmpL = np.zeros((SIZE,SIZE), dtype=matrix.dtype, dist=True)
+    tmpU = np.zeros((SIZE,SIZE), dtype=matrix.dtype, dist=True)
     for k in xrange(0,SIZE,BS):
         bs = min(BS,SIZE - k) #Current block size
         kb = k / BS # k as block index
