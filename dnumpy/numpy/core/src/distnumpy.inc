@@ -5416,10 +5416,14 @@ dnumpy_init_data_layout(PyArrayObject *self, PyObject *args)
             }
             PyObject *item = PySequence_ITEM(tuple, 0);
             int ndims = PyInt_AsLong(item);
+            Py_DECREF(item);
             item = PySequence_ITEM(tuple, 1);
             int dim = PyInt_AsLong(item);
+            Py_DECREF(item);
             item = PySequence_ITEM(tuple, 2);
             int dsize = PyInt_AsLong(item);
+            Py_DECREF(item);
+            Py_DECREF(tuple);
 
             //Make sure the input is valid.
             if(dsize <= 0 || dim <= 0 || dim > ndims ||
