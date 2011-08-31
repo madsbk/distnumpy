@@ -963,26 +963,28 @@ apply_ufunc(dndop_ufunc *apply)
         DNDTIME(tdelta);
     #endif
 
+    int ndims2update = lastndims-2;
+    npy_intp *length = &lastdims[axis];
     while(niters-- > 0)
     {
         //Apply operation.
-        apply->func(tdata, &lastdims[axis], steps, apply->funcdata);
+        apply->func(tdata, length, steps, apply->funcdata);
 
         //Go to next block. The last coordinate is skiped.
-        for(i=lastndims-2; i >= 0; i--)
+        for(i=ndims2update; i >= 0; i--)
         {
-            if(coord[i] < lastdims[i] - 1)
-            {
-                coord[i]++;
-                for(j=0; j<narys; j++)
-                    tdata[j] += strides[j][i];
-                break;
-            }
-            else
+            coord[i]++;
+            if(coord[i] >= lastdims[i])
             {
                 coord[i] = 0;
                 for(j=0; j<narys; j++)
                     tdata[j] -= backstrides[j][i];
+            }
+            else
+            {
+                for(j=0; j<narys; j++)
+                    tdata[j] += strides[j][i];
+                break;
             }
         }
     }
