@@ -8,7 +8,7 @@ def gen_matrix(SIZE,dist):
     A = np.zeros((SIZE,SIZE), dtype=float, dist=dist);
     np.ufunc_random(A,A)
     for i in xrange(SIZE):
-        A[i,i] *= 1000000.0
+        A[i,i] *= 2**30
     return A
 
 parser = util.Parsing()
