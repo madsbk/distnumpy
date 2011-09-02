@@ -943,12 +943,6 @@ apply_ufunc(dndop_ufunc *apply)
         }
     }
 
-    //niters is the total array length without the axis-
-    //dimension.
-    npy_intp niters = 1;
-    for(j=0; j<lastndims-1; j++)
-        niters *= lastdims[j];
-
     //'steps' is the axis-dimension's stride.
     npy_intp steps[NPY_MAXARGS];
     for(j=0; j<narys; j++)
@@ -963,9 +957,17 @@ apply_ufunc(dndop_ufunc *apply)
         DNDTIME(tdelta);
     #endif
 
+    //Handling one-dimensional arrays are very simple.
+    if(lastndims == 1)
+    {
+        apply->func(tdata, &lastdims[axis], steps, apply->funcdata);
+        return;
+    }
+
     int ndims2update = lastndims-2;
     npy_intp *length = &lastdims[axis];
-    while(niters-- > 0)
+    int notfinished = 1;
+    while(notfinished)
     {
         //Apply operation.
         apply->func(tdata, length, steps, apply->funcdata);
@@ -976,6 +978,11 @@ apply_ufunc(dndop_ufunc *apply)
             coord[i]++;
             if(coord[i] >= lastdims[i])
             {
+				if(i==0)//Finished
+				{
+					notfinished = 0;
+					break;
+				}
                 coord[i] = 0;
                 for(j=0; j<narys; j++)
                     tdata[j] -= backstrides[j][i];
