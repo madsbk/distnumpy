@@ -1085,6 +1085,7 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
     dndview *lastary = views[narys-1];
     int nin = narys - nout_arys;
     int mpi_tag_svb=0;
+    int coord_owner;
     npy_intp csdims[NPY_MAXDIMS];
     npy_intp sstride[NPY_MAXDIMS], svboffset[NPY_MAXARGS][NPY_MAXDIMS];
     npy_intp csvb[NPY_MAXARGS][NPY_MAXDIMS];
@@ -1122,6 +1123,20 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
         unsigned long long tdelta;
         DNDTIME(tdelta);
     #endif
+
+    //When all arrays are block aligned the MPI-process with most local
+    //arrays will be the owner else we use the view cartesian grid to
+    //define the owner.
+    coord_owner = -1;
+    for(v=0; v<narys; v++)
+        if(views[v]->alterations & DNPY_NONALIGNED)
+        {
+            int pc[NPY_MAXDIMS];
+            for(i=0; i<lastary->ndims; i++)
+                pc[i] = coord[i] % cart_dim_sizes[lastary->ndims-1][i];
+            coord_owner = cart2rank(lastary->ndims, pc);
+            break;
+        }
 
     //Get one vblock from all arrays.
     for(v=0; v<narys; v++)
@@ -1220,8 +1235,10 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
             assert(sdims[i] >= 0 &&
                    sdims[i] <= blocksize);
         }
-        //The owner is the MPI-process containing the output svb.
+
         int owner = svbs[nin]->rank;
+        if(coord_owner >= 0)
+            owner = coord_owner;
         if(owner == myrank)
         {
             //Add receive request to the svb-DAG.
@@ -1450,8 +1467,9 @@ ufunc_handle_coord(npy_intp coord[NPY_MAXDIMS], int narys, int nout_arys,
         for(j=0; j<vblocks[v].nsub; j++, mpi_tag_svb++)
         {
             dndsvb *svb = &vblocks[v].sub[j];
-            //The owner is the MPI-process containing the output svb.
             int owner = vblocks[nin].sub[j].rank;
+            if(coord_owner >= 0)
+                owner = coord_owner;
             //Add a new sub-view block DAG node.
             if(owner == myrank && svb->rank != myrank)
             {
@@ -2169,6 +2187,7 @@ static void do_UFUNC(npy_intp arylist[NPY_MAXARGS], int narys,
             //by the master process only.
             dummy.uid = -(++uid_count);
             dummy.nslice = 0;
+            dummy.alterations = 0;
             dummy.base = malloc(sizeof(dndarray));
             dummy.base->uid = dummy.uid;
             dummy.base->ndims = 0;
