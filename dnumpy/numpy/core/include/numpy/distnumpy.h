@@ -152,9 +152,10 @@ typedef struct
 } dndslice;
 
 //View-alteration flags.
-#define DNPY_NDIMS    0x001
-#define DNPY_STEP     0x002
-#define DNPY_NSTEPS   0x004
+#define DNPY_NDIMS      0x001
+#define DNPY_STEP       0x002
+#define DNPY_NSTEPS     0x004
+#define DNPY_NONALIGNED 0x008
 
 //Type describing a view of a distributed array.
 typedef struct
@@ -171,10 +172,11 @@ typedef struct
     dndslice slice[NPY_MAXDIMS];
     //A bit mask specifying which alterations this view represents.
     //Possible flags:
-    //Zero        - no alterations.
-    //DNPY_NDIMS  - number of dimensions altered.
-    //DNPY_STEP   - 'step' altered.
-    //DNPY_NSTEPS - 'nsteps' altered.
+    //Zero            - no alterations.
+    //DNPY_NDIMS      - number of dimensions altered.
+    //DNPY_STEP       - 'step' altered.
+    //DNPY_NSTEPS     - 'nsteps' altered.
+    //DNPY_NONALIGNED - 'start % blocksize != 0' or 'step != 1'.
     int alterations;
     //Number of view-blocks.
     npy_intp nblocks;

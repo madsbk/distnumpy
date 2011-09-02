@@ -978,11 +978,11 @@ apply_ufunc(dndop_ufunc *apply)
             coord[i]++;
             if(coord[i] >= lastdims[i])
             {
-				if(i==0)//Finished
-				{
-					notfinished = 0;
-					break;
-				}
+                if(i==0)//Finished
+                {
+                    notfinished = 0;
+                    break;
+                }
                 coord[i] = 0;
                 for(j=0; j<narys; j++)
                     tdata[j] -= backstrides[j][i];
@@ -4061,6 +4061,15 @@ dnumpy_create_dndview(intp org_view_uid, int nslice,
     }
     //Save the total number of sliceses for the new view.
     newview.nslice = ni;
+
+    //Check if the view is not block alligned
+    for(si=0; si<newview.nslice; ++si)
+        if(newview.slice[si].start % blocksize != 0 ||
+           newview.slice[si].step != 1)
+        {
+            newview.alterations |= DNPY_NONALIGNED;
+            break;
+        }
 
 #ifndef DNPY_SPMD
     //Tell slaves about the new view.
