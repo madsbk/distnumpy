@@ -36,9 +36,8 @@ typedef struct {
 //#define DNDY_TIME
 //#define DNPY_SPMD
 
-
-//Easy retrieval of dnduid
-#define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
+//Minimum jobsize for an OpenMP thread. >blocksize means no OpenMP.
+int DNPY_MIN_THREAD_JOBSIZE = 1;
 
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*4
@@ -69,6 +68,9 @@ typedef struct {
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB
+
+//Easy retrieval of dnduid
+#define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
 
 //Operation types
 enum opt {DNPY_MSG_END, DNPY_CREATE_ARRAY, DNPY_DESTROY_ARRAY,

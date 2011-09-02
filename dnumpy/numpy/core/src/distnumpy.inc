@@ -8,6 +8,10 @@
 #endif
 #include CBLAS_HEADER
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 /*===================================================================
  *
  * MPI process variables.
@@ -887,6 +891,7 @@ apply_ufunc(dndop_ufunc *apply)
     int narys = apply->narys;
     npy_intp *lastdims = apply->asvb[narys-1].dims;
     npy_intp lastndims = apply->views[narys-1]->ndims;
+    int nthreads = 1;
 
     //Pack all data.
     char *tdata[NPY_MAXARGS];
@@ -948,10 +953,6 @@ apply_ufunc(dndop_ufunc *apply)
     for(j=0; j<narys; j++)
         steps[j] = strides[j][axis];
 
-    //Init coord.
-    npy_intp coord[NPY_MAXDIMS];
-    memset(coord, 0, lastndims * sizeof(npy_intp));
-
     #ifdef DNDY_TIME
         unsigned long long tdelta;
         DNDTIME(tdelta);
@@ -964,38 +965,74 @@ apply_ufunc(dndop_ufunc *apply)
         return;
     }
 
-    int ndims2update = lastndims-2;
-    npy_intp *length = &lastdims[axis];
-    int notfinished = 1;
-    while(notfinished)
+    //We will use OpenMP to parallelize the apply computation when the
+    //job is big enough.
+    //We divide the work over the first dimension, i.e. the most
+    //significant dimension.
+    #ifdef _OPENMP
+        //Find number of threads to use.
+        if(lastndims > 1)
+            nthreads = MAX(MIN(lastdims[0]/DNPY_MIN_THREAD_JOBSIZE,
+                           omp_get_max_threads()),1);
+        #pragma omp parallel num_threads(nthreads) default(none)\
+                private(i,j)\
+                shared(narys, tdata, lastdims, nthreads, axis, apply, \
+                       steps, backstrides, strides, lastndims)
+    #endif
     {
-        //Apply operation.
-        apply->func(tdata, length, steps, apply->funcdata);
+        #ifdef _OPENMP
+            int myid = omp_get_thread_num();
+        #else
+            int myid = 0;
+        #endif
+        //Init current coordinate.
+        npy_intp coord[NPY_MAXDIMS];
+        memset(coord, 0, lastndims * sizeof(npy_intp));
 
-        //Go to next block. The last coordinate is skiped.
-        for(i=ndims2update; i >= 0; i--)
+        //Find this threads length of work.
+        npy_intp length = lastdims[0] / nthreads;
+
+        //Find current data pointer.
+        char *cdata[NPY_MAXARGS];
+        npy_intp offset = myid * length;
+        for(j=0; j<narys; j++)
+            cdata[j] = tdata[j] + offset * strides[j][0];
+
+        //The last thread get the rest.
+        if(myid == nthreads-1)
+            length += lastdims[0] % nthreads;
+
+        int ndims2update = lastndims-2;
+        int notfinished = 1;
+        while(notfinished)
         {
-            coord[i]++;
-            if(coord[i] >= lastdims[i])
+            //Apply operation.
+            apply->func(cdata, &lastdims[axis], steps, apply->funcdata);
+
+            //Go to next block. The last coordinate is skiped.
+            for(i=ndims2update; i >= 0; i--)
             {
-                if(i==0)//Finished
+                coord[i]++;
+                if(i==0 && coord[i] >= length)
                 {
                     notfinished = 0;
                     break;
                 }
-                coord[i] = 0;
-                for(j=0; j<narys; j++)
-                    tdata[j] -= backstrides[j][i];
-            }
-            else
-            {
-                for(j=0; j<narys; j++)
-                    tdata[j] += strides[j][i];
-                break;
+                else if(i!=0 && coord[i] >= lastdims[i])
+                {
+                    coord[i] = 0;
+                    for(j=0; j<narys; j++)
+                        cdata[j] -= backstrides[j][i];
+                }
+                else
+                {
+                    for(j=0; j<narys; j++)
+                        cdata[j] += strides[j][i];
+                    break;
+                }
             }
         }
     }
-
     #ifdef DNDY_TIME
         DNDTIME_SUM(tdelta, dndt.apply_ufunc)
     #endif
