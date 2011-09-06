@@ -37,7 +37,7 @@ typedef struct {
 //#define DNPY_SPMD
 
 //Minimum jobsize for an OpenMP thread. >blocksize means no OpenMP.
-int DNPY_MIN_THREAD_JOBSIZE = 1;
+#define DNPY_MIN_THREAD_JOBSIZE 1;
 
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*4
