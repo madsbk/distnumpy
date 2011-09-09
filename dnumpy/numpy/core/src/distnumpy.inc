@@ -2663,10 +2663,11 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                                                   in_ary->data);
 
         //All MPI-processes computes its own sub-result.
-        subres = PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
-                                     tmp, axis, Py_None, subres);
+        PyObject *tmp2 = PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
+                                             tmp, axis, Py_None, subres);
         //Clean up.
         Py_DECREF(tmp);
+        Py_DECREF(tmp2);
     }
 
     #ifdef DNDY_TIME
