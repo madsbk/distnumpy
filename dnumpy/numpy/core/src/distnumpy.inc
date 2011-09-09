@@ -2647,14 +2647,24 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
 
     if(in_ary->localsize > 0)
     {
+        //Create sub result array object.
+        npy_intp subres_dims[NPY_MAXDIMS];
+        j=0;
+        for(i=0; i<in_ary->ndims; ++i)
+            if(i != axis)
+                subres_dims[j++] = in_ary->localdims[i];
+        subres = PyArray_SimpleNew(in_ary->ndims-1,subres_dims,
+                                   in_ary->dtype);
+
+        //Create input array object.
         PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
                                                   in_ary->localdims,
                                                   in_ary->dtype,
                                                   in_ary->data);
 
         //All MPI-processes computes its own sub-result.
-        subres = PyObject_CallMethod(PyOp, "reduce", "(O,i)",
-                                               tmp, axis);
+        subres = PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
+                                     tmp, axis, Py_None, subres);
         //Clean up.
         Py_DECREF(tmp);
     }
