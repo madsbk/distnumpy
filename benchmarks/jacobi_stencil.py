@@ -47,6 +47,8 @@ while (forcedIter and forcedIter > i) or \
   cells[:] = work
 
 timing = np.timer_getdict()
-print 'jacobi_stencil - Iter: ', i, ' size:', np.shape(work)
-parser.pprint(timing)
-parser.write_dict(timing)
+
+if np.RANK == 0:
+    print 'jacobi_stencil - Iter: ', i, ' size:', np.shape(work)
+    parser.pprint(timing)
+    parser.write_dict(timing)
