@@ -2553,6 +2553,10 @@ construct_reduce(PyUFuncObject *self, PyArrayObject **arr, PyArrayObject *out,
     return NULL;
 }
 
+/* DISTNUMPY */
+#ifdef _OPENMP
+    #include <omp.h>
+#endif
 
 /*
  * We have two basic kinds of loops. One is used when arr is not-swapped
@@ -2563,13 +2567,12 @@ construct_reduce(PyUFuncObject *self, PyArrayObject **arr, PyArrayObject *out,
  */
 static PyObject *
 PyUFunc_Reduce(PyUFuncObject *self, PyArrayObject *arr, PyArrayObject *out,
-        int axis, int otype)
+               int axis, int otype, /*DISTNUMPY*/ void *threadlock)
 {
     PyArrayObject *ret = NULL;
     PyUFuncReduceObject *loop;
     intp i, n;
     char *dptr;
-    NPY_BEGIN_THREADS_DEF;
 
     /* Construct loop object */
     loop = construct_reduce(self, &arr, out, axis, otype, UFUNC_REDUCE, 0,
@@ -2592,7 +2595,11 @@ PyUFunc_Reduce(PyUFuncObject *self, PyArrayObject *arr, PyArrayObject *out,
         return (PyObject *)ret;
     }
 
-    NPY_LOOP_BEGIN_THREADS;
+    #ifdef _OPENMP
+        if(threadlock != NULL)
+            omp_unset_lock((omp_lock_t*)threadlock);
+    #endif
+
     switch(loop->meth) {
     case ZERO_EL_REDUCELOOP:
         /* fprintf(stderr, "ZERO..%d\n", loop->size); */
@@ -2695,7 +2702,12 @@ PyUFunc_Reduce(PyUFuncObject *self, PyArrayObject *arr, PyArrayObject *out,
             loop->index++;
         }
     }
-    NPY_LOOP_END_THREADS;
+
+    #ifdef _OPENMP
+        if(threadlock != NULL)
+            omp_set_lock((omp_lock_t*)threadlock);
+    #endif
+
     /* Hang on to this reference -- will be decref'd with loop */
     if (loop->retbase) {
         ret = (PyArrayObject *)loop->ret->base;
@@ -2708,7 +2720,6 @@ PyUFunc_Reduce(PyUFuncObject *self, PyArrayObject *arr, PyArrayObject *out,
     return (PyObject *)ret;
 
 fail:
-    NPY_LOOP_END_THREADS;
     if (loop) {
         ufuncreduce_dealloc(loop);
     }
@@ -3178,7 +3189,7 @@ PyUFunc_GenericReduction(PyUFuncObject *self, PyObject *args,
     switch(operation) {
     case UFUNC_REDUCE:
         ret = (PyArrayObject *)PyUFunc_Reduce(self, mp, out, axis,
-                                              otype->type_num);
+                                              otype->type_num, NULL);
         break;
     case UFUNC_ACCUMULATE:
         ret = (PyArrayObject *)PyUFunc_Accumulate(self, mp, out, axis,

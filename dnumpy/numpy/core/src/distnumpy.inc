@@ -54,7 +54,8 @@ static cblas_func_type *cblas_cgemm_func = NULL;
 typedef PyObject* (reduce_func_type)(PyUFuncObject *self,
                                      PyArrayObject *arr,
                                      PyArrayObject *out,
-                                     int axis, int otype);
+                                     int axis, int otype,
+                                     void *threadlock);
 static reduce_func_type *reduce_func = NULL;
 //Prototype for the DAGs.
 static void dag_svb_flush(int free_workbuf);
@@ -2662,20 +2663,117 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
         subres = PyArray_SimpleNew(in_ary->ndims-1,subres_dims,
                                    in_ary->dtype);
 
-        //Create input array object.
-        PyObject *t1 = PyArray_SimpleNewFromData(in_ary->ndims,
-                                                 in_ary->localdims,
-                                                 in_ary->dtype,
-                                                 in_ary->data);
+        //We will use OpenMP to parallelize the apply computation when
+        //the job is big enough.
+        //We divide the work over the the most significant dimension
+        //that is not the axis dimension.
+        int pardim = (axis==0)?1:0;//Dimension to parallelize
+        int nthreads=1;
+        #ifdef _OPENMP
+            //We need to serialize all Python calls.
+            omp_lock_t threadlock;
+            omp_init_lock(&threadlock);
 
-        //All MPI-processes computes its own sub-result.
-        PyObject *t2 = reduce_func((PyUFuncObject*)PyOp,
-                                   (PyArrayObject*) t1,
-                                   (PyArrayObject*) subres,
-                                   axis, in_ary->dtype);
-        //Clean up.
-        Py_DECREF(t1);
-        Py_DECREF(t2);
+            //Find number of threads to use.
+            nthreads = MAX(MIN(in_ary->localdims[pardim]/
+                               DNPY_MIN_THREAD_JOBSIZE,
+                               omp_get_max_threads()),1);
+
+            #pragma omp parallel num_threads(nthreads) default(shared)\
+                    private(i,j)
+        #else
+            void *threadlock = NULL;
+        #endif
+        {
+            #ifdef _OPENMP
+                int myid = omp_get_thread_num();
+            #else
+                int myid = 0;
+            #endif
+
+            npy_intp s=in_ary->elsize, strides[NPY_MAXDIMS];
+            for(i=out_ary->ndims; i >= 0; --i)
+            {
+                strides[i] = s;
+                s *= in_ary->localdims[i];
+            }
+
+            //Find the in dimension and offset.
+            npy_intp in_dim[NPY_MAXDIMS], in_offset;
+            for(i=0; i<in_ary->ndims; ++i)
+                if(i == pardim)
+                {
+                    npy_intp l = in_ary->localdims[i] / nthreads;
+
+                    //Find data pointer offset.
+                    in_offset = myid * l * strides[pardim];
+
+                    //The last thread get the rest.
+                    if(myid == nthreads-1)
+                        l += in_ary->localdims[pardim] % nthreads;
+                    in_dim[i] = l;
+                }
+                else
+                    in_dim[i] = in_ary->localdims[i];
+
+            //Find the out dimension and offset.
+            npy_intp out_dim[NPY_MAXDIMS], out_offset;
+            for(i=0; i<out_ary->ndims; ++i)
+                if(i == 0)
+                {
+                    npy_intp l = PyArray_DIM(subres, i) / nthreads;
+
+                    //Find data pointer offset.
+                    out_offset = myid * l * PyArray_STRIDE(subres, i);
+
+                    //The last thread get the rest.
+                    if(myid == nthreads-1)
+                        l += PyArray_DIM(subres, i) % nthreads;
+                    out_dim[i] = l;
+                }
+                else
+                    out_dim[i] = PyArray_DIM(subres, i);
+
+            #ifdef _OPENMP
+                omp_set_lock(&threadlock);
+            #endif
+
+            //Create input array object.
+            PyObject *tin = PyArray_New(&PyArray_Type,
+                                         in_ary->ndims,
+                                         in_dim,
+                                         in_ary->dtype,
+                                         strides,
+                                         in_ary->data + in_offset,
+                                         in_ary->elsize,
+                                         NPY_BEHAVED, NULL);
+
+            //We use PyArray_SimpleNewFromData() here because for some
+            //reason using PyArray_New() results in a small Python
+            //memory leak.
+            PyObject *tout = PyArray_SimpleNewFromData(out_ary->ndims,
+                                      out_dim,in_ary->dtype,
+                                      PyArray_BYTES(subres)+out_offset);
+            memcpy(PyArray_STRIDES(tout), PyArray_STRIDES(subres),
+                   out_ary->ndims * sizeof(npy_intp));
+
+            //All MPI-processes computes its own sub-result.
+            PyObject *t2 = reduce_func((PyUFuncObject*)PyOp,
+                                       (PyArrayObject*) tin,
+                                       (PyArrayObject*) tout,
+                                       axis, in_ary->dtype, &threadlock);
+            //Clean up.
+            Py_DECREF(t2);
+            Py_DECREF(tin);
+            Py_DECREF(tout);
+
+            #ifdef _OPENMP
+                omp_unset_lock(&threadlock);
+            #endif
+        }
+        #ifdef _OPENMP
+            omp_destroy_lock(&threadlock);
+        #endif
     }
 
     #ifdef DNDY_TIME
