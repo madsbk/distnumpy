@@ -2699,7 +2699,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
             }
 
             //Find the in dimension and offset.
-            npy_intp in_dim[NPY_MAXDIMS], in_offset;
+            npy_intp in_dim[NPY_MAXDIMS], in_offset=0;
             for(i=0; i<in_ary->ndims; ++i)
                 if(i == pardim)
                 {
@@ -2717,7 +2717,7 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                     in_dim[i] = in_ary->localdims[i];
 
             //Find the out dimension and offset.
-            npy_intp out_dim[NPY_MAXDIMS], out_offset;
+            npy_intp out_dim[NPY_MAXDIMS], out_offset=0;
             for(i=0; i<out_ary->ndims; ++i)
                 if(i == 0)
                 {
