@@ -50,6 +50,12 @@ static cblas_func_type *cblas_dgemm_func = NULL;
 static cblas_func_type *cblas_sgemm_func = NULL;
 static cblas_func_type *cblas_zgemm_func = NULL;
 static cblas_func_type *cblas_cgemm_func = NULL;
+//Pointer to the PyUFunc_Reduce function in umath_ufunc_object.inc
+typedef PyObject* (reduce_func_type)(PyUFuncObject *self,
+                                     PyArrayObject *arr,
+                                     PyArrayObject *out,
+                                     int axis, int otype);
+static reduce_func_type *reduce_func = NULL;
 //Prototype for the DAGs.
 static void dag_svb_flush(int free_workbuf);
 static void dag_svb_add(dndnode *nodes, int nnodes, int force_laziness);
@@ -2553,9 +2559,9 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                                                in_ary->dtype,
                                                in_ary->data);
             //Compute local reduce.
-            PyObject *t = PyObject_CallMethod(PyOp, "reduce",
-                                              "(O,i,O,O)", tmpobj, axis,
-                                              Py_None, local_scalar);
+            PyObject *t = PyObject_CallMethod(PyOp,"reduce","(O,i,O,O)",
+                                                tmpobj, axis, Py_None,
+                                                local_scalar);
             Py_XDECREF(t);
 
             //Send local output scalar to the master process.
@@ -2657,17 +2663,19 @@ static void do_UFUNC_REDUCE(npy_intp in_ary_uid,
                                    in_ary->dtype);
 
         //Create input array object.
-        PyObject *tmp = PyArray_SimpleNewFromData(in_ary->ndims,
-                                                  in_ary->localdims,
-                                                  in_ary->dtype,
-                                                  in_ary->data);
+        PyObject *t1 = PyArray_SimpleNewFromData(in_ary->ndims,
+                                                 in_ary->localdims,
+                                                 in_ary->dtype,
+                                                 in_ary->data);
 
         //All MPI-processes computes its own sub-result.
-        PyObject *tmp2 = PyObject_CallMethod(PyOp, "reduce", "(O,i,O,O)",
-                                             tmp, axis, Py_None, subres);
+        PyObject *t2 = reduce_func((PyUFuncObject*)PyOp,
+                                   (PyArrayObject*) t1,
+                                   (PyArrayObject*) subres,
+                                   axis, in_ary->dtype);
         //Clean up.
-        Py_DECREF(tmp);
-        Py_DECREF(tmp2);
+        Py_DECREF(t1);
+        Py_DECREF(t2);
     }
 
     #ifdef DNDY_TIME
@@ -4935,9 +4943,10 @@ dnumpy_master_slave_split(void)
  * found.
  */
 static void
-dnumpy_reg_ufunc_module(PyObject *module)
+dnumpy_reg_ufunc_module(PyObject *module, void *newreduce)
 {
     ufunc_module = module;
+    reduce_func = newreduce;
 } /* dnumpy_reg_ufunc_module */
 
 /*NUMPY_API
