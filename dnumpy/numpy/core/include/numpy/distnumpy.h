@@ -37,7 +37,7 @@ typedef struct {
 //#define DNPY_SPMD
 
 //Minimum jobsize for an OpenMP thread. >blocksize means no OpenMP.
-#define DNPY_MIN_THREAD_JOBSIZE 1
+#define DNPY_MIN_THREAD_JOBSIZE 10
 
 //Maximum message size (in bytes)
 #define DNPY_MAX_MSG_SIZE 1024*4
@@ -46,7 +46,7 @@ typedef struct {
 #define DNPY_MAX_MEM_POOL 10
 
 //Maximum number of view block operations in the sub-view-block DAG.
-#define DNPY_MAX_VB_IN_SVB_DAG 10
+#define DNPY_MAX_VB_IN_SVB_DAG 100
 
 //Disable Lazy Evaluation by definding this macro.
 #undef DNPY_NO_LAZY_EVAL
@@ -68,6 +68,9 @@ typedef struct {
 
 //The maximum size of the work buffer in bytes (should be power of 2).
 #define DNPY_WORK_BUFFER_MAXSIZE 536870912 //½GB
+
+//The work buffer memory alignment.
+#define DNPY_WORK_BUFFER_MEM_ALIGNMENT 32
 
 //Easy retrieval of dnduid
 #define PyArray_DNDUID(obj) (((PyArrayObject *)(obj))->dnduid)
@@ -343,6 +346,9 @@ typedef struct
 #define WORKBUF_INC(bytes_taken)                                       \
 {                                                                      \
     workbuf_nextfree += bytes_taken;                                   \
+    workbuf_nextfree += DNPY_WORK_BUFFER_MEM_ALIGNMENT -               \
+                        (((npy_intp)workbuf_nextfree)                  \
+                        % DNPY_WORK_BUFFER_MEM_ALIGNMENT);             \
     if(workbuf_nextfree >= workbuf_max)                                \
     {                                                                  \
         fprintf(stderr, "Work buffer overflow - increase the maximum " \
@@ -352,8 +358,9 @@ typedef struct
                 DNPY_MAX_VB_IN_SVB_DAG);                               \
         MPI_Abort(MPI_COMM_WORLD, -1);                                 \
     }                                                                  \
+    assert(((npy_intp) workbuf_nextfree) %                             \
+                       DNPY_WORK_BUFFER_MEM_ALIGNMENT == 0);           \
 }
-
 
 #ifdef __cplusplus
 }

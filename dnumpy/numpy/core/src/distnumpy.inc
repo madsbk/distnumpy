@@ -3821,7 +3821,8 @@ static void dag_svb_flush(int free_workbuf)
             dndop **op2apply = workbuf_nextfree;
             npy_intp nops = dag_svg_remove(op, op2apply);
             npy_intp cur_op;
-            WORKBUF_INC(nops);//Reserve memory.
+            npy_intp mreserved = nops * DNPY_WORK_BUFFER_MEM_ALIGNMENT;
+            WORKBUF_INC(mreserved);//Reserve memory.
 
             for(cur_op=0; cur_op < nops; cur_op++)
             {
@@ -3843,7 +3844,7 @@ static void dag_svb_flush(int free_workbuf)
                         MPI_Abort(MPI_COMM_WORLD, -1);
                 }
             }
-            workbuf_nextfree -= nops;//Unreserve memory.
+            workbuf_nextfree -= mreserved;//Unreserve memory.
 
             ++dndt.napply;
             dndt.nconnect += commsize;
@@ -3907,6 +3908,7 @@ static void dag_svb_flush(int free_workbuf)
     if(free_workbuf)
     {
         workbuf_nextfree = workbuf;
+        WORKBUF_INC(1);//Making sure that the memory is aligned.
     }
 }/* dag_svb_flush */
 
@@ -5699,6 +5701,9 @@ dnumpy_init(void)
     //We subtract one MB to avoid segmentation faults when the workbuf
     //is used before the call to WORKBUF_INC()
     workbuf_max = ((char*)workbuf) + DNPY_WORK_BUFFER_MAXSIZE - 1048576;
+
+    //Lets make sure that the memory is aligned.
+    WORKBUF_INC(1);
 
     //Init the block iterator
     dndblock_iterType.tp_new = PyType_GenericNew;
