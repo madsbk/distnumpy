@@ -24,23 +24,26 @@ def run():
         return
 
     #2D FFT
-    for SIZE in xrange(np.BLOCKSIZE,np.BLOCKSIZE*10,np.BLOCKSIZE):
-        src = dnumpytest.random_list([SIZE,SIZE])
-        Ad = np.array(src, dtype=np.complex, dist=True)
-        Af = np.array(src, dtype=np.complex, dist=False)
-        Bd = pyHPC.fft2d(Ad)
-        Bf = np.fft.fft2(Af)
+    for SIZE1 in xrange(np.BLOCKSIZE,np.BLOCKSIZE*8,np.BLOCKSIZE):
+        for SIZE2 in xrange(np.BLOCKSIZE,np.BLOCKSIZE*8,np.BLOCKSIZE):
+            src = dnumpytest.random_list([SIZE1,SIZE2])
+            Ad = np.array(src, dtype=np.complex, dist=True)
+            Af = np.array(src, dtype=np.complex, dist=False)
+            Bd = pyHPC.fft2d(Ad)
+            Bf = np.fft.fft2(Af)
 
-        if not dnumpytest.array_equal(Bf,Bd,maxerror=1e-6):
-            raise Exception("Uncorrect result array\n")
+            if not dnumpytest.array_equal(Bf,Bd,maxerror=1e-6):
+                raise Exception("Uncorrect result array\n")
 
     #3D FFT
-    for SIZE in xrange(np.BLOCKSIZE,np.BLOCKSIZE*5,np.BLOCKSIZE):
-        src = dnumpytest.random_list([SIZE,SIZE,SIZE])
-        Ad = np.array(src, dtype=np.complex, dist=True)
-        Af = np.array(src, dtype=np.complex, dist=False)
-        Bd = pyHPC.fft3d(Ad)
-        Bf = np.fft.fftn(Af)
+    for SIZE1 in xrange(np.BLOCKSIZE,np.BLOCKSIZE*4,np.BLOCKSIZE):
+        for SIZE2 in xrange(np.BLOCKSIZE,np.BLOCKSIZE*4,np.BLOCKSIZE):
+            for SIZE3 in xrange(np.BLOCKSIZE,np.BLOCKSIZE*4,np.BLOCKSIZE):
+                src = dnumpytest.random_list([SIZE1,SIZE2,SIZE3])
+                Ad = np.array(src, dtype=np.complex, dist=True)
+                Af = np.array(src, dtype=np.complex, dist=False)
+                Bd = pyHPC.fft3d(Ad)
+                Bf = np.fft.fftn(Af)
 
         if not dnumpytest.array_equal(Bd,Bf,maxerror=1e-6):
             raise Exception("Uncorrect result array\n")
