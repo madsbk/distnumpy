@@ -2190,6 +2190,91 @@ static void do_PUTGET_ITEM(int Direction, dndview *view, char* item,
 
 } /* do_PUTGET_ITEM */
 
+/*===================================================================
+ *
+ * Message handler for COPY_INTO.
+ * Private.
+ */
+static void do_COPY_INTO(npy_intp in_uid, npy_intp out_uid)
+{
+    npy_intp coord[NPY_MAXDIMS];
+    int notfinished = 1;
+    int j;
+    dndview *in = get_dndview(in_uid);
+    dndview *out = get_dndview(out_uid);
+    dndvb in_vb, out_vb;
+
+    //Loop over coordinates that may involve the MPI-process
+    //NB: coord consist of only visible block coordinates.
+    memset(coord,0, in->ndims * sizeof(npy_intp));
+    while(notfinished)
+    {
+        calc_vblock(in, coord, &in_vb);
+        calc_vblock(out, coord, &out_vb);
+        assert(in_vb.nsub == 1);
+        assert(out_vb.nsub == 1);
+
+        if(in_vb.sub[0].rank == myrank)
+        {
+            dndop_comm *op = workbuf_nextfree;
+            WORKBUF_INC(sizeof(dndop_comm));
+            op->op = DNPY_COPY_INTO;
+            op->optype = DNPY_COMM;
+            op->narys = 1;
+            op->refcount = 0;
+            op->views[0] = in;
+            op->svbs[0] = &in_vb.sub[0];
+            op->accesstypes[0] = DNPY_READ;
+            op->mpi_tag = mpi_tag;
+            op->remote_rank = out_vb.sub[0].rank;
+            dndnode *node = workbuf_nextfree;
+            WORKBUF_INC(sizeof(dndnode));
+            node->op = (dndop *) op;
+            node->op_ary_idx = 0;
+            dag_svb_add(node, 1, 0);
+        }
+
+        if(out_vb.sub[0].rank == myrank)
+        {
+            dndop_comm *op = workbuf_nextfree;
+            WORKBUF_INC(sizeof(dndop_comm));
+            op->op = DNPY_COPY_INTO;
+            op->optype = DNPY_COMM;
+            op->narys = 1;
+            op->refcount = 0;
+            op->views[0] = out;
+            op->svbs[0] = &out_vb.sub[0];
+            op->accesstypes[0] = DNPY_WRITE;
+            op->mpi_tag = mpi_tag;
+            op->remote_rank = in_vb.sub[0].rank;
+            dndnode *node = workbuf_nextfree;
+            WORKBUF_INC(sizeof(dndnode));
+            node->op = (dndop *) op;
+            node->op_ary_idx = 0;
+            dag_svb_add(node, 1, 0);
+        }
+
+        ++mpi_tag;
+
+        //Iterate coord to the next vblock.
+        for(j=in->ndims-1; j >= 0; j--)
+        {
+            coord[j] += 1;
+            if(coord[j] >= in->blockdims[j])
+            {
+                //We are finished, if wrapping around.
+                if(j == 0)
+                {
+                    notfinished = 0;
+                    break;
+                }
+                coord[j] = 0;//Start coord.
+            }
+            else
+                break;
+        }
+    }
+}
 
 /*===================================================================
  *
@@ -3791,6 +3876,41 @@ static void dag_svb_flush(int free_workbuf)
                         //tion.
                         //MPI_Type_free(&comm_dtype);
                         break;
+                    case DNPY_COPY_INTO:
+                        if(C->narys == 1)
+                        {
+                            if(C->accesstypes[0] == DNPY_WRITE)
+                            {
+                                comm_dtype = calc_svb_MPIdatatype(C->views[0],
+                                                                  C->svbs[0]);
+                                delayed_array_allocation(C->views[0]->base);
+                                MPI_Irecv(C->views[0]->base->data +
+                                          C->svbs[0]->comm_offset,
+                                          1, comm_dtype,
+                                          C->remote_rank, C->mpi_tag,
+                                          MPI_COMM_WORLD, &reqs[commsize]);
+                                MPI_Type_free(&comm_dtype);
+                            }
+                            else
+                            {
+                                assert(C->accesstypes[0] == DNPY_READ);
+                                comm_dtype = calc_svb_MPIdatatype(C->views[0],
+                                                                  C->svbs[0]);
+                                delayed_array_allocation(C->views[0]->base);
+                                MPI_Isend(C->views[0]->base->data +
+                                          C->svbs[0]->comm_offset,
+                                          1, comm_dtype,
+                                          C->remote_rank, C->mpi_tag,
+                                          MPI_COMM_WORLD, &reqs[commsize]);
+                                dtype[dtypesize++] = comm_dtype;
+                                //At the moment we have to delay this freeing to
+                                //the end of the flush. I’m not sure if this is
+                                //a bug in DistNumPy or the MPICH-2 implementa-
+                                //tion.
+                                //MPI_Type_free(&comm_dtype);
+                            }
+                        }
+                        break;
                     default:
                         fprintf(stderr, "Unknown DAG operation: %s.\n",
                                 optype2str(C->op));
@@ -4501,6 +4621,39 @@ dnumpy_dndarray_getitem(char *retdata, intp uid,
 /*NUMPY_API
  *===================================================================
  * Public
+ * Copy data from in into out.
+ * Returns -1 on failure.
+ */
+static int
+dnumpy_copy_into(intp in, intp out)
+{
+    dndview *inview = get_dndview(in);
+    dndview *outview = get_dndview(out);
+
+    //At the moment we don't support non aligned views.
+    if((inview->alterations & DNPY_NONALIGNED) != 0 ||
+       (outview->alterations & DNPY_NONALIGNED) != 0)
+        return -1;
+    //At the moment we don't support broadcasting.
+    if(inview->ndims != outview->ndims)
+        return -1;
+
+    #ifndef DNPY_SPMD
+    msg[0] = DNPY_COPY_INTO;
+    msg[1] = in;
+    msg[2] = out;
+    msg[3] = DNPY_MSG_END;
+    msg2slaves(msg, 4 * sizeof(npy_intp));
+    #endif
+
+    do_COPY_INTO(in, out);
+
+    return 0;
+}
+
+/*NUMPY_API
+ *===================================================================
+ * Public
  * Apply ufunc on distributed arrays in arylist.
  * op is the python name of the ufunction.
  * Returns -1 on failure.
@@ -4971,6 +5124,11 @@ dnumpy_master_slave_split(void)
                 ary = get_dndview(*((npy_intp*)msg_data));
                 t1 = msg_data+sizeof(npy_intp);
                 do_PUTGET_ITEM(0, ary, NULL, (npy_intp*) t1);
+                break;
+            case DNPY_COPY_INTO:
+                d1 = *((npy_intp*)msg_data);
+                d2 = *(((npy_intp*)msg_data)+1);
+                do_COPY_INTO(d1,d2);
                 break;
             case DNPY_UFUNC:
                 d1 = *((npy_intp*)msg_data);

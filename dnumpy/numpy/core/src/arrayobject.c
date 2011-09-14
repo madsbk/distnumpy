@@ -1175,8 +1175,12 @@ _array_copy_into(PyArrayObject *dest, PyArrayObject *src, int usecopy)
             tuple = PyTuple_Pack(3, (PyObject *)src, scalar,
                                     (PyObject *)dest);
 
-        PyObject *t = PyObject_CallObject(PyOp, tuple);
-        Py_XDECREF(t);
+        if(dnumpy_copy_into(PyArray_DNDUID(PyTuple_GetItem(tuple, 0)),
+                            PyArray_DNDUID(PyTuple_GetItem(tuple, 2))) == -1)
+        {   //Fallback copy method.
+            PyObject *t = PyObject_CallObject(PyOp, tuple);
+            Py_XDECREF(t);
+        }
         free(zero);
         Py_XDECREF(tmpAry);
         Py_DECREF(tmpIter);
@@ -6142,7 +6146,7 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
             }
             /* DISTNUMPY */
             flags = FORTRAN | (flags & DNPY_DISTRIBUTED) |
-							  (flags & DNPY_DIST_ONENODE);
+                              (flags & DNPY_DIST_ONENODE);
         }
         /* DISTNUMPY */
         self->flags |= flags & DNPY_DISTRIBUTED;
@@ -6186,18 +6190,18 @@ PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd,
         /* DISTNUMPY */
         if(PyArray_ISDISTRIBUTED(self))
         {
-			npy_intp onedist = -1;
-			if(PyArray_ISDIST_ONENODE(self))
-			{
-				onedist = PyInt_AsLong(obj);
-				obj = NULL;
-			}
+            npy_intp onedist = -1;
+            if(PyArray_ISDIST_ONENODE(self))
+            {
+                onedist = PyInt_AsLong(obj);
+                obj = NULL;
+            }
             self->dnduid = dnumpy_create_dndarray(self, onedist);
             //Make sure that set-/getitem are used.
             self->descr->hasobject |= NPY_USE_GETITEM;
             self->descr->hasobject |= NPY_USE_SETITEM;
             //Need to get elsize allocated
-            sd = 0;            
+            sd = 0;
         }
 
         //dnumpy_create_dndarray() may have allocated memory.
