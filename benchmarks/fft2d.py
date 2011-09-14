@@ -7,8 +7,9 @@ np.datalayout([(2,1,1)])
 
 parser = util.Parsing()
 DIST = parser.dist
-SIZE = int(parser.argv[0])
-A = np.empty((SIZE,SIZE), dtype=np.complex, dist=DIST)
+SIZE1 = int(parser.argv[0])
+SIZE2 = int(parser.argv[1])
+A = np.empty((SIZE1,SIZE2), dtype=np.complex, dist=DIST)
 
 if DIST:
     f = pyHPC.fft2d
