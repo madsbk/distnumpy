@@ -2199,15 +2199,15 @@ static void do_COPY_INTO(npy_intp in_uid, npy_intp out_uid)
 {
     npy_intp coord[NPY_MAXDIMS];
     int notfinished = 1;
-    int j;
+    int j,i;
     dndview *in = get_dndview(in_uid);
     dndview *out = get_dndview(out_uid);
     dndvb in_vb, out_vb;
-
+    ++mpi_tag;
     //Loop over coordinates that may involve the MPI-process
     //NB: coord consist of only visible block coordinates.
     memset(coord,0, in->ndims * sizeof(npy_intp));
-    while(notfinished)
+    for(i=0;notfinished; ++mpi_tag, ++i)
     {
         calc_vblock(in, coord, &in_vb);
         calc_vblock(out, coord, &out_vb);
@@ -2231,7 +2231,7 @@ static void do_COPY_INTO(npy_intp in_uid, npy_intp out_uid)
             WORKBUF_INC(sizeof(dndnode));
             node->op = (dndop *) op;
             node->op_ary_idx = 0;
-            dag_svb_add(node, 1, 0);
+            dag_svb_add(node, 1, 1);
         }
 
         if(out_vb.sub[0].rank == myrank)
@@ -2251,10 +2251,19 @@ static void do_COPY_INTO(npy_intp in_uid, npy_intp out_uid)
             WORKBUF_INC(sizeof(dndnode));
             node->op = (dndop *) op;
             node->op_ary_idx = 0;
-            dag_svb_add(node, 1, 0);
+            dag_svb_add(node, 1, 1);
         }
 
-        ++mpi_tag;
+        //We are adding a whole view-block operation to the svb-DAG
+        //and we may therefore have to flush and free memory.
+        #ifndef DNPY_NO_LAZY_EVAL
+        if(i >= DNPY_MAX_VB_IN_SVB_DAG)
+        #endif
+        {
+            //Flush
+            dag_svb_flush(1);
+            i = 0;
+        }
 
         //Iterate coord to the next vblock.
         for(j=in->ndims-1; j >= 0; j--)
