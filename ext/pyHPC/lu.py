@@ -71,8 +71,7 @@ def lu(matrix):
                 l[:] = np.linalg.solve(l,a)
 
             #Apply to remaining submatrix
-            tmp = pyHPC.summa(L[:,:k+bs],U[:k+bs,:], ao=(k+bs,k),
+            A -= pyHPC.summa(L[:,:k+bs],U[:k+bs,:], ao=(k+bs,k),
                               bo=(k,k+bs), co=(k+bs,k+bs))
-            A += tmp
 
     return (L, U)
